@@ -12,6 +12,7 @@
 | `internal/metrics/` | Prometheus metrics, including `workload_knocker_activation` |
 | `internal/mode/` | `OPERATION_MODE` |
 | `internal/model/` | Shared workload types |
+| `internal/reconcile/` | Background reconcile loop with per-tick hooks |
 | `internal/reload/` | Hot reload of the registry and the policy |
 | `internal/server/` | Lifecycle manager, HTTP server, Slack and Discord bots |
 | `internal/store/` | Per-cluster and multi-cluster workload state |

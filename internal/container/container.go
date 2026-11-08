@@ -19,6 +19,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/k8s/auth/kubeconfig"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/reconcile"
 	"github.com/murasame29/workload-knocker/internal/reload"
 	"github.com/murasame29/workload-knocker/internal/server"
 	discordbot "github.com/murasame29/workload-knocker/internal/server/discord"
@@ -94,9 +95,14 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		// Chat frontends: only those configured by at least one cluster are enabled
 		newFrontends,
 
+		// Background reconcile (per-tick hooks for other features are passed here)
+		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager) *reconcile.Loop {
+			return reconcile.New(ws, m, cfg.ReconcileInterval, cfg.ClusterReconcileTimeout)
+		},
+
 		// Lifecycle Manager: single entry point to start and stop from main
-		func(cfg *config.Env, h *httpserver.Server, fs []frontend.Frontend, ws reload.Watchers) *server.Manager {
-			components := []server.Lifecycle{h}
+		func(cfg *config.Env, h *httpserver.Server, fs []frontend.Frontend, ws reload.Watchers, rl *reconcile.Loop) *server.Manager {
+			components := []server.Lifecycle{h, rl}
 			for _, f := range fs {
 				components = append(components, f)
 			}

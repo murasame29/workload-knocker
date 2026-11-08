@@ -32,6 +32,9 @@ type Env struct {
 	// ClusterReconcileTimeout is the Reconcile timeout when a chat command is received.
 	ClusterReconcileTimeout time.Duration `env:"CLUSTER_RECONCILE_TIMEOUT" envDefault:"2s"`
 
+	// ReconcileInterval is the period of the background ScaledObject reconcile; 0 disables it.
+	ReconcileInterval time.Duration `env:"RECONCILE_INTERVAL" envDefault:"1m"`
+
 	// StopAllTimeout is the per-cluster timeout of /api/v1/stop-all.
 	StopAllTimeout time.Duration `env:"STOP_ALL_TIMEOUT" envDefault:"10s"`
 
@@ -79,6 +82,10 @@ func LoadEnv() (*Env, error) {
 
 	if v := os.Getenv("WORKLOAD_ENV"); v != "" {
 		slog.Warn("WORKLOAD_ENV is deprecated. Configure cluster env in cluster registry config file.", slog.String("workload_env", v))
+	}
+
+	if cfg.ReconcileInterval < 0 {
+		return nil, fmt.Errorf("config.LoadEnv: RECONCILE_INTERVAL must not be negative, got %s", cfg.ReconcileInterval)
 	}
 
 	if cfg.APIToken == "" {

@@ -88,6 +88,8 @@ func (f *fakeMetrics) DeleteCluster(env, cluster string) {
 
 func (f *fakeMetrics) IncConfigReload(string, string) {}
 
+func (f *fakeMetrics) IncReconcile(string, string) {}
+
 func (f *fakeMetrics) Handler() http.Handler { return http.NotFoundHandler() }
 
 // testCluster returns a test Cluster fixture keyed by env. Cluster.Name is "<env>-cluster".

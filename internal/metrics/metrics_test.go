@@ -92,3 +92,19 @@ func TestManager_IncConfigReload(t *testing.T) {
 		t.Errorf("series = %d, want 4 pre-created", got)
 	}
 }
+
+func TestManager_IncReconcile(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m.IncReconcile("c1", "error")
+	m.IncReconcile("c1", "error")
+	m.IncReconcile("c1", "success")
+
+	if got := testutil.ToFloat64(m.reconcile.WithLabelValues("c1", "error")); got != 2 {
+		t.Errorf("c1/error = %v, want 2", got)
+	}
+	if got := testutil.CollectAndCount(m.reconcile); got != 2 {
+		t.Errorf("series = %d, want 2", got)
+	}
+}

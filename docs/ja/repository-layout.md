@@ -12,6 +12,7 @@
 | `internal/metrics/` | Prometheus メトリクス (`workload_knocker_activation` など) |
 | `internal/mode/` | `OPERATION_MODE` |
 | `internal/model/` | 共有の workload 型 |
+| `internal/reconcile/` | バックグラウンド reconcile ループ (tick ごとのフック付き) |
 | `internal/reload/` | Registry とポリシーのホットリロード |
 | `internal/server/` | Lifecycle マネージャ、HTTP サーバー、Slack / Discord bot |
 | `internal/store/` | cluster ごと・複数 cluster の workload 状態 |
