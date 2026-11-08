@@ -128,6 +128,7 @@ rules:
 |---|---|
 | Slack namespaces and workloads | Only namespaces and workloads the user may start or stop are listed. With none, the user gets a clear message. |
 | Slack plan and apply | Every start and stop is checked again at plan time and at apply time. Entries the user may not perform are rejected with a reason, whatever the modal submitted. |
+| Status (`/<command> status`, `GET /api/v1/workloads`) | Lists only workloads the subject may start or stop. Extend and Stop buttons are shown only when the subject may do that action and the operation mode allows it; both are checked again when the button is pressed. |
 | `POST /api/v1/start` | Checked per workload for subject `api`. Refused workloads are returned in `forbidden`; if nothing was started and something was refused, the status is `403`. A refusal does not reveal whether the workload exists. |
 | `POST /api/v1/stop-all` | Stops only workloads the `api` subject may stop. Running workloads that were kept are listed per cluster in `skipped` and counted in `total_skipped`. |
 
@@ -203,9 +204,11 @@ Setup:
 
 On startup the controller bulk-overwrites the application commands of the chosen scope (guild or global) with the configured commands. Other commands of the same application in that scope are removed, so use a dedicated application. Startup fails with a clear error when registration fails (usually a missing `applications.commands` scope).
 
-Flow (every message is ephemeral and only the invoking user can use its components):
+The command has two subcommands, `start` and `status` (see [Status](#status)). Discord does not allow invoking a command that has subcommands without one ([Discord docs](https://discord.com/developers/docs/interactions/application-commands#subcommands-and-subcommand-groups)), so **`/<command>` alone no longer works: use `/<command> start`**. This is a breaking change for Discord users and runs through the same registration at startup, so no manual step is needed. A client that still sends the old bare command (a cached command shape) is treated as `start`.
 
-1. The slash command shows a namespace select menu (25 per page, Previous/Next buttons).
+Flow of `/<command> start` (every message is ephemeral and only the invoking user can use its components):
+
+1. The subcommand shows a namespace select menu (25 per page, Previous/Next buttons).
 2. Choosing a namespace shows the workloads in a multi-select (25 per page). Running entries are pre-selected; selections are kept across pages. Merging of `-api` / `-app` / `-worker` and the 🟢 / 🟡 / 🔴 markers match Slack.
 3. **Apply** shows the plan preview with **Confirm** and **Cancel**.
 4. **Confirm** applies the plan and replaces the message with the result. The operation user is the Discord user ID. The message then follows the [rollout](#rollout-progress).
@@ -299,11 +302,35 @@ Notes:
 
 ## Slack workload modal
 
+`/<command>` without an argument opens this modal. `/<command> status` lists the workloads instead (see [Status](#status)); any other argument gets a short usage message.
+
 - Namespaces and workloads are sorted a to z.
 - `foo-api`, `foo-app` and `foo-worker` are merged into one `foo` checkbox when at least two of
   those suffixes exist. A partially running group is shown as 🟡 and checked.
 - Slack allows 10 options per checkbox block and 100 blocks per modal, so at most 90 merged
   entries are shown. Hidden entries are excluded from the plan and are never stopped by accident.
+
+## Status
+
+`/<command> status` (Discord subcommand, Slack argument) answers with an ephemeral list of the workloads the user may operate, grouped by namespace (a to z). Each entry shows the state (🟢 running, 🟡 partly running, 🔴 stopped), who started it, when, and its stop time (`stops <time>`, or `no auto-stop`). Times are rendered in the viewer's time zone (Discord relative time, Slack date format). `-api` / `-app` / `-worker` workloads are merged as in the start flow.
+
+The list is built from the controller's in-memory state only. It makes no cluster call and does not reconcile, so it answers inside Discord's 3-second window. The state is refreshed by the background reconcile (`RECONCILE_INTERVAL`).
+
+Running entries carry buttons (the label names the entry):
+
+- **Extend 1h** adds one hour to the stop time, like `POST /api/v1/extend`. It is shown only for entries with an auto-stop.
+- **Stop** stops the entry directly, without a confirm step. It goes through the normal stop path: policy check, operation mode check, `workload.stop` audit event (source `discord` or `slack`) and the notify channel. It is not shown in `scheduled-stop` mode.
+
+After a press the list is replaced in place with the outcome and the refreshed state. Both checks run again on press, so an outdated list cannot widen access.
+
+Limits and caveats:
+
+- Discord allows 25 buttons per message and 2000 characters of text; Slack allows 50 blocks. Entries beyond that still appear in the list (the text ends with a `… and N more` line when it is cut) but have no buttons; the message says so. Use `/<command> start` for those.
+- The starter and start time are recorded when a start is applied and stored in the `workload-state` ConfigMap (`startedBy`, `startedAt`). Workloads that were found already running when the controller first saw them, and state written by older versions, show no starter or start time. The starter is the Discord user ID (shown as a mention), the Slack user name, or the `user` of an API call.
+- Only the entries that are visible after the [authorization policy](#authorization) are listed.
+- Discord keeps the button payloads in memory for 24 hours; after that, or after a restart, a stale button answers that it expired. Slack buttons carry their payload and keep working.
+
+The REST equivalent is [`GET /api/v1/workloads`](#get-apiv1workloads).
 
 ## Run duration
 
@@ -311,7 +338,7 @@ A start can carry a run duration. The controller stores `stopAt` per workload in
 ConfigMap and the background loop (`RECONCILE_INTERVAL`, so the stop is accurate to about one interval)
 stops expired workloads, also after a restart. Stopping a workload clears `stopAt`. The nightly stop keeps
 working; whichever comes first stops the workload. State written by older versions has no `stopAt` and means
-"no auto-stop". With `RECONCILE_INTERVAL=0` no auto-stop fires.
+"no auto-stop". The same state also records `startedBy` and `startedAt` for the [status view](#status). With `RECONCILE_INTERVAL=0` no auto-stop fires.
 
 Defaults can be set per workload with ScaledObject annotations; the environment variables are the fallback:
 
@@ -400,6 +427,26 @@ Checks run in this order: authentication, operation mode, request validation.
 | `403` | The operation is not allowed in the current `OPERATION_MODE` |
 | `503` | `API_TOKEN` is not set, so the API is disabled |
 
+
+### `GET /api/v1/workloads`
+
+Lists the workloads the `api` subject may start or stop, sorted by `env`, `namespace` and `name`, from the controller's
+in-memory state (no cluster call). Allowed in every operation mode. Always `200` with a JSON object; the list is empty when
+nothing is visible.
+
+```json
+{"workloads": [
+  {"env": "stg", "namespace": "my-namespace", "name": "a", "kind": "Deployment", "state": "running",
+   "startedBy": "ci-bot", "startedAt": "2026-11-08T09:00:00Z", "stopAt": "2026-11-08T12:00:00Z"},
+  {"env": "stg", "namespace": "my-namespace", "name": "b", "kind": "Deployment", "state": "stopped",
+   "startedBy": "", "startedAt": null, "stopAt": null}
+]}
+```
+
+`state` is `running` or `stopped`. `startedBy`, `startedAt` and `stopAt` describe the current run: `startedBy` is empty and
+the times are `null` for a stopped workload, `startedAt` is `null` when the start time is unknown, and `stopAt` is `null`
+when no auto-stop is scheduled. Unlike the chat view this list is per workload (no merging), so there is no partly running state.
+A request refused with `401` or `503` is not written to the audit log, because the audit events describe workload operations.
 
 ### `POST /api/v1/start`
 

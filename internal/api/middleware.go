@@ -72,7 +72,11 @@ func sourceOf(r *http.Request) audit.Source {
 }
 
 // recordDenied emits a workload-less denied event for a request refused before reaching a handler.
+// Read-only GET requests are not audited: the events describe workload operations.
 func recordDenied(rec audit.Recorder, r *http.Request) {
+	if r.Method == http.MethodGet {
+		return
+	}
 	event, source := audit.WorkloadStart, audit.SourceAPI
 	if strings.HasSuffix(r.URL.Path, "/stop-all") {
 		event, source = audit.WorkloadStopAll, sourceOf(r)

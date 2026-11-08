@@ -35,6 +35,8 @@ type Bot struct {
 	registry config.Resolver
 	authz    *authz.Holder
 	groups   *groupCache
+	// webhook posts to a response_url; replaced in tests.
+	webhook func(ctx context.Context, url string, msg *slack.WebhookMessage) error
 
 	// sem is a semaphore limiting concurrent goroutines.
 	sem chan struct{}
@@ -73,6 +75,7 @@ func New(cfg *config.Env, store model.WorkloadStore, registry config.Resolver, a
 		registry: registry,
 		authz:    az,
 		groups:   newGroupCache(client, groupCacheTTL),
+		webhook:  slack.PostWebhookContext,
 		sem:      make(chan struct{}, maxConcurrentEvents),
 		done:     make(chan struct{}),
 	}, nil

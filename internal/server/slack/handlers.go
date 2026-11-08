@@ -420,7 +420,17 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 		return
 	}
 
-	slog.Info("slash command received", slog.String("user.name", cmd.UserName), slog.String("command", cmd.Command), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
+	arg := parseSlashArg(cmd.Text)
+	slog.Info("slash command received", slog.String("user.name", cmd.UserName), slog.String("command", cmd.Command), slog.Bool("status", arg == argStatus), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
+
+	switch arg {
+	case argStatus:
+		b.handleStatus(cmd, cl)
+		return
+	case argUnknown:
+		b.postUsage(cmd)
+		return
+	}
 
 	// Resolve the subject while reconciling so both fit the 3s trigger_id window.
 	subCh := make(chan authz.Subject, 1)
@@ -482,6 +492,8 @@ func (b *Bot) handleInteraction(callback slack.InteractionCallback) {
 				b.handleNamespaceSelected(callback, action.SelectedOption.Value)
 			case actionExtend:
 				b.handleExtend(callback, action.Value)
+			case actionStatusExtend, actionStatusStop:
+				b.handleStatusAction(callback, action.ActionID, action.Value)
 			}
 		}
 	default:

@@ -33,6 +33,7 @@ start / stop の操作ごとに、ワークロード 1 件につき 1 つの監�
 
 - `denied` は、チャットのプラン確認で拒否された行、Apply 時の同じ再チェック、API リクエストで出力されます。
 - 401 / 403 で拒否された API リクエスト (トークン不正、または動作モードが禁止する `stop-all`) は、ワークロード項目なし・`enduser.id` が `api` の `denied` を 1 件出力します。
+- `GET /api/v1/workloads` は参照のみで、401 で拒否された場合も含め監査イベントを出力しません。ステータス表示の Stop / Extend ボタンは、他のフローと同じ `workload.stop` / `workload.extend` を、チャットのプラットフォームを source として出力します。
 - `POST /api/v1/stop-all` は、リクエスト到着時に起動中だったワークロードごとに 1 件出力します。ポリシーで停止されなかったものは `denied`、クラスタが失敗したものは `failure` です。
 - 夜間停止の CronJob は `X-Workload-Knocker-Source: nightly-stop` を送り、source が `nightly-stop` になります (`enduser.id` は `api` のまま)。他の値は `api` として記録されます。このヘッダーはラベルのみで、権限は与えません。
 

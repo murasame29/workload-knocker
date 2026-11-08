@@ -218,6 +218,7 @@ func (b *Bot) commands(names []string) []*discordgo.ApplicationCommand {
 			Name:        name,
 			Type:        discordgo.ChatApplicationCommand,
 			Description: truncateRunes("Start or stop workloads in "+cl.Env, 100),
+			Options:     subcommandChoices(cl.Env),
 		})
 	}
 	return cmds

@@ -33,6 +33,7 @@ Notes:
 
 - Denied events appear for plan lines refused at preview (chat), for the same check repeated at apply, and for API requests.
 - An API request refused with 401 or 403 (bad token, or `stop-all` in a mode that forbids it) emits one `denied` event without workload fields and with `enduser.id` `api`.
+- `GET /api/v1/workloads` is read-only and emits no audit event, also when it is refused with 401. The Stop and Extend buttons of the status view emit the same `workload.stop` and `workload.extend` events as the other flows, with the chat platform as source.
 - `POST /api/v1/stop-all` emits one event per workload that was running when the request arrived. Running workloads kept by the policy are `denied`; workloads of a cluster that failed are `failure`.
 - The nightly CronJob sends `X-Workload-Knocker-Source: nightly-stop`, which sets the source to `nightly-stop` (`enduser.id` stays `api`). Any other value is recorded as `api`. The header only labels the event and grants nothing.
 

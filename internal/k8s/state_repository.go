@@ -21,6 +21,8 @@ const (
 type StateEntry struct {
 	Replicas  int    `json:"replicas"`
 	StartedBy string `json:"startedBy,omitempty"`
+	// StartedAt is when the run started; absent in state written by older versions.
+	StartedAt time.Time `json:"startedAt,omitzero"`
 	// StopAt is the auto-stop time; absent in state written by older versions (no auto-stop).
 	StopAt time.Time `json:"stopAt,omitzero"`
 }
