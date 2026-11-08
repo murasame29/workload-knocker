@@ -9,6 +9,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/model"
 )
 
@@ -32,10 +33,10 @@ func TestRegistryLookup_UnknownCommandReturnsNotFound(t *testing.T) {
 
 	reg := helperConfig(t,
 		config.Cluster{
-			Env:      "stg",
-			Name:     "stg-cluster",
-			Provider: config.ClusterProvider{Type: config.ProviderTypeEKS, EKS: &config.ProviderEKS{Region: "ap-northeast-1"}},
-			Slack:    config.ClusterSlack{SlashCommand: "/workload-knocker-stg"},
+			Env:       "stg",
+			Name:      "stg-cluster",
+			Provider:  config.ClusterProvider{Type: config.ProviderTypeEKS, EKS: &config.ProviderEKS{Region: "ap-northeast-1"}},
+			Frontends: config.ClusterFrontends{Slack: &config.SlackFrontend{SlashCommand: "/workload-knocker-stg"}},
 		},
 	)
 
@@ -51,10 +52,10 @@ func TestRegistryLookup_KnownCommandResolvesCluster(t *testing.T) {
 	t.Parallel()
 
 	want := config.Cluster{
-		Env:      "stg",
-		Name:     "example-staging",
-		Provider: config.ClusterProvider{Type: config.ProviderTypeEKS, EKS: &config.ProviderEKS{Region: "ap-northeast-1"}},
-		Slack:    config.ClusterSlack{SlashCommand: "/workload-knocker-stg"},
+		Env:       "stg",
+		Name:      "example-staging",
+		Provider:  config.ClusterProvider{Type: config.ProviderTypeEKS, EKS: &config.ProviderEKS{Region: "ap-northeast-1"}},
+		Frontends: config.ClusterFrontends{Slack: &config.SlackFrontend{SlashCommand: "/workload-knocker-stg"}},
 	}
 
 	reg := helperConfig(t, want)
@@ -194,7 +195,7 @@ func TestWorkloadCheckboxBlocks_SplitsAtSlackLimit(t *testing.T) {
 		t.Run(fmt.Sprintf("count=%d", tc.count), func(t *testing.T) {
 			t.Parallel()
 
-			blocks := workloadCheckboxBlocks("ns", groupWorkloads(makeWorkloads(tc.count)))
+			blocks := workloadCheckboxBlocks("ns", listingOf(makeWorkloads(tc.count)))
 			if len(blocks) != tc.wantBlocks {
 				t.Fatalf("block count = %d, want %d", len(blocks), tc.wantBlocks)
 			}
@@ -269,7 +270,7 @@ func TestWorkloadCheckboxBlocks_InitialOptionsReflectRunning(t *testing.T) {
 	}
 
 	gotInitial := make(map[string]bool)
-	for _, b := range workloadCheckboxBlocks("ns", groupWorkloads(workloads)) {
+	for _, b := range workloadCheckboxBlocks("ns", listingOf(workloads)) {
 		cb := b.(*slack.InputBlock).Element.(*slack.CheckboxGroupsBlockElement)
 		if cb.InitialOptions != nil && len(cb.InitialOptions) == 0 {
 			t.Error("InitialOptions is an empty slice, want nil (Slack rejects [])")
@@ -294,7 +295,7 @@ func TestWorkloadCheckboxBlocks_InitialOptionsReflectRunning(t *testing.T) {
 func TestWorkloadCheckboxBlocks_FitsModalBlockLimit(t *testing.T) {
 	t.Parallel()
 
-	blocks := workloadCheckboxBlocks("ns", groupWorkloads(makeWorkloads(maxWorkloadOptions)))
+	blocks := workloadCheckboxBlocks("ns", listingOf(makeWorkloads(maxWorkloadOptions)))
 	total := len(blocks) + reservedModalBlocks // namespace select + warning section
 	if total > slackModalMaxBlocks {
 		t.Errorf("total blocks = %d, want <= %d", total, slackModalMaxBlocks)
@@ -345,28 +346,6 @@ func TestSelectedWorkloadNames_CollectsAcrossBlocks(t *testing.T) {
 	}
 }
 
-// TestSortedWorkloads_IsDeterministic verifies a stable name-ascending order independent of store map
-// iteration order, so checkbox split boundaries match truncation at submit.
-func TestSortedWorkloads_IsDeterministic(t *testing.T) {
-	t.Parallel()
-
-	input := []*model.Workload{
-		{Name: "charlie"}, {Name: "alpha"}, {Name: "bravo"},
-	}
-	want := []string{"alpha", "bravo", "charlie"}
-
-	got := sortedWorkloads(input)
-	for i, w := range got {
-		if w.Name != want[i] {
-			t.Errorf("index %d: got %q, want %q", i, w.Name, want[i])
-		}
-	}
-	// Do not mutate the input slice (the store returns the underlying entities)
-	if input[0].Name != "charlie" {
-		t.Errorf("input was mutated: input[0] = %q, want %q", input[0].Name, "charlie")
-	}
-}
-
 // TestMrkdwnSections_RespectsTextLimit verifies sections are split within the 3000-char limit
 // and all lines are kept.
 func TestMrkdwnSections_RespectsTextLimit(t *testing.T) {
@@ -402,6 +381,11 @@ func TestMrkdwnSections_RespectsTextLimit(t *testing.T) {
 			t.Errorf("line %q missing from rendered sections", line)
 		}
 	}
+}
+
+// listingOf groups workloads into a Slack-limited listing.
+func listingOf(ws []*model.Workload) frontend.Listing {
+	return frontend.Listing{Entries: frontend.GroupEntries(ws), Limits: listLimits}
 }
 
 // makeWorkloads creates n stopped workloads (names ascending).

@@ -8,7 +8,7 @@ features:
     display_name: workload-knocker
     always_online: true
   slash_commands:
-    # One command per cluster; each must match clusters[].slack.slashCommand.
+    # One command per cluster; each must match clusters[].frontends.slack.slashCommand.
     - command: /workload-knocker-stg
       description: Start or stop workloads in the staging cluster
       usage_hint: ""

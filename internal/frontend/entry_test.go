@@ -1,10 +1,8 @@
-package slackbot
+package frontend
 
 import (
 	"strings"
 	"testing"
-
-	"github.com/slack-go/slack"
 
 	"github.com/murasame29/workload-knocker/internal/model"
 )
@@ -30,7 +28,7 @@ func TestGroupWorkloads_MergesSuffixVariants(t *testing.T) {
 		wl("checkout-app", 0),
 	}
 
-	groups := groupWorkloads(in)
+	groups := GroupEntries(in)
 
 	wantKeys := []string{"bedrock-hello", "checkout", "menu", "payments-api"}
 	if len(groups) != len(wantKeys) {
@@ -42,7 +40,7 @@ func TestGroupWorkloads_MergesSuffixVariants(t *testing.T) {
 		}
 	}
 
-	byKey := make(map[string]workloadGroup, len(groups))
+	byKey := make(map[string]Entry, len(groups))
 	for _, g := range groups {
 		byKey[g.Key] = g
 	}
@@ -52,7 +50,7 @@ func TestGroupWorkloads_MergesSuffixVariants(t *testing.T) {
 	if !mm.Grouped {
 		t.Errorf("checkout: Grouped = false, want true")
 	}
-	if got := strings.Join(mm.suffixes(), ","); got != "api,app,worker" {
+	if got := strings.Join(mm.Suffixes(), ","); got != "api,app,worker" {
 		t.Errorf("checkout: suffixes = %q, want %q", got, "api,app,worker")
 	}
 	// The option value is only the representative member (first by name) workload name.
@@ -70,7 +68,7 @@ func TestGroupWorkloads_MergesSuffixVariants(t *testing.T) {
 	if sa.Grouped {
 		t.Errorf("payments-api: Grouped = true, want false")
 	}
-	if got := sa.label(); got != "🔴 payments-api" {
+	if got := sa.Label(); got != "🔴 payments-api" {
 		t.Errorf("payments-api: label() = %q", got)
 	}
 
@@ -85,7 +83,7 @@ func TestGroupWorkloads_MergesSuffixVariants(t *testing.T) {
 func TestGroupWorkloads_NamesCoverAllMembers(t *testing.T) {
 	t.Parallel()
 
-	groups := groupWorkloads([]*model.Workload{
+	groups := GroupEntries([]*model.Workload{
 		wl("checkout-app", 0),
 		wl("checkout-api", 0),
 		wl("checkout-worker", 0),
@@ -109,10 +107,10 @@ func TestGroupWorkloads_IsDeterministic(t *testing.T) {
 	a := []*model.Workload{wl("charlie-api", 0), wl("alpha", 0), wl("charlie-app", 0), wl("bravo", 0)}
 	b := []*model.Workload{wl("bravo", 0), wl("charlie-app", 0), wl("alpha", 0), wl("charlie-api", 0)}
 
-	if got, want := strings.Join(groupKeys(groupWorkloads(a)), "|"), "alpha|bravo|charlie"; got != want {
+	if got, want := strings.Join(groupKeys(GroupEntries(a)), "|"), "alpha|bravo|charlie"; got != want {
 		t.Errorf("keys(a) = %q, want %q", got, want)
 	}
-	if got, want := strings.Join(groupKeys(groupWorkloads(b)), "|"), "alpha|bravo|charlie"; got != want {
+	if got, want := strings.Join(groupKeys(GroupEntries(b)), "|"), "alpha|bravo|charlie"; got != want {
 		t.Errorf("keys(b) = %q, want %q", got, want)
 	}
 	if a[0].Name != "charlie-api" {
@@ -126,7 +124,7 @@ func TestGroupWorkloads_IsDeterministic(t *testing.T) {
 func TestRenderedGroups_ClampsToRenderedCount(t *testing.T) {
 	t.Parallel()
 
-	groups := groupWorkloads([]*model.Workload{wl("a", 0), wl("b", 0), wl("c", 0)})
+	groups := GroupEntries([]*model.Workload{wl("a", 0), wl("b", 0), wl("c", 0)})
 
 	cases := []struct {
 		name     string
@@ -143,8 +141,8 @@ func TestRenderedGroups_ClampsToRenderedCount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := len(renderedGroups(groups, tc.rendered)); got != tc.want {
-				t.Errorf("renderedGroups(_, %d) = %d groups, want %d", tc.rendered, got, tc.want)
+			if got := len(Rendered(groups, tc.rendered)); got != tc.want {
+				t.Errorf("Rendered(_, %d) = %d groups, want %d", tc.rendered, got, tc.want)
 			}
 		})
 	}
@@ -179,29 +177,14 @@ func TestWorkloadGroup_Label(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			groups := groupWorkloads(tc.in)
+			groups := GroupEntries(tc.in)
 			if len(groups) != 1 {
 				t.Fatalf("groups: got %d, want 1", len(groups))
 			}
-			if got := groups[0].label(); got != tc.want {
+			if got := groups[0].Label(); got != tc.want {
 				t.Errorf("label() = %q, want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-// TestWorkloadGroup_Label_TruncatedToSlackLimit verifies a long base name stays within the Slack
-// option text limit (75 chars).
-func TestWorkloadGroup_Label_TruncatedToSlackLimit(t *testing.T) {
-	t.Parallel()
-
-	base := strings.Repeat("long-name-", 8) // 80 chars
-	groups := groupWorkloads([]*model.Workload{wl(base+"-api", 1), wl(base+"-app", 0)})
-	if len(groups) != 1 {
-		t.Fatalf("groups: got %d, want 1", len(groups))
-	}
-	if runeLen := len([]rune(groups[0].label())); runeLen > slackOptionTextMaxLen {
-		t.Errorf("label() has %d runes, want <= %d", runeLen, slackOptionTextMaxLen)
 	}
 }
 
@@ -209,16 +192,16 @@ func TestWorkloadGroup_Label_TruncatedToSlackLimit(t *testing.T) {
 func TestWorkloadGroup_ChangeLabel(t *testing.T) {
 	t.Parallel()
 
-	g := groupWorkloads([]*model.Workload{
+	g := GroupEntries([]*model.Workload{
 		wl("checkout-api", 1), wl("checkout-app", 0), wl("checkout-worker", 0),
 	})[0]
 
-	if got, want := g.changeLabel([]string{"checkout-app", "checkout-worker"}), "checkout (app, worker)"; got != want {
+	if got, want := g.ChangeLabel([]string{"checkout-app", "checkout-worker"}), "checkout (app, worker)"; got != want {
 		t.Errorf("changeLabel(partial) = %q, want %q", got, want)
 	}
 
-	single := groupWorkloads([]*model.Workload{wl("bedrock-hello", 0)})[0]
-	if got, want := single.changeLabel([]string{"bedrock-hello"}), "bedrock-hello"; got != want {
+	single := GroupEntries([]*model.Workload{wl("bedrock-hello", 0)})[0]
+	if got, want := single.ChangeLabel([]string{"bedrock-hello"}), "bedrock-hello"; got != want {
 		t.Errorf("changeLabel(single) = %q, want %q", got, want)
 	}
 }
@@ -228,73 +211,43 @@ func TestWorkloadGroup_ChangeLabel(t *testing.T) {
 func TestWorkloadGroup_AnyRunning(t *testing.T) {
 	t.Parallel()
 
-	partial := groupWorkloads([]*model.Workload{wl("menu-api", 1), wl("menu-app", 0)})[0]
-	if !partial.anyRunning() {
+	partial := GroupEntries([]*model.Workload{wl("menu-api", 1), wl("menu-app", 0)})[0]
+	if !partial.AnyRunning() {
 		t.Errorf("partial group: anyRunning() = false, want true")
 	}
 
-	stopped := groupWorkloads([]*model.Workload{wl("menu-api", 0), wl("menu-app", 0)})[0]
-	if stopped.anyRunning() {
+	stopped := GroupEntries([]*model.Workload{wl("menu-api", 0), wl("menu-app", 0)})[0]
+	if stopped.AnyRunning() {
 		t.Errorf("stopped group: anyRunning() = true, want false")
 	}
 }
 
-// TestGroupWorkloads_ReducesCheckboxBlocks verifies merging reduces the number of splits
-// against the 10-option limit.
-func TestGroupWorkloads_ReducesCheckboxBlocks(t *testing.T) {
-	t.Parallel()
-
-	// 6 services x (api, app) = 12 workloads; merged = 6 entries = 1 block
-	var in []*model.Workload
-	for _, svc := range []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"} {
-		in = append(in, wl(svc+"-api", 0), wl(svc+"-app", 0))
-	}
-
-	if got := len(workloadCheckboxBlocks("labs", groupWorkloads(in))); got != 1 {
-		t.Errorf("merged: block count = %d, want 1", got)
-	}
-	// Without merging, 12 options would need 2 blocks (kept for contrast).
-	if len(in) <= checkboxMaxOptions {
-		t.Fatalf("test premise broken: %d workloads should exceed %d", len(in), checkboxMaxOptions)
-	}
-}
-
-// TestNamespaceInputBlock_SortedAToZ verifies the namespace dropdown is sorted a-z
-// and the selected namespace is the initial selection.
-func TestNamespaceInputBlock_SortedAToZ(t *testing.T) {
-	t.Parallel()
-
-	in := []string{"labs", "inhouse-solutions", "gees", "acme"}
-	block := namespaceInputBlock(in, "labs")
-
-	sel, ok := block.Element.(*slack.SelectBlockElement)
-	if !ok {
-		t.Fatalf("block.Element: got %T, want *slack.SelectBlockElement", block.Element)
-	}
-
-	var got []string
-	for _, opt := range sel.Options {
-		got = append(got, opt.Value)
-	}
-	want := []string{"acme", "gees", "inhouse-solutions", "labs"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("namespace options:\n got %v\nwant %v", got, want)
-	}
-
-	if sel.InitialOption == nil || sel.InitialOption.Value != "labs" {
-		t.Errorf("InitialOption: got %+v, want value=labs", sel.InitialOption)
-	}
-
-	// Do not mutate the caller slice (it may share the store cache).
-	if in[0] != "labs" {
-		t.Errorf("input slice was mutated: %v", in)
-	}
-}
-
-func groupKeys(groups []workloadGroup) []string {
+func groupKeys(groups []Entry) []string {
 	out := make([]string, 0, len(groups))
 	for _, g := range groups {
 		out = append(out, g.Key)
 	}
 	return out
+}
+
+// TestSortedWorkloads_IsDeterministic verifies a stable name-ascending order independent of store map
+// iteration order, so checkbox split boundaries match truncation at submit.
+func TestSortedWorkloads_IsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	input := []*model.Workload{
+		{Name: "charlie"}, {Name: "alpha"}, {Name: "bravo"},
+	}
+	want := []string{"alpha", "bravo", "charlie"}
+
+	got := SortedWorkloads(input)
+	for i, w := range got {
+		if w.Name != want[i] {
+			t.Errorf("index %d: got %q, want %q", i, w.Name, want[i])
+		}
+	}
+	// Do not mutate the input slice (the store returns the underlying entities)
+	if input[0].Name != "charlie" {
+		t.Errorf("input was mutated: input[0] = %q, want %q", input[0].Name, "charlie")
+	}
 }

@@ -1,4 +1,4 @@
-// Package slackbot implements the Slack Gateway running on Slack Socket Mode as a server.Lifecycle.
+// Package slackbot implements the Slack Gateway running on Slack Socket Mode as a frontend.Frontend.
 package slackbot
 
 import (
@@ -13,6 +13,7 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
 )
@@ -29,10 +30,8 @@ const (
 type Bot struct {
 	client   *slack.Client
 	socket   *socketmode.Client
-	store    model.WorkloadStore
+	svc      *frontend.Service
 	registry *config.Config
-	cfg      *config.Env
-	metrics  metrics.MetricsManager
 
 	// sem is a semaphore limiting concurrent goroutines.
 	sem chan struct{}
@@ -46,7 +45,7 @@ type Bot struct {
 // registry resolves clusters from Slack slash commands.
 func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, m metrics.MetricsManager) (*Bot, error) {
 	if cfg.SlackAppToken == "" || cfg.SlackBotToken == "" {
-		return nil, fmt.Errorf("slackbot.New: slack tokens are required")
+		return nil, fmt.Errorf("slackbot.New: SLACK_APP_TOKEN and SLACK_BOT_TOKEN are required")
 	}
 
 	client := slack.New(
@@ -58,14 +57,15 @@ func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, m 
 	return &Bot{
 		client:   client,
 		socket:   socket,
-		store:    store,
+		svc:      frontend.NewService(store, m, cfg.ClusterReconcileTimeout),
 		registry: registry,
-		cfg:      cfg,
-		metrics:  m,
 		sem:      make(chan struct{}, maxConcurrentEvents),
 		done:     make(chan struct{}),
 	}, nil
 }
+
+// Bot is a frontend.Frontend.
+var _ frontend.Frontend = (*Bot)(nil)
 
 // Name returns the stable identifier per the server.Lifecycle contract.
 func (b *Bot) Name() string { return componentName }

@@ -9,8 +9,9 @@ config:
           type: eks
           eks:
             region: ap-northeast-1
-        slack:
-          slashCommand: /workload-knocker-stg
+        frontends:
+          slack:
+            slashCommand: /workload-knocker-stg
       - env: dev
         name: example-development
         provider:
@@ -18,8 +19,9 @@ config:
           eks:
             region: ap-northeast-1
             assumeRoleArn: arn:aws:iam::123456789012:role/workload-knocker-cross-account
-        slack:
-          slashCommand: /workload-knocker-dev
+        frontends:
+          slack:
+            slashCommand: /workload-knocker-dev
 
 slack:
   secretName: workload-knocker-slack

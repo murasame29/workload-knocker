@@ -45,8 +45,11 @@ type Cluster struct {
 	// Name is the cluster name, used as the metrics cluster label and the EKS DescribeCluster argument.
 	Name string `yaml:"name"`
 
-	Provider ClusterProvider `yaml:"provider"`
-	Slack    ClusterSlack    `yaml:"slack"`
+	Provider  ClusterProvider  `yaml:"provider"`
+	Frontends ClusterFrontends `yaml:"frontends"`
+
+	// LegacySlack catches the removed top-level slack key so Validate can point to frontends.slack.
+	LegacySlack *yaml.Node `yaml:"slack,omitempty"`
 }
 
 // ClusterProvider is a discriminated union describing how to connect to a cluster.
@@ -69,9 +72,27 @@ type ProviderKubeconfig struct {
 	Context string `yaml:"context,omitempty"`
 }
 
-// ClusterSlack holds Slack settings. SlashCommand is unique in the registry.
-type ClusterSlack struct {
+// Frontend identifiers.
+const FrontendSlack = "slack"
+
+// ClusterFrontends holds the per-frontend settings of a cluster; a nil entry means not configured.
+type ClusterFrontends struct {
+	Slack *SlackFrontend `yaml:"slack,omitempty"`
+}
+
+// SlackFrontend holds Slack settings. SlashCommand is unique in the registry.
+type SlackFrontend struct {
 	SlashCommand string `yaml:"slashCommand"`
+}
+
+// FrontendEnabled reports whether at least one cluster configures the named frontend.
+func (c *Config) FrontendEnabled(name string) bool {
+	for _, cl := range c.Clusters {
+		if name == FrontendSlack && cl.Frontends.Slack != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // All returns a copy of all registered clusters.
@@ -93,9 +114,11 @@ func (c *Config) BySlashCommand(cmd string) (Cluster, bool) {
 
 // Validate checks consistency and initializes the lookup map. Rules:
 //   - at least one cluster
-//   - Controller.Namespace, Cluster.Env / Name / Slack.SlashCommand are non-empty
+//   - Controller.Namespace, Cluster.Env / Name are non-empty
+//   - at least one frontend is configured per cluster, and its required fields are set
+//   - the removed top-level slack key is rejected with a pointer to frontends.slack
 //   - Provider.Type is eks or kubeconfig with its nested setting present (other providers must be nil)
-//   - Env and SlashCommand are unique in the registry
+//   - Env and each frontend's SlashCommand are unique in the registry
 func (c *Config) Validate() error {
 	if c.Controller.Namespace == "" {
 		return errors.New("controller.namespace is required")
@@ -114,8 +137,14 @@ func (c *Config) Validate() error {
 		if cl.Name == "" {
 			return fmt.Errorf("cluster[%d] %q: name is required", i, cl.Env)
 		}
-		if cl.Slack.SlashCommand == "" {
-			return fmt.Errorf("cluster[%d] %q: slack.slashCommand is required", i, cl.Env)
+		if cl.LegacySlack != nil {
+			return fmt.Errorf("cluster[%d] %q: slack is no longer supported; move it to frontends.slack (frontends.slack.slashCommand)", i, cl.Env)
+		}
+		if cl.Frontends.Slack == nil {
+			return fmt.Errorf("cluster[%d] %q: at least one frontend is required (frontends.slack.slashCommand)", i, cl.Env)
+		}
+		if cl.Frontends.Slack.SlashCommand == "" {
+			return fmt.Errorf("cluster[%d] %q: frontends.slack.slashCommand is required", i, cl.Env)
 		}
 		if err := validateProvider(cl); err != nil {
 			return fmt.Errorf("cluster[%d] %q: %w", i, cl.Env, err)
@@ -123,11 +152,12 @@ func (c *Config) Validate() error {
 		if _, dup := byEnv[cl.Env]; dup {
 			return fmt.Errorf("cluster registry duplicate env %q", cl.Env)
 		}
-		if _, dup := bySC[cl.Slack.SlashCommand]; dup {
-			return fmt.Errorf("cluster registry duplicate slashCommand %q (env=%q)", cl.Slack.SlashCommand, cl.Env)
+		sc := cl.Frontends.Slack.SlashCommand
+		if _, dup := bySC[sc]; dup {
+			return fmt.Errorf("cluster registry duplicate slashCommand %q (env=%q)", sc, cl.Env)
 		}
 		byEnv[cl.Env] = cl
-		bySC[cl.Slack.SlashCommand] = cl
+		bySC[sc] = cl
 	}
 
 	c.byEnv = byEnv

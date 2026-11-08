@@ -12,8 +12,8 @@
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
 | `API_TOKEN` | empty | Bearer token for `/api/v1/*`. When empty, `/api/v1/*` responds `503` (fail closed) |
-| `SLACK_APP_TOKEN` | required | Slack app-level token (`xapp-...`) |
-| `SLACK_BOT_TOKEN` | required | Slack bot token (`xoxb-...`) |
+| `SLACK_APP_TOKEN` | required with Slack | Slack app-level token (`xapp-...`); required only when a cluster configures `frontends.slack` |
+| `SLACK_BOT_TOKEN` | required with Slack | Slack bot token (`xoxb-...`); required only when a cluster configures `frontends.slack` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
 `WORKLOAD_ENV` is deprecated and ignored (a warning is logged).
@@ -33,8 +33,9 @@ clusters:
       eks:
         region: ap-northeast-1
         assumeRoleArn: arn:aws:iam::123456789012:role/cross-account   # optional
-    slack:
-      slashCommand: /workload-knocker-stg
+    frontends:
+      slack:
+        slashCommand: /workload-knocker-stg
   - env: local
     name: kind-local
     provider:
@@ -42,8 +43,9 @@ clusters:
       kubeconfig:
         path: /etc/workload-knocker/kubeconfig
         context: kind-local                                             # optional
-    slack:
-      slashCommand: /workload-knocker-local
+    frontends:
+      slack:
+        slashCommand: /workload-knocker-local
 ```
 
 | Field | Required | Description |
@@ -56,7 +58,13 @@ clusters:
 | `clusters[].provider.eks.assumeRoleArn` | no | Role to assume for cross-account clusters |
 | `clusters[].provider.kubeconfig.path` | kubeconfig | Kubeconfig file path |
 | `clusters[].provider.kubeconfig.context` | no | Context; defaults to current-context |
-| `clusters[].slack.slashCommand` | yes | Unique slash command registered in the Slack app |
+| `clusters[].frontends.slack.slashCommand` | one frontend | Unique slash command registered in the Slack app |
+
+Each cluster must configure at least one entry under `frontends`. A frontend is enabled when at least
+one cluster configures it, and only enabled frontends are started.
+
+> **Breaking change:** the former `clusters[].slack.slashCommand` moved to
+> `clusters[].frontends.slack.slashCommand`. The old `slack` key is rejected at startup.
 
 ## Managed cluster access
 

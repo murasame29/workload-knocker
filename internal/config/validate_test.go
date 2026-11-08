@@ -8,22 +8,22 @@ import (
 func validClusters() []Cluster {
 	return []Cluster{
 		{
-			Env:      "stg",
-			Name:     "example-staging",
-			Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}},
-			Slack:    ClusterSlack{SlashCommand: "/workload-knocker-stg"},
+			Env:       "stg",
+			Name:      "example-staging",
+			Provider:  ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}},
+			Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/workload-knocker-stg"}},
 		},
 		{
-			Env:      "stg-us",
-			Name:     "example-staging",
-			Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "us-west-2"}},
-			Slack:    ClusterSlack{SlashCommand: "/workload-knocker-stg-us"},
+			Env:       "stg-us",
+			Name:      "example-staging",
+			Provider:  ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "us-west-2"}},
+			Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/workload-knocker-stg-us"}},
 		},
 		{
-			Env:      "dev",
-			Name:     "example-development",
-			Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1", AssumeRoleArn: "arn:aws:iam::123456789012:role/x"}},
-			Slack:    ClusterSlack{SlashCommand: "/workload-knocker-dev"},
+			Env:       "dev",
+			Name:      "example-development",
+			Provider:  ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1", AssumeRoleArn: "arn:aws:iam::123456789012:role/x"}},
+			Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/workload-knocker-dev"}},
 		},
 	}
 }
@@ -115,10 +115,10 @@ func TestValidate_MissingFieldError(t *testing.T) {
 	t.Parallel()
 
 	base := Cluster{
-		Env:      "stg",
-		Name:     "example-staging",
-		Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}},
-		Slack:    ClusterSlack{SlashCommand: "/workload-knocker-stg"},
+		Env:       "stg",
+		Name:      "example-staging",
+		Provider:  ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}},
+		Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/workload-knocker-stg"}},
 	}
 
 	cases := []struct {
@@ -129,7 +129,7 @@ func TestValidate_MissingFieldError(t *testing.T) {
 		{"missing env", func(c *Cluster) { c.Env = "" }, "env is required"},
 		{"missing name", func(c *Cluster) { c.Name = "" }, "name is required"},
 		{"missing region", func(c *Cluster) { c.Provider.EKS.Region = "" }, "provider.eks.region is required"},
-		{"missing slashCommand", func(c *Cluster) { c.Slack.SlashCommand = "" }, "slack.slashCommand is required"},
+		{"missing slashCommand", func(c *Cluster) { c.Frontends.Slack.SlashCommand = "" }, "frontends.slack.slashCommand is required"},
 	}
 
 	for _, tc := range cases {
@@ -137,6 +137,7 @@ func TestValidate_MissingFieldError(t *testing.T) {
 			t.Parallel()
 			c := base
 			c.Provider.EKS = &ProviderEKS{Region: base.Provider.EKS.Region}
+			c.Frontends.Slack = &SlackFrontend{SlashCommand: base.Frontends.Slack.SlashCommand}
 			tc.mutate(&c)
 			cfg := &Config{
 				Controller: Controller{Namespace: "workload-knocker"},
@@ -159,8 +160,8 @@ func TestValidate_DuplicateEnvError(t *testing.T) {
 	cfg := &Config{
 		Controller: Controller{Namespace: "workload-knocker"},
 		Clusters: []Cluster{
-			{Env: "stg", Name: "a", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}}, Slack: ClusterSlack{SlashCommand: "/cmd-a"}},
-			{Env: "stg", Name: "b", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "us-west-2"}}, Slack: ClusterSlack{SlashCommand: "/cmd-b"}},
+			{Env: "stg", Name: "a", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}}, Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/cmd-a"}}},
+			{Env: "stg", Name: "b", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "us-west-2"}}, Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/cmd-b"}}},
 		},
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate env") {
@@ -174,11 +175,82 @@ func TestValidate_DuplicateSlashCommandError(t *testing.T) {
 	cfg := &Config{
 		Controller: Controller{Namespace: "workload-knocker"},
 		Clusters: []Cluster{
-			{Env: "a", Name: "a", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}}, Slack: ClusterSlack{SlashCommand: "/cmd"}},
-			{Env: "b", Name: "b", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "us-west-2"}}, Slack: ClusterSlack{SlashCommand: "/cmd"}},
+			{Env: "a", Name: "a", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}}, Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/cmd"}}},
+			{Env: "b", Name: "b", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "us-west-2"}}, Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/cmd"}}},
 		},
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate slashCommand") {
 		t.Errorf("expected duplicate slashCommand error, got %v", err)
+	}
+}
+
+func TestValidate_NoFrontendError(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Controller: Controller{Namespace: "workload-knocker"},
+		Clusters: []Cluster{
+			{Env: "a", Name: "a", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}}},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "at least one frontend is required") {
+		t.Errorf("error: got %v, want at-least-one-frontend error", err)
+	}
+}
+
+func TestParse_LegacySlackKeyRejectedWithHint(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Parse([]byte(`
+controller:
+  namespace: workload-knocker
+clusters:
+  - env: stg
+    name: stg-cluster
+    provider:
+      type: eks
+      eks:
+        region: ap-northeast-1
+    slack:
+      slashCommand: /cmd
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "frontends.slack") {
+		t.Errorf("error: got %v, want hint mentioning frontends.slack", err)
+	}
+}
+
+func TestFrontendEnabled(t *testing.T) {
+	t.Parallel()
+
+	cl := Cluster{Env: "a", Name: "a", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}}}
+	cfg := &Config{Clusters: []Cluster{cl}}
+	if cfg.FrontendEnabled(FrontendSlack) {
+		t.Error("FrontendEnabled(slack) = true with no frontend configured")
+	}
+	cl.Frontends.Slack = &SlackFrontend{SlashCommand: "/cmd"}
+	cfg = &Config{Clusters: []Cluster{cl}}
+	if !cfg.FrontendEnabled(FrontendSlack) {
+		t.Error("FrontendEnabled(slack) = false with slack configured")
+	}
+}
+
+func TestEnvValidateFrontends(t *testing.T) {
+	t.Parallel()
+
+	cl := Cluster{Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/cmd"}}}
+	reg := &Config{Clusters: []Cluster{cl}}
+	if err := (&Env{}).ValidateFrontends(reg); err == nil {
+		t.Error("missing Slack tokens with Slack enabled: want error")
+	}
+	if err := (&Env{SlackAppToken: "a", SlackBotToken: "b"}).ValidateFrontends(reg); err != nil {
+		t.Errorf("tokens set: %v", err)
+	}
+	if err := (&Env{}).ValidateFrontends(&Config{}); err != nil {
+		t.Errorf("Slack disabled: %v", err)
 	}
 }

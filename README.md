@@ -20,7 +20,7 @@ Slack  <->  workload-knocker  --- EKS / kubeconfig --->  managed cluster A, B, .
 
 - The controller loads a cluster registry (YAML) at startup and lists every
   `ScaledObject` whose Prometheus trigger queries `workload_knocker_activation`.
-- `/<slashCommand>` opens a modal. Workloads that differ only by an `api` / `app` / `worker`
+- The Slack slash command (`frontends.slack.slashCommand`) opens a modal. Workloads that differ only by an `api` / `app` / `worker`
   suffix are shown as one checkbox.
 - Starting a workload sets `workload_knocker_activation{env,cluster,namespace,workload} = 1`.
   Stopping sets it to 0. The requested state is stored in a `workload-state` ConfigMap in each
