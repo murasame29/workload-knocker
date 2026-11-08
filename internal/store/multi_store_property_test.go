@@ -14,9 +14,9 @@ import (
 	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
-// buildMultiStoreFromFixture は固定的に N 個の cluster を持つ MultiStore を返す。
-// 各 cluster は同じ namespace 構成 (ns-1, ns-2) と workload (wl-a, wl-b) を持つ。
-// cluster.Env で一意性を確保する。
+// buildMultiStoreFromFixture returns a MultiStore with N fixed clusters.
+// Each cluster has the same namespaces (ns-1, ns-2) and workloads (wl-a, wl-b),
+// with uniqueness ensured by cluster.Env.
 func buildMultiStoreFromFixture(t *rapid.T, clusterCount int) (*MultiStore, []config.Cluster) {
 	t.Helper()
 	clusters := make([]config.Cluster, 0, clusterCount)
@@ -34,7 +34,7 @@ func buildMultiStoreFromFixture(t *rapid.T, clusterCount int) (*MultiStore, []co
 			},
 		})
 	}
-	// env / slashCommand の一意性確保
+	// ensure env / slashCommand uniqueness
 	seenEnv := map[string]bool{}
 	seenSC := map[string]bool{}
 	uniq := make([]config.Cluster, 0, len(clusters))
@@ -86,8 +86,8 @@ func buildMultiStoreFromFixture(t *rapid.T, clusterCount int) (*MultiStore, []co
 	return ms, uniq
 }
 
-// TestProperty_ClusterIsolation_Start は cluster 境界を検証する:
-// ある cluster で Start を呼んでも、他 cluster の workload は影響を受けない。
+// TestProperty_ClusterIsolation_Start verifies the cluster boundary:
+// calling Start on one cluster does not affect workloads of other clusters.
 func TestProperty_ClusterIsolation_Start(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping property test in -short mode")
@@ -139,8 +139,8 @@ func TestProperty_ClusterIsolation_Start(t *testing.T) {
 	})
 }
 
-// TestProperty_StartIdempotent は冪等性を検証する:
-// 同一引数で Start を複数回呼んでも、最終状態は同じ (replicas=1, startedBy=user)。
+// TestProperty_StartIdempotent verifies idempotency:
+// calling Start repeatedly with the same arguments ends in the same state (replicas=1, startedBy=user).
 func TestProperty_StartIdempotent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping property test in -short mode")
@@ -180,8 +180,8 @@ func TestProperty_StartIdempotent(t *testing.T) {
 	})
 }
 
-// TestProperty_StopAllIdempotent は StopAll の冪等性を検証する:
-// StopAll を 2 回連続で呼んでも、2 回目以降は新たな停止 (Stopped 数 0) になる。
+// TestProperty_StopAllIdempotent verifies StopAll idempotency:
+// a second consecutive StopAll stops nothing new (Stopped = 0).
 func TestProperty_StopAllIdempotent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping property test in -short mode")

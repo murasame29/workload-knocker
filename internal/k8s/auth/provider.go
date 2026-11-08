@@ -1,8 +1,8 @@
-// Package auth は managed cluster の K8s API への接続情報 (rest.Config) を生成する
-// 抽象を提供する。プロバイダーごとの実装 (eks, kubeconfig, ...) は配下のサブパッケージに置き、
-// Multiplexer が Cluster.Provider.Type で振り分ける。
+// Package auth provides the abstraction that builds connection info (rest.Config) for managed
+// clusters. Provider implementations (eks, kubeconfig, ...) live in subpackages and the
+// Multiplexer picks one by Cluster.Provider.Type.
 //
-// 利用側では import alias `k8sauth` を推奨 (例: import k8sauth ".../internal/k8s/auth")。
+// Callers should use the import alias `k8sauth`.
 package auth
 
 import (
@@ -15,22 +15,22 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 )
 
-// EndpointProvider は Cluster から K8s API への接続情報を生成する。
-// bearer token の rotation 等は WrapTransport で行う想定。
+// EndpointProvider builds K8s API connection info from a Cluster.
+// Bearer token rotation is expected to happen via WrapTransport.
 type EndpointProvider interface {
-	// Type は config.ClusterProvider.Type と対応する識別子 (例: "eks")。
+	// Type is the identifier matching config.ClusterProvider.Type (e.g. "eks").
 	Type() string
-	// RestConfig は cluster 用の rest.Config を返す。
+	// RestConfig returns the rest.Config for the cluster.
 	RestConfig(ctx context.Context, c config.Cluster) (*rest.Config, error)
 }
 
-// Multiplexer は登録された EndpointProvider を Cluster.Provider.Type で dispatch する。
+// Multiplexer dispatches registered EndpointProviders by Cluster.Provider.Type.
 type Multiplexer struct {
 	providers map[string]EndpointProvider
 }
 
-// NewMultiplexer は EndpointProvider 群を集約する。
-// 同一 Type が複数渡された場合は後勝ちで上書きし、警告ログを出す。
+// NewMultiplexer aggregates EndpointProviders.
+// If the same Type appears more than once, the last wins and a warning is logged.
 func NewMultiplexer(providers ...EndpointProvider) *Multiplexer {
 	m := &Multiplexer{providers: make(map[string]EndpointProvider, len(providers))}
 	for _, p := range providers {
@@ -45,8 +45,8 @@ func NewMultiplexer(providers ...EndpointProvider) *Multiplexer {
 	return m
 }
 
-// RestConfig は Cluster.Provider.Type に対応する provider に dispatch する。
-// 未登録の type は error。
+// RestConfig dispatches to the provider matching Cluster.Provider.Type.
+// An unregistered type is an error.
 func (m *Multiplexer) RestConfig(ctx context.Context, c config.Cluster) (*rest.Config, error) {
 	p, ok := m.providers[c.Provider.Type]
 	if !ok {

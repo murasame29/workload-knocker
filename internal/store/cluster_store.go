@@ -1,9 +1,7 @@
-// Package store はワークロード起動状態のドメインロジックを担う。
+// Package store holds the domain logic of workload running state.
 //
-// 設計意図:
-//   - K8s API への直接依存は internal/k8s に閉じ込め、ドメイン層は ScaledObjectLister /
-//     StateRepository の interface 越しに使う
-//   - 単一 cluster の責務は ClusterStore、複数 cluster のオーケストレーションは MultiStore
+// K8s API access is confined to internal/k8s and used here via the ScaledObjectLister /
+// StateRepository interfaces. ClusterStore owns a single cluster; MultiStore orchestrates many.
 package store
 
 import (
@@ -22,16 +20,16 @@ import (
 	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
-// activationTriggerMetric は workload-knocker が管理対象とする Prometheus trigger query に
-// 含まれているべきメトリクス名。
+// activationTriggerMetric is the metric name that Prometheus trigger queries managed by
+// workload-knocker should contain.
 const activationTriggerMetric = "workload_knocker_activation"
 
-// ClusterStore は単一 managed cluster のワークロード状態を管理する。
-// MultiStore に集約されることで model.WorkloadStore を構成する。
+// ClusterStore manages workload state of a single managed cluster.
+// MultiStore aggregates them to form model.WorkloadStore.
 //
-// ロック設計:
-//   - mu は workloads マップへの read/write を保護する (短時間)。K8s API call は保持しない。
-//   - persistMu は state.Save の直列化を保証する。Start/Stop 等から呼ぶ際は mu 解放後に取得する。
+// Locking:
+//   - mu protects read/write of the workloads map (short-lived); never held across K8s API calls.
+//   - persistMu serializes state.Save; acquire it after releasing mu when calling from Start/Stop.
 type ClusterStore struct {
 	mu        sync.RWMutex
 	persistMu sync.Mutex
@@ -43,7 +41,7 @@ type ClusterStore struct {
 	workloads map[string]*model.Workload // key: "namespace/name"
 }
 
-// NewClusterStore は新しい ClusterStore を生成する。
+// NewClusterStore creates a ClusterStore.
 func NewClusterStore(c config.Cluster, scaledObj k8s.ScaledObjectLister, state k8s.StateRepository, m metrics.MetricsManager, tracer nrx.Tracer) *ClusterStore {
 	return &ClusterStore{
 		cluster:   c,
@@ -55,7 +53,7 @@ func NewClusterStore(c config.Cluster, scaledObj k8s.ScaledObjectLister, state k
 	}
 }
 
-// Namespaces はレジストリ内の全 namespace を返す。
+// Namespaces returns all namespaces in the registry.
 func (s *ClusterStore) Namespaces() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -71,7 +69,7 @@ func (s *ClusterStore) Namespaces() []string {
 	return ns
 }
 
-// WorkloadsByNamespace は指定 namespace のワークロード一覧を返す。
+// WorkloadsByNamespace returns the workloads of the given namespace.
 func (s *ClusterStore) WorkloadsByNamespace(ns string) []*model.Workload {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -85,8 +83,8 @@ func (s *ClusterStore) WorkloadsByNamespace(ns string) []*model.Workload {
 	return result
 }
 
-// Start はワークロードを起動状態にする。インメモリ更新 → 永続化 → メトリクスを順に行う。
-// 永続化 (K8s API call) は mu を解放してから persistMu の下で実行する。
+// Start sets the workload to running: in-memory update, then persist, then metrics.
+// Persisting (a K8s API call) runs under persistMu after releasing mu.
 func (s *ClusterStore) Start(ns, name, user string) bool {
 	s.mu.Lock()
 	w, ok := s.workloads[ns+"/"+name]
@@ -106,7 +104,7 @@ func (s *ClusterStore) Start(ns, name, user string) bool {
 	return true
 }
 
-// Stop はワークロードを停止状態にする。
+// Stop sets the workload to stopped.
 func (s *ClusterStore) Stop(ns, name string) bool {
 	s.mu.Lock()
 	w, ok := s.workloads[ns+"/"+name]
@@ -126,7 +124,7 @@ func (s *ClusterStore) Stop(ns, name string) bool {
 	return true
 }
 
-// StopAll は全ワークロードを停止する。戻り値は呼び出し時点で起動中だった workload 数。
+// StopAll stops all workloads. Returns the number of workloads running at call time.
 func (s *ClusterStore) StopAll(_ context.Context) (int, error) {
 	s.mu.Lock()
 	stopped := 0
@@ -138,7 +136,7 @@ func (s *ClusterStore) StopAll(_ context.Context) (int, error) {
 		w.StartedBy = ""
 	}
 	entries := s.snapshotEntriesLocked()
-	// メトリクス送信用に namespace/name のリストを取得しておく
+	// Collect the namespace/name list for metrics
 	type meta struct{ ns, name string }
 	metaList := make([]meta, 0, len(s.workloads))
 	for _, w := range s.workloads {
@@ -156,8 +154,8 @@ func (s *ClusterStore) StopAll(_ context.Context) (int, error) {
 	return stopped, nil
 }
 
-// Bootstrap は起動時に一度だけ呼び出す初期化処理。
-// ScaledObject を list してレジストリを構築した後、ConfigMap から状態を復元する。
+// Bootstrap is the one-time startup initialization.
+// It lists ScaledObjects to build the registry, then restores state from the ConfigMap.
 func (s *ClusterStore) Bootstrap(ctx context.Context) error {
 	if err := s.reconcile(ctx); err != nil {
 		return err
@@ -169,7 +167,7 @@ func (s *ClusterStore) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-// Reconcile は ScaledObject を list してレジストリを最新化する。
+// Reconcile lists ScaledObjects and refreshes the registry.
 func (s *ClusterStore) Reconcile(ctx context.Context) error {
 	return s.reconcile(ctx)
 }
@@ -211,7 +209,7 @@ func (s *ClusterStore) reconcile(ctx context.Context) error {
 	return nil
 }
 
-// handleScaledObjectLocked は ScaledObject をレジストリに登録/更新/削除する。mu 保持必須。
+// handleScaledObjectLocked registers/updates/removes a ScaledObject in the registry. Requires mu.
 func (s *ClusterStore) handleScaledObjectLocked(so *kedav1alpha1.ScaledObject) {
 	ns := so.Namespace
 	name := so.Spec.ScaleTargetRef.Name
@@ -261,7 +259,7 @@ func hasActivationTrigger(so *kedav1alpha1.ScaledObject) bool {
 	return false
 }
 
-// restoreLocked は state repository から状態を復元する。mu 保持必須。
+// restoreLocked restores state from the state repository. Requires mu.
 func (s *ClusterStore) restoreLocked(ctx context.Context) {
 	span := s.tracer.Start("K8s/State/Load")
 	entries, err := s.state.Load(ctx)
@@ -274,7 +272,7 @@ func (s *ClusterStore) restoreLocked(ctx context.Context) {
 	for key, entry := range entries {
 		w, ok := s.workloads[key]
 		if !ok {
-			// レジストリに存在しないエントリは無視する
+			// Ignore entries absent from the registry
 			continue
 		}
 		w.Replicas = entry.Replicas
@@ -292,8 +290,8 @@ func (s *ClusterStore) restoreLocked(ctx context.Context) {
 	slog.Info("workload state restored", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env))
 }
 
-// snapshotEntriesLocked は現在のインメモリ状態のスナップショットを返す。mu (read or write) 保持必須。
-// 永続化は呼び出し側が mu 解放後に persist へ渡す。
+// snapshotEntriesLocked returns a snapshot of the in-memory state. Requires mu (read or write).
+// The caller passes it to persist after releasing mu.
 func (s *ClusterStore) snapshotEntriesLocked() map[string]k8s.StateEntry {
 	entries := make(map[string]k8s.StateEntry, len(s.workloads))
 	for key, w := range s.workloads {
@@ -305,8 +303,8 @@ func (s *ClusterStore) snapshotEntriesLocked() map[string]k8s.StateEntry {
 	return entries
 }
 
-// persist はスナップショットを state repository に保存する。mu を保持してはならない。
-// persistMu で直列化することで Save の競合更新を避ける。
+// persist saves the snapshot to the state repository. Must not hold mu.
+// Serializing with persistMu avoids conflicting Save updates.
 func (s *ClusterStore) persist(entries map[string]k8s.StateEntry) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()

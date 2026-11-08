@@ -1,9 +1,8 @@
-// Package eks は AWS EKS への接続情報を生成する EndpointProvider 実装。
+// Package eks is an EndpointProvider that builds connection info for AWS EKS.
 //
-// 動作:
-//   - eks:DescribeCluster で endpoint と CA を取得し 5 分キャッシュ
-//   - 各 K8s リクエスト直前に aws-iam-authenticator で bearer token を生成
-//   - Cluster.Provider.EKS.AssumeRoleArn が設定されている場合は cross-account AssumeRole
+// It fetches the endpoint and CA via eks:DescribeCluster (cached 5 min), generates a bearer token
+// with aws-iam-authenticator just before each request, and uses cross-account AssumeRole when
+// Cluster.Provider.EKS.AssumeRoleArn is set.
 package eks
 
 import (
@@ -25,26 +24,25 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 )
 
-// MetricsHook は Provider がメトリクスを記録するための最小インターフェース。
-// metrics.MetricsManager と互換 (subset)。
+// MetricsHook is the minimal interface the Provider uses to record metrics (a subset of metrics.MetricsManager).
 type MetricsHook interface {
 	IncTokenRefresh(cluster, result string)
 }
 
-// tokenGenerator は aws-iam-authenticator の Generator のうち、bearer token を生成するメソッドだけを抽象化したもの。
-// テストで fake を差し込めるように private interface として持つ。
+// tokenGenerator abstracts the bearer token method of the aws-iam-authenticator Generator.
+// It is private so tests can inject a fake.
 type tokenGenerator interface {
 	GetWithOptions(ctx context.Context, options *tokenpkg.GetTokenOptions) (tokenpkg.Token, error)
 }
 
-// describeCacheEntry は eks:DescribeCluster の TTL キャッシュエントリ。
+// describeCacheEntry is a TTL cache entry for eks:DescribeCluster.
 type describeCacheEntry struct {
 	endpoint string
 	caData   []byte
 	expires  time.Time
 }
 
-// Provider は AWS EKS 用の auth.EndpointProvider 実装。
+// Provider is the auth.EndpointProvider implementation for AWS EKS.
 type Provider struct {
 	awsCfg  aws.Config
 	metrics MetricsHook
@@ -53,12 +51,12 @@ type Provider struct {
 	mu         sync.Mutex
 	descCache  map[string]describeCacheEntry // key = config.Cluster.Env
 	descTTL    time.Duration
-	descFlight singleflight.Group // describe の thundering-herd 防止 (key = c.Env)
+	descFlight singleflight.Group // prevents thundering herd on describe (key = c.Env)
 }
 
-// New は IRSA を前提とした EKS Provider を生成する。
-// awsCfg は呼び出し側で `awsconfig.LoadDefaultConfig` 等から構築する想定。
-// metrics に nil を渡しても安全 (各メトリクス記録は no-op になる)。
+// New builds an IRSA-based EKS Provider.
+// Callers build awsCfg with e.g. `awsconfig.LoadDefaultConfig`.
+// A nil metrics is safe (recording becomes a no-op).
 func New(awsCfg aws.Config, metrics MetricsHook) (*Provider, error) {
 	gen, err := tokenpkg.NewGenerator(true, false)
 	if err != nil {
@@ -73,11 +71,11 @@ func New(awsCfg aws.Config, metrics MetricsHook) (*Provider, error) {
 	}, nil
 }
 
-// Type は auth.EndpointProvider 契約。
+// Type implements the auth.EndpointProvider contract.
 func (p *Provider) Type() string { return config.ProviderTypeEKS }
 
-// RestConfig は cluster 用の rest.Config を生成する。
-// bearer token は WrapTransport 経由でリクエスト直前に都度生成される。
+// RestConfig builds the rest.Config for the cluster.
+// The bearer token is generated per request via WrapTransport.
 func (p *Provider) RestConfig(ctx context.Context, c config.Cluster) (*rest.Config, error) {
 	endpoint, caData, err := p.describe(ctx, c)
 	if err != nil {
@@ -97,8 +95,8 @@ func (p *Provider) RestConfig(ctx context.Context, c config.Cluster) (*rest.Conf
 	return cfg, nil
 }
 
-// awsConfigForCluster は Cluster の設定に基づいて aws.Config を返す。
-// AssumeRoleArn 指定時は stscreds で一時 credentials に切り替える。
+// awsConfigForCluster returns the aws.Config for the cluster,
+// switching to temporary credentials via stscreds when AssumeRoleArn is set.
 func (p *Provider) awsConfigForCluster(c config.Cluster) aws.Config {
 	cfg := p.awsCfg.Copy()
 	cfg.Region = c.Provider.EKS.Region
@@ -115,8 +113,8 @@ func (p *Provider) awsConfigForCluster(c config.Cluster) aws.Config {
 	return cfg
 }
 
-// describe は eks:DescribeCluster の結果を 5 分キャッシュする。
-// キャッシュミス時は singleflight.Group で同一 cluster への並列 API 呼び出しを 1 回に集約する。
+// describe caches eks:DescribeCluster results for 5 minutes.
+// On a miss, singleflight collapses parallel calls for the same cluster into one.
 func (p *Provider) describe(ctx context.Context, c config.Cluster) (string, []byte, error) {
 	p.mu.Lock()
 	if entry, ok := p.descCache[c.Env]; ok && time.Now().Before(entry.expires) {
@@ -130,7 +128,7 @@ func (p *Provider) describe(ctx context.Context, c config.Cluster) (string, []by
 		caData   []byte
 	}
 	v, err, _ := p.descFlight.Do(c.Env, func() (any, error) {
-		// flight 内で再度キャッシュを確認 (先行 flight が書き込んでいる可能性)
+		// Re-check the cache inside the flight (a prior flight may have written it)
 		p.mu.Lock()
 		if entry, ok := p.descCache[c.Env]; ok && time.Now().Before(entry.expires) {
 			p.mu.Unlock()
@@ -174,8 +172,8 @@ func (p *Provider) describe(ctx context.Context, c config.Cluster) (string, []by
 	return res.endpoint, res.caData, nil
 }
 
-// generateToken は aws-iam-authenticator で bearer token を生成する。
-// AssumeRoleArn 指定時は authenticator 側で AssumeRole する。
+// generateToken builds a bearer token with aws-iam-authenticator.
+// With AssumeRoleArn, the authenticator performs the AssumeRole.
 func (p *Provider) generateToken(ctx context.Context, c config.Cluster) (string, error) {
 	tokenOpts := &tokenpkg.GetTokenOptions{
 		ClusterID:     c.Name,
@@ -195,7 +193,7 @@ func (p *Provider) generateToken(ctx context.Context, c config.Cluster) (string,
 	return tok.Token, nil
 }
 
-// tokenRoundTripper は各リクエスト直前に bearer token を生成する transport ラッパ。
+// tokenRoundTripper is a transport wrapper that generates a bearer token per request.
 type tokenRoundTripper struct {
 	base     http.RoundTripper
 	provider *Provider
@@ -212,6 +210,6 @@ func (t *tokenRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return t.base.RoundTrip(cloned)
 }
 
-// 型アサーション
+// Type assertions
 var _ http.RoundTripper = (*tokenRoundTripper)(nil)
 var _ tokenGenerator = (tokenpkg.Generator)(nil)

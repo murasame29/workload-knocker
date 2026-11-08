@@ -7,7 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// MetricsManager は Prometheus メトリクスの管理インターフェース
+// MetricsManager is the interface managing Prometheus metrics
 type MetricsManager interface {
 	SetActivation(env, cluster, namespace, workload string, value float64)
 	DeleteMetric(env, cluster, namespace, workload string)
@@ -16,7 +16,7 @@ type MetricsManager interface {
 	Handler() http.Handler
 }
 
-// Manager は MetricsManager の実装
+// Manager implements MetricsManager
 type Manager struct {
 	activation   *prometheus.GaugeVec
 	reachable    *prometheus.GaugeVec
@@ -24,7 +24,7 @@ type Manager struct {
 	registry     *prometheus.Registry
 }
 
-// New は新しい Manager を生成し、Prometheus レジストリに各メトリクスを登録する
+// New creates a Manager and registers each metric with the Prometheus registry
 func New() *Manager {
 	registry := prometheus.NewRegistry()
 
@@ -64,27 +64,27 @@ func New() *Manager {
 	}
 }
 
-// SetActivation はラベル付き Gauge の値を設定する
+// SetActivation sets the value of a labeled Gauge
 func (m *Manager) SetActivation(env, cluster, namespace, workload string, value float64) {
 	m.activation.WithLabelValues(env, cluster, namespace, workload).Set(value)
 }
 
-// DeleteMetric は指定ラベルのメトリクス系列を Gauge から削除する
+// DeleteMetric removes the series with the given labels from a Gauge
 func (m *Manager) DeleteMetric(env, cluster, namespace, workload string) {
 	m.activation.DeleteLabelValues(env, cluster, namespace, workload)
 }
 
-// SetReachable は指定 cluster の reachability Gauge を更新する
+// SetReachable updates the reachability Gauge of the given cluster
 func (m *Manager) SetReachable(cluster string, value float64) {
 	m.reachable.WithLabelValues(cluster).Set(value)
 }
 
-// IncTokenRefresh は token refresh Counter を 1 加算する。result は "success" または "error"
+// IncTokenRefresh increments the token refresh Counter by 1. result is "success" or "error"
 func (m *Manager) IncTokenRefresh(cluster, result string) {
 	m.tokenRefresh.WithLabelValues(cluster, result).Inc()
 }
 
-// Handler は Prometheus メトリクスを公開する http.Handler を返す
+// Handler returns the http.Handler exposing Prometheus metrics
 func (m *Manager) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
 }

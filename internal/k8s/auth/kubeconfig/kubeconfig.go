@@ -1,5 +1,5 @@
-// Package kubeconfig は kubeconfig ファイル経由で K8s API への接続情報を生成する
-// EndpointProvider 実装。ローカル開発や任意の cluster (KIND, k3d 等) を扱うために使う。
+// Package kubeconfig is an EndpointProvider that builds K8s API connection info from a kubeconfig file,
+// for local development and arbitrary clusters (KIND, k3d, etc.).
 package kubeconfig
 
 import (
@@ -12,17 +12,17 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 )
 
-// Provider は kubeconfig ファイル経由の auth.EndpointProvider 実装。
+// Provider is an auth.EndpointProvider backed by a kubeconfig file.
 type Provider struct{}
 
-// New は Provider を返す。引数なしのシンプル実装。
+// New returns a Provider.
 func New() *Provider { return &Provider{} }
 
-// Type は auth.EndpointProvider 契約。
+// Type implements the auth.EndpointProvider contract.
 func (p *Provider) Type() string { return config.ProviderTypeKubeconfig }
 
-// RestConfig は cluster 用の rest.Config を kubeconfig ファイルから生成する。
-// Cluster.Provider.Kubeconfig.Context が空なら current-context を使う。
+// RestConfig builds a rest.Config for the cluster from the kubeconfig file.
+// An empty Cluster.Provider.Kubeconfig.Context uses the current-context.
 func (p *Provider) RestConfig(_ context.Context, c config.Cluster) (*rest.Config, error) {
 	if c.Provider.Kubeconfig == nil {
 		return nil, fmt.Errorf("kubeconfig provider: Provider.Kubeconfig is nil (cluster env=%q)", c.Env)

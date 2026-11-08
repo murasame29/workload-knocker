@@ -1,4 +1,4 @@
-// Package slackbot は Slack Socket Mode で動作する Slack Gateway を server.Lifecycle として実装する。
+// Package slackbot implements the Slack Gateway running on Slack Socket Mode as a server.Lifecycle.
 package slackbot
 
 import (
@@ -18,14 +18,14 @@ import (
 )
 
 const (
-	// componentName は server.Lifecycle.Name の戻り値。
+	// componentName is the return value of server.Lifecycle.Name.
 	componentName = "slack"
-	// maxConcurrentEvents は同時に処理する Slack イベント数の上限。
-	// Slack の slash command は人間操作なので 10 並列で十分に余裕がある。
+	// maxConcurrentEvents caps concurrently processed Slack events.
+	// Slash commands are human-driven, so 10 in parallel is plenty.
 	maxConcurrentEvents = 10
 )
 
-// Bot は Slack Socket Mode で動作するワークロード制御 Bot。
+// Bot is the workload control bot running on Slack Socket Mode.
 type Bot struct {
 	client   *slack.Client
 	socket   *socketmode.Client
@@ -34,16 +34,16 @@ type Bot struct {
 	cfg      *config.Env
 	tracer   nrx.Tracer
 
-	// sem は同時実行 goroutine 数を制限するセマフォ。
+	// sem is a semaphore limiting concurrent goroutines.
 	sem chan struct{}
-	// inflight は Shutdown 時に in-flight ハンドラの完了を待つための WaitGroup。
+	// inflight is a WaitGroup that lets Shutdown wait for in-flight handlers.
 	inflight sync.WaitGroup
-	// done は Start で起動した受信ループの停止を Shutdown が待つために使う。
+	// done lets Shutdown wait for the receive loop started by Start to stop.
 	done chan struct{}
 }
 
-// New は Bot を生成する。
-// registry は Slack のスラッシュコマンドから cluster を解決するために使う。
+// New creates a Bot.
+// registry resolves clusters from Slack slash commands.
 func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, tracer nrx.Tracer) (*Bot, error) {
 	if cfg.SlackAppToken == "" || cfg.SlackBotToken == "" {
 		return nil, fmt.Errorf("slackbot.New: slack tokens are required")
@@ -67,36 +67,35 @@ func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, tr
 	}, nil
 }
 
-// Name は server.Lifecycle 契約に基づく安定識別子を返す。
+// Name returns the stable identifier per the server.Lifecycle contract.
 func (b *Bot) Name() string { return componentName }
 
-// Start は Socket Mode 接続を開始する。ctx がキャンセルされると socketmode.Client が
-// 自身で接続を切って戻るため、Manager 側のシグナル経路に従って一斉停止できる。
+// Start opens the Socket Mode connection. When ctx is canceled, socketmode.Client
+// disconnects itself and returns, so everything stops together via the Manager signal path.
 func (b *Bot) Start(ctx context.Context) error {
 	defer close(b.done)
 	go b.handleEvents()
 
-	slog.Info("Slack Socket Mode 接続を開始します")
-	// socketmode.Client.RunContext は再接続ループを回し続ける実装のため、現時点では
-	// 必ず非 nil の error を返す。staticcheck はこれを検知して err != nil を
-	// 常に真と指摘するが、ライブラリ側の実装詳細に依存したくないため nil 判定は残す。
-	//nolint:staticcheck // SA4023: RunContext が将来 nil を返しても nil ラップしないよう防御的に判定する
+	slog.Info("starting Slack Socket Mode connection")
+	// socketmode.Client.RunContext currently always returns a non-nil error, so staticcheck
+	// flags err != nil as always true; keep the check to avoid depending on library internals.
+	//nolint:staticcheck // SA4023: defensive check in case RunContext returns nil in the future
 	if err := b.socket.RunContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("slack socketmode run: %w", err)
 	}
 	return nil
 }
 
-// Shutdown は受信ループの停止と in-flight ハンドラの完了を待つ。
-// Socket Mode の切断自体は Start に渡した ctx のキャンセルで socketmode.Client が処理する。
+// Shutdown waits for the receive loop to stop and in-flight handlers to finish.
+// Disconnecting Socket Mode is handled by socketmode.Client when the ctx passed to Start is canceled.
 func (b *Bot) Shutdown(ctx context.Context) error {
-	// 受信ループの停止を待つ
+	// Wait for the receive loop to stop
 	select {
 	case <-b.done:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	// in-flight ハンドラの完了を ctx 期限内に待つ
+	// Wait for in-flight handlers within the ctx deadline
 	doneCh := make(chan struct{})
 	go func() {
 		b.inflight.Wait()
@@ -111,13 +110,13 @@ func (b *Bot) Shutdown(ctx context.Context) error {
 }
 
 func (b *Bot) handleEvents() {
-	// 各イベントを goroutine で処理し、ハンドラの実行が後続イベントの受信をブロックしないようにする。
-	// シリアル実行だと Slack の 3 秒 Ack タイムアウトに抵触し、フォーム操作がたまに失敗する。
-	// セマフォで同時実行数を maxConcurrentEvents に制限し、暴発を防ぐ。
+	// Handle each event in a goroutine so handlers do not block receiving later events;
+	// serial execution would hit the 3s Slack Ack timeout and make forms fail intermittently.
+	// The semaphore caps concurrency at maxConcurrentEvents.
 	for evt := range b.socket.Events {
 		slog.Debug("socket event received", slog.String("event.type", string(evt.Type)), slog.Bool("has_request", evt.Request != nil))
 
-		// 接続系イベント (Request が nil) は goroutine 化前に処理する。
+		// Handle connection events (Request is nil) before spawning a goroutine.
 		switch evt.Type {
 		case socketmode.EventTypeConnecting:
 			slog.Info("Slack socket mode connecting")
@@ -169,7 +168,7 @@ func (b *Bot) handleEvents() {
 				}
 				slog.Debug("interactive event dispatched", slog.String("callback.type", string(callback.Type)), slog.String("callback.id", callback.CallbackID), slog.String("view.callback_id", callback.View.CallbackID), slog.String("user.id", callback.User.ID))
 				if callback.Type == slack.InteractionTypeViewSubmission {
-					// view_submission は各ハンドラ内で Ack する (response_action payload が必要なため)
+					// view_submission is acked inside each handler (a response_action payload is needed)
 					b.handleViewSubmission(callback, evt.Request)
 				} else {
 					b.ack(*evt.Request)
@@ -183,20 +182,20 @@ func (b *Bot) handleEvents() {
 	}
 }
 
-// startTransaction は tracer に委譲する。tracer が no-op なら no-op span を返す。
+// startTransaction delegates to the tracer; a no-op tracer yields a no-op span.
 func (b *Bot) startTransaction(name string) nrx.Span {
 	return b.tracer.Start(name)
 }
 
-// ack は b.socket.Ack のエラーを WARN ログに集約する薄いラッパ。
-// Slack 側の Ack 失敗はリカバリ困難なのでログだけ残してプロセスは継続する。
+// ack is a thin wrapper that logs b.socket.Ack errors at WARN.
+// A failed Slack Ack is hard to recover from, so only log and keep running.
 func (b *Bot) ack(req socketmode.Request, payload ...any) {
 	if err := b.socket.Ack(req, payload...); err != nil {
 		slog.Warn("socket mode ack failed", slog.String("error.message", err.Error()))
 	}
 }
 
-// recordCustomEvent は tracer に委譲する。
+// recordCustomEvent delegates to the tracer.
 func (b *Bot) recordCustomEvent(eventType string, params map[string]any) {
 	b.tracer.RecordEvent(eventType, params)
 }

@@ -15,7 +15,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 )
 
-// TestNew_Construction は Provider のコンストラクタが空の aws.Config でも nil でない実装を返すことを確認する。
+// TestNew_Construction checks the constructor returns a non-nil Provider even with an empty aws.Config.
 func TestNew_Construction(t *testing.T) {
 	t.Parallel()
 
@@ -40,7 +40,7 @@ func TestNew_Construction(t *testing.T) {
 	}
 }
 
-// fakeTokenGenerator は tokenGenerator interface の test stub。
+// fakeTokenGenerator is a test stub of the tokenGenerator interface.
 type fakeTokenGenerator struct {
 	token string
 	err   error
@@ -56,7 +56,7 @@ func (f *fakeTokenGenerator) GetWithOptions(_ context.Context, _ *tokenpkg.GetTo
 	}, nil
 }
 
-// fakeMetrics は MetricsHook の test stub。呼び出し回数を記録する。
+// fakeMetrics is a test stub of MetricsHook that counts calls.
 type fakeMetrics struct {
 	mu              sync.Mutex
 	tokenSuccesses  int
@@ -81,10 +81,9 @@ func (m *fakeMetrics) IncTokenRefresh(cluster, result string) {
 	}
 }
 
-// TestTokenRoundTripper_AddsAuthorizationHeader は tokenRoundTripper が
-// Authorization: Bearer <token> ヘッダを各リクエストに付与し、
-// IncTokenRefresh(success) を記録することを検証する。
-// metrics の cluster ラベル値は config.Cluster.Name であることも併せて確認する。
+// TestTokenRoundTripper_AddsAuthorizationHeader verifies tokenRoundTripper adds an
+// Authorization: Bearer <token> header to each request and records IncTokenRefresh(success),
+// and that the metrics cluster label is config.Cluster.Name.
 func TestTokenRoundTripper_AddsAuthorizationHeader(t *testing.T) {
 	t.Parallel()
 
@@ -165,8 +164,8 @@ func TestTokenRoundTripper_AddsAuthorizationHeader(t *testing.T) {
 	}
 }
 
-// TestTokenRoundTripper_RecordsErrorOnFailure は token 生成失敗時に
-// IncTokenRefresh(error) を記録し、エラーが伝播することを検証する。
+// TestTokenRoundTripper_RecordsErrorOnFailure verifies a token generation failure records
+// IncTokenRefresh(error) and propagates the error.
 func TestTokenRoundTripper_RecordsErrorOnFailure(t *testing.T) {
 	t.Parallel()
 
@@ -219,7 +218,7 @@ func TestTokenRoundTripper_RecordsErrorOnFailure(t *testing.T) {
 	}
 }
 
-// errStub は簡易エラー型 (テスト用)。
+// errStub is a simple error type for tests.
 type errStub string
 
 func (e errStub) Error() string { return string(e) }

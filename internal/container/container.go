@@ -25,12 +25,11 @@ import (
 	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
-// BuildServer は DI コンテナを構築する。
-// providers の各 constructor を順に dig.Container へ登録する。
+// BuildServer builds the DI container and registers all providers.
 func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	c := dig.New()
 
-	// 起動時に外部から渡される設定値はループの外で先に登録する。
+	// Register externally supplied settings before the loop.
 	if err := c.Provide(func() *config.Env { return cfg }); err != nil {
 		return nil, fmt.Errorf("provide *config.Env: %w", err)
 	}
@@ -39,34 +38,34 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		// MetricsManager
 		func() metrics.MetricsManager { return metrics.New() },
 
-		// New Relic Application — license key 未設定なら nil (no-op)
+		// New Relic Application: nil (no-op) when the license key is unset
 		newNewRelicApp,
 
-		// Tracer — *newrelic.Application を nil-safe に wrap
+		// Tracer: nil-safe wrapper of *newrelic.Application
 		nrx.New,
 
-		// AWS Config (IRSA + default credential chain) — eks Provider が消費
+		// AWS Config (IRSA + default credential chain), consumed by the eks Provider
 		newAWSConfig,
 
-		// EndpointProvider 群: managed cluster への接続経路
+		// EndpointProvider set: connection paths to managed clusters
 		func(awsCfg aws.Config, m metrics.MetricsManager) (*eks.Provider, error) {
 			return eks.New(awsCfg, m)
 		},
 		kubeconfig.New,
 
-		// k8sauth.Multiplexer は provider type で dispatch
+		// k8sauth.Multiplexer dispatches by provider type
 		func(e *eks.Provider, kc *kubeconfig.Provider) *k8sauth.Multiplexer {
 			return k8sauth.NewMultiplexer(e, kc)
 		},
 
-		// Cluster Registry — RO mount された YAML を起動時に読み込み + 検証
+		// Cluster Registry: loads and validates the read-only mounted YAML at startup
 		func(cfg *config.Env) (*config.Config, error) {
 			return config.Load(cfg.ClusterConfigPath)
 		},
 
-		// MultiStore — k8sauth.Multiplexer を RestConfigSource として消費
+		// MultiStore, consuming k8sauth.Multiplexer as RestConfigSource
 		newMultiStore,
-		// WorkloadStore interface (consumer 側はこちら)
+		// WorkloadStore interface (for consumers)
 		func(s *store.MultiStore) model.WorkloadStore { return s },
 
 		// /api/v1/stop-all
@@ -81,7 +80,7 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		// Slack Bot (server.Lifecycle)
 		slackbot.New,
 
-		// Lifecycle Manager — main から1点で起動・停止する
+		// Lifecycle Manager: single entry point to start and stop from main
 		func(cfg *config.Env, h *httpserver.Server, b *slackbot.Bot) *server.Manager {
 			return server.NewManager(cfg.ShutdownTimeout, h, b)
 		},
@@ -96,11 +95,11 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	return c, nil
 }
 
-// newNewRelicApp は New Relic Application のコンストラクタ。
-// license key 未設定時 / 初期化失敗時は nil を返す (Tracer 側で no-op になる)。
+// newNewRelicApp constructs the New Relic Application.
+// Returns nil when the license key is unset or init fails (the Tracer then no-ops).
 func newNewRelicApp(cfg *config.Env) *newrelic.Application {
 	if cfg.NewRelicLicenseKey == "" {
-		slog.Warn("NEW_RELIC_LICENSE_KEY が未設定のため New Relic は無効です")
+		slog.Warn("NEW_RELIC_LICENSE_KEY is not set; New Relic is disabled")
 		return nil
 	}
 	app, err := newrelic.NewApplication(
@@ -112,10 +111,10 @@ func newNewRelicApp(cfg *config.Env) *newrelic.Application {
 		newrelic.ConfigAppLogDecoratingEnabled(true),
 	)
 	if err != nil {
-		slog.Warn("New Relic の初期化に失敗", slog.String("error.message", err.Error()))
+		slog.Warn("failed to initialize New Relic", slog.String("error.message", err.Error()))
 		return nil
 	}
-	slog.Info("New Relic APM を初期化しました", slog.String("app_name", cfg.NewRelicAppName))
+	slog.Info("New Relic APM initialized", slog.String("app_name", cfg.NewRelicAppName))
 	return app
 }
 

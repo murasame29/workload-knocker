@@ -1,5 +1,5 @@
-// Package k8s は K8s API を直接叩く低レベル層。ドメインロジックは internal/store に置き、
-// この層は単純な CRUD / List だけに責務を限定する。テスト容易性のため interface を公開する。
+// Package k8s is the low-level layer that calls the K8s API directly.
+// Domain logic lives in internal/store; this layer only does simple CRUD/List behind interfaces.
 package k8s
 
 import (
@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ScaledObjectLister は KEDA ScaledObject を全 namespace で list する抽象。
+// ScaledObjectLister lists KEDA ScaledObjects across all namespaces.
 type ScaledObjectLister interface {
 	List(ctx context.Context) ([]kedav1alpha1.ScaledObject, error)
 }
@@ -19,7 +19,7 @@ type kedaScaledObjectLister struct {
 	client kedaclient.Interface
 }
 
-// NewKEDAScaledObjectLister は KEDA clientset を使った ScaledObjectLister 実装を返す。
+// NewKEDAScaledObjectLister returns a ScaledObjectLister backed by the KEDA clientset.
 func NewKEDAScaledObjectLister(client kedaclient.Interface) ScaledObjectLister {
 	return &kedaScaledObjectLister{client: client}
 }
