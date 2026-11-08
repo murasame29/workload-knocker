@@ -29,7 +29,7 @@ type Env struct {
 	// authorization is disabled when that file does not exist (see internal/authz).
 	AuthzConfigPath string `env:"AUTHZ_CONFIG_PATH"`
 
-	// ClusterReconcileTimeout is the Reconcile timeout when a Slack command is received.
+	// ClusterReconcileTimeout is the Reconcile timeout when a chat command is received.
 	ClusterReconcileTimeout time.Duration `env:"CLUSTER_RECONCILE_TIMEOUT" envDefault:"2s"`
 
 	// StopAllTimeout is the per-cluster timeout of /api/v1/stop-all.

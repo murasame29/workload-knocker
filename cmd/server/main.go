@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -22,6 +24,13 @@ func main() {
 }
 
 func run() int {
+	showVersion := flag.Bool("version", false, "print version information and exit")
+	flag.Parse()
+	if *showVersion {
+		fmt.Println(version.Get())
+		return 0
+	}
+
 	logOpts := &slog.HandlerOptions{}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, logOpts)))
 
@@ -44,11 +53,12 @@ func run() int {
 	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, logOpts)))
 
+	vi := version.Get()
 	slog.Info("starting workload-knocker",
 		slog.String("log.level", cfg.LogLevel),
-		slog.String("service.version", version.Version),
-		slog.String("vcs.revision", version.Commit),
-		slog.String("build.date", version.BuildDate),
+		slog.String("service.version", vi.Version),
+		slog.String("vcs.revision", vi.Commit),
+		slog.String("build.date", vi.BuildDate),
 	)
 
 	c, err := container.BuildServer(cfg)

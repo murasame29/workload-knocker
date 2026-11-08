@@ -9,7 +9,7 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 2. On every push to `main`, `.github/workflows/release-please.yml` opens or updates a release PR. It bumps `.release-please-manifest.json`, `CHANGELOG.md`, and `version` / `appVersion` in `charts/workload-knocker/Chart.yaml` (marked with `x-release-please-version`), so chart version, appVersion and app version are always equal.
 3. Merging the release PR creates the tag `vX.Y.Z` and the GitHub Release. The release body is the generated changelog (Features, Bug Fixes, Performance Improvements, Dependencies, Reverts, and a BREAKING CHANGES section).
 4. The tag triggers `.github/workflows/release.yml`:
-   - `image` publishes `ghcr.io/murasame29/workload-knocker:X.Y.Z` (plus `X.Y`, `X`, `latest` when it is the highest stable tag) with OCI labels `source`, `version`, `revision`.
+   - `image` publishes `ghcr.io/murasame29/workload-knocker:X.Y.Z` (plus `X.Y`, `X`, `latest` when it is the highest stable tag) with OCI labels `source`, `version`, `revision`, `created`, and bakes the version, commit and build date into the binary (`workload-knocker --version`).
    - `chart` (after `image`) checks that tag == Chart `version` == `appVersion`, that the image exists, and that the package carries LICENSE/NOTICE, then pushes `oci://ghcr.io/murasame29/charts/workload-knocker` version `X.Y.Z` and attaches the `.tgz` to the GitHub Release.
 
 Published image and chart versions are immutable: a re-run adopts an existing artifact only if it matches, otherwise it fails.
