@@ -29,6 +29,14 @@ func (h *Holder) Store(c *Config) { h.cur.Store(c) }
 // ByEnv implements Resolver.
 func (h *Holder) ByEnv(env string) (Cluster, bool) { return h.cur.Load().ByEnv(env) }
 
+// ByDiscordCommand resolves a Discord command against the current Config.
+func (h *Holder) ByDiscordCommand(cmd string) (Cluster, bool) {
+	return h.cur.Load().ByDiscordCommand(cmd)
+}
+
+// DiscordCommands lists the Discord commands of the current Config.
+func (h *Holder) DiscordCommands() []string { return h.cur.Load().DiscordCommands() }
+
 // BySlashCommand implements Resolver.
 func (h *Holder) BySlashCommand(cmd string) (Cluster, bool) {
 	return h.cur.Load().BySlashCommand(cmd)

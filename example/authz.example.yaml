@@ -28,6 +28,6 @@ rules:
       slack:
         groups: [S01DEVS000]
       discord:
-        users: ["123456789012345678"]
-        roles: ["223456789012345678"]
+        users: ["123456789012345678"]   # Discord user IDs (enable Developer Mode, then Copy ID)
+        roles: ["223456789012345678"]   # Discord role IDs of the member
       api: true

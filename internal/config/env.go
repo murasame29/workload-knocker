@@ -47,13 +47,22 @@ type Env struct {
 	// SlackAppToken / SlackBotToken are required only when the Slack frontend is enabled.
 	SlackAppToken string `env:"SLACK_APP_TOKEN"`
 	SlackBotToken string `env:"SLACK_BOT_TOKEN"`
-	LogLevel      string `env:"LOG_LEVEL"       envDefault:"info"`
+
+	// DiscordBotToken is required only when the Discord frontend is enabled.
+	// DiscordGuildID scopes command registration to one guild (instant); empty registers globally.
+	DiscordBotToken string `env:"DISCORD_BOT_TOKEN"`
+	DiscordGuildID  string `env:"DISCORD_GUILD_ID"`
+
+	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
 }
 
 // ValidateFrontends checks the env required by the frontends enabled in the registry.
 func (e *Env) ValidateFrontends(reg *Config) error {
 	if reg.FrontendEnabled(FrontendSlack) && (e.SlackAppToken == "" || e.SlackBotToken == "") {
 		return errors.New("SLACK_APP_TOKEN and SLACK_BOT_TOKEN are required when a cluster configures frontends.slack")
+	}
+	if reg.FrontendEnabled(FrontendDiscord) && e.DiscordBotToken == "" {
+		return errors.New("DISCORD_BOT_TOKEN is required when a cluster configures frontends.discord")
 	}
 	return nil
 }

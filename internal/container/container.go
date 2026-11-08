@@ -21,6 +21,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/model"
 	"github.com/murasame29/workload-knocker/internal/reload"
 	"github.com/murasame29/workload-knocker/internal/server"
+	discordbot "github.com/murasame29/workload-knocker/internal/server/discord"
 	httpserver "github.com/murasame29/workload-knocker/internal/server/http"
 	slackbot "github.com/murasame29/workload-knocker/internal/server/slack"
 	"github.com/murasame29/workload-knocker/internal/store"
@@ -119,6 +120,13 @@ func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *
 	var fs []frontend.Frontend
 	if reg.FrontendEnabled(config.FrontendSlack) {
 		b, err := slackbot.New(cfg, ws, live, az, m)
+		if err != nil {
+			return nil, err
+		}
+		fs = append(fs, b)
+	}
+	if reg.FrontendEnabled(config.FrontendDiscord) {
+		b, err := discordbot.New(cfg, ws, live, az, m)
 		if err != nil {
 			return nil, err
 		}

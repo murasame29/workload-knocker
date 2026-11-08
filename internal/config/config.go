@@ -30,6 +30,7 @@ type Config struct {
 
 	byEnv          map[string]Cluster
 	bySlashCommand map[string]Cluster
+	byDiscordCmd   map[string]Cluster
 }
 
 // Controller is the configuration of the cluster the workload-knocker Pod runs in.
@@ -74,11 +75,15 @@ type ProviderKubeconfig struct {
 }
 
 // Frontend identifiers.
-const FrontendSlack = "slack"
+const (
+	FrontendSlack   = "slack"
+	FrontendDiscord = "discord"
+)
 
 // ClusterFrontends holds the per-frontend settings of a cluster; a nil entry means not configured.
 type ClusterFrontends struct {
-	Slack *SlackFrontend `yaml:"slack,omitempty"`
+	Slack   *SlackFrontend   `yaml:"slack,omitempty"`
+	Discord *DiscordFrontend `yaml:"discord,omitempty"`
 }
 
 // SlackFrontend holds Slack settings. SlashCommand is unique in the registry.
@@ -92,13 +97,16 @@ func (c *Config) FrontendEnabled(name string) bool {
 		if name == FrontendSlack && cl.Frontends.Slack != nil {
 			return true
 		}
+		if name == FrontendDiscord && cl.Frontends.Discord != nil {
+			return true
+		}
 	}
 	return false
 }
 
 // FrontendNames lists every known frontend; add new frontends here so hot reload can tell a
 // newly enabled one (restart required) from a change that can be applied live.
-var FrontendNames = []string{FrontendSlack}
+var FrontendNames = []string{FrontendSlack, FrontendDiscord}
 
 // EnabledFrontends returns the names of the frontends at least one cluster configures.
 func (c *Config) EnabledFrontends() []string {
@@ -139,7 +147,7 @@ func (c *Config) BySlashCommand(cmd string) (Cluster, bool) {
 //   - at least one frontend is configured per cluster, and its required fields are set
 //   - the removed top-level slack key is rejected with a pointer to frontends.slack
 //   - Provider.Type is eks or kubeconfig with its nested setting present (other providers must be nil)
-//   - Env and each frontend's SlashCommand are unique in the registry
+//   - Env and each frontend's command are unique in the registry
 func (c *Config) Validate() error {
 	if c.Controller.Namespace == "" {
 		return errors.New("controller.namespace is required")
@@ -150,6 +158,7 @@ func (c *Config) Validate() error {
 
 	byEnv := make(map[string]Cluster, len(c.Clusters))
 	bySC := make(map[string]Cluster, len(c.Clusters))
+	byDC := make(map[string]Cluster)
 
 	for i, cl := range c.Clusters {
 		if cl.Env == "" {
@@ -161,11 +170,16 @@ func (c *Config) Validate() error {
 		if cl.LegacySlack != nil {
 			return fmt.Errorf("cluster[%d] %q: slack is no longer supported; move it to frontends.slack (frontends.slack.slashCommand)", i, cl.Env)
 		}
-		if cl.Frontends.Slack == nil {
-			return fmt.Errorf("cluster[%d] %q: at least one frontend is required (frontends.slack.slashCommand)", i, cl.Env)
+		if cl.Frontends.Slack == nil && cl.Frontends.Discord == nil {
+			return fmt.Errorf("cluster[%d] %q: at least one frontend is required (frontends.slack.slashCommand or frontends.discord.command)", i, cl.Env)
 		}
-		if cl.Frontends.Slack.SlashCommand == "" {
+		if cl.Frontends.Slack != nil && cl.Frontends.Slack.SlashCommand == "" {
 			return fmt.Errorf("cluster[%d] %q: frontends.slack.slashCommand is required", i, cl.Env)
+		}
+		if cl.Frontends.Discord != nil {
+			if err := validateDiscordCommand(cl.Frontends.Discord.Command); err != nil {
+				return fmt.Errorf("cluster[%d] %q: frontends.discord.command: %w", i, cl.Env, err)
+			}
 		}
 		if err := validateProvider(cl); err != nil {
 			return fmt.Errorf("cluster[%d] %q: %w", i, cl.Env, err)
@@ -173,16 +187,26 @@ func (c *Config) Validate() error {
 		if _, dup := byEnv[cl.Env]; dup {
 			return fmt.Errorf("cluster registry duplicate env %q", cl.Env)
 		}
-		sc := cl.Frontends.Slack.SlashCommand
-		if _, dup := bySC[sc]; dup {
-			return fmt.Errorf("cluster registry duplicate slashCommand %q (env=%q)", sc, cl.Env)
+		if cl.Frontends.Slack != nil {
+			sc := cl.Frontends.Slack.SlashCommand
+			if _, dup := bySC[sc]; dup {
+				return fmt.Errorf("cluster registry duplicate slashCommand %q (env=%q)", sc, cl.Env)
+			}
+			bySC[sc] = cl
+		}
+		if cl.Frontends.Discord != nil {
+			dc := cl.Frontends.Discord.Command
+			if _, dup := byDC[dc]; dup {
+				return fmt.Errorf("cluster registry duplicate discord command %q (env=%q)", dc, cl.Env)
+			}
+			byDC[dc] = cl
 		}
 		byEnv[cl.Env] = cl
-		bySC[sc] = cl
 	}
 
 	c.byEnv = byEnv
 	c.bySlashCommand = bySC
+	c.byDiscordCmd = byDC
 	return nil
 }
 

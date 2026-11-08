@@ -1,6 +1,6 @@
 # workload-knocker
 
-Start and stop KEDA-scaled Kubernetes workloads on demand from Slack.
+Start and stop KEDA-scaled Kubernetes workloads on demand from Slack or Discord.
 
 [日本語](docs/ja/configuration.md)
 
@@ -20,6 +20,8 @@ Slack  <->  workload-knocker  --- EKS / kubeconfig --->  managed cluster A, B, .
 
 - The controller loads a cluster registry (YAML), hot reloads it on change, and lists every
   `ScaledObject` whose Prometheus trigger queries `workload_knocker_activation`.
+- The Discord slash command (`frontends.discord.command`) shows ephemeral select menus and a plan
+  preview with Confirm/Cancel; see [Discord](docs/en/configuration.md#discord).
 - The Slack slash command (`frontends.slack.slashCommand`) opens a modal. Workloads that differ only by an `api` / `app` / `worker`
   suffix are shown as one checkbox.
 - Starting a workload sets `workload_knocker_activation{env,cluster,namespace,workload} = 1`.
@@ -48,6 +50,8 @@ helm install workload-knocker oci://ghcr.io/murasame29/charts/workload-knocker \
 
 1. Create a Slack app from [`slack-manifest.yaml`](slack-manifest.yaml) (Socket Mode) and store
    the app-level and bot tokens in a Secret (`app-token`, `bot-token`).
+   For Discord, create a bot, invite it with the `applications.commands` and `bot` scopes, and store
+   the bot token in a Secret (`bot-token`, `discord.secretName`).
 2. Write the cluster registry in `config.inline` ([`example/values.example.yaml`](example/values.example.yaml)).
 3. Grant the controller access to each managed cluster
    ([`example/managed-cluster-rbac.yaml`](example/managed-cluster-rbac.yaml)).

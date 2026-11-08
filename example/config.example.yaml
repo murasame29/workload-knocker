@@ -12,3 +12,6 @@ clusters:
     frontends:
       slack:
         slashCommand: /workload-knocker-local
+      # Discord (needs DISCORD_BOT_TOKEN; optional DISCORD_GUILD_ID). Lowercase, no leading slash.
+      # discord:
+      #   command: workload-knocker-local

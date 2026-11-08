@@ -73,6 +73,17 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.slack.secretName | quote }}
                   key: {{ .Values.slack.botTokenKey | quote }}
+            {{- if .Values.discord.secretName }}
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.discord.secretName | quote }}
+                  key: {{ .Values.discord.botTokenKey | quote }}
+            {{- with .Values.discord.guildId }}
+            - name: DISCORD_GUILD_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
