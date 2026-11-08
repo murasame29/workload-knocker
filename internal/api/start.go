@@ -13,12 +13,12 @@ import (
 )
 
 // defaultStartUser is recorded when the start request omits user.
-// It marks REST-originated starts, distinct from Slack username starts.
+// It marks REST-originated starts, distinct from chat user starts.
 const defaultStartUser = "rest-api"
 
 // StartHandler handles /api/v1/start.
 // It sets workloads of the given env / namespace to running (replicas=1),
-// calling the same store.Start as the Slack Modal start flow.
+// calling the same store.Start as the chat start flows.
 type StartHandler struct {
 	store   model.WorkloadStore
 	metrics metrics.MetricsManager

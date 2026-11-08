@@ -2,16 +2,16 @@
 
 Start and stop KEDA-scaled Kubernetes workloads on demand from Slack or Discord.
 
-[日本語](docs/ja/configuration.md)
+[Japanese](docs/ja/configuration.md) | [Configuration](docs/en/configuration.md) | [Repository layout](docs/en/repository-layout.md)
 
 workload-knocker keeps dev and staging workloads at zero until someone needs them. A
-Slack slash command opens a modal listing the `ScaledObject`s of a cluster. Selecting a
-workload makes the controller emit a Prometheus gauge, and KEDA scales the workload up
-from that metric. One controller can manage several clusters (EKS or any cluster reachable
+Slack or Discord slash command lists the `ScaledObject`s of a cluster. Selecting a
+workload makes the controller emit the Prometheus gauge `workload_knocker_activation`, and KEDA
+scales the workload up from that metric through its Prometheus trigger. One controller can manage several clusters (EKS or any cluster reachable
 through a kubeconfig).
 
 ```
-Slack  <->  workload-knocker  --- EKS / kubeconfig --->  managed cluster A, B, ...
+Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed cluster A, B, ...
                |  /metrics                                 ScaledObject (Prometheus trigger)
                +-----------------> Prometheus <----------- KEDA
 ```
@@ -28,6 +28,7 @@ Slack  <->  workload-knocker  --- EKS / kubeconfig --->  managed cluster A, B, .
   Stopping sets it to 0. The requested state is stored in a `workload-state` ConfigMap in each
   managed cluster, so it survives restarts.
 - `POST /api/v1/start` and `POST /api/v1/stop-all` provide the same operations over HTTP.
+  See [HTTP API](docs/en/configuration.md#http-api).
 
 Your `ScaledObject` needs a Prometheus trigger such as:
 
@@ -61,6 +62,18 @@ helm install workload-knocker oci://ghcr.io/murasame29/charts/workload-knocker \
 
 See [docs/en/configuration.md](docs/en/configuration.md) for every option, the HTTP API, and metrics.
 
+## Operation modes
+
+`OPERATION_MODE` (chart value `mode`) controls who may stop workloads:
+
+| Mode | API start | API stop / stop-all | Chat stop |
+|---|---|---|---|
+| `full` (default) | yes | yes | yes |
+| `scheduled-stop` | yes | no (`403`) | no; the nightly CronJob (`nightlyStop`) stops workloads |
+| `off` | yes | no (`403`) | yes |
+
+Details and the `nightlyStop` values: [Operation modes](docs/en/configuration.md#operation-modes-and-nightly-stop).
+
 ## Security
 
 `/api/v1/*` requires `Authorization: Bearer <API_TOKEN>`. If `API_TOKEN` is unset the API
@@ -68,8 +81,9 @@ responds `503` (fail closed). `OPERATION_MODE` limits which operations the API a
 restrict network access to the Service, and do not expose it publicly.
 
 The authorization policy decides, per env, namespace, workload and action, which Slack users and
-usergroups (and the API caller) may start or stop. Chat lists only what the user may operate and
-re-checks every change on apply. The registry and the policy are hot reloaded; an invalid file is
+usergroups, Discord users and roles, and the API caller may start or stop. Chat lists only what the user may operate and
+re-checks every change on apply. Without a policy file every chat user and the API caller may do
+everything. The registry and the policy are hot reloaded; an invalid file is
 rejected and the previous config stays active. See
 [docs/en/configuration.md](docs/en/configuration.md#authorization).
 
@@ -79,7 +93,11 @@ rejected and the previous config stays active. See
 make test           # go vet + go test -race
 make test-property  # property-based tests
 make docker-build
+go run ./cmd/server --version
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/en/repository-layout.md](docs/en/repository-layout.md) and
+[docs/en/release.md](docs/en/release.md). Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

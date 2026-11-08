@@ -7,7 +7,7 @@
 | `HTTP_PORT` | `8080` | HTTP port for `/metrics`, health probes and `/api/v1/*` |
 | `CLUSTER_CONFIG_PATH` | `/etc/workload-knocker/config.yaml` | Cluster registry file |
 | `CONTROLLER_NAMESPACE` | `workload-control` | Namespace of the `workload-state` ConfigMap in managed clusters |
-| `CLUSTER_RECONCILE_TIMEOUT` | `2s` | Reconcile timeout when a Slack command arrives |
+| `CLUSTER_RECONCILE_TIMEOUT` | `2s` | Reconcile timeout when a chat (Slack or Discord) command arrives |
 | `STOP_ALL_TIMEOUT` | `10s` | Per-cluster timeout for `/api/v1/stop-all` |
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
@@ -20,6 +20,18 @@
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
 `WORKLOAD_ENV` is deprecated and ignored (a warning is logged).
+
+## Version
+
+`workload-knocker --version` (or `-version`) prints one line and exits before reading any configuration:
+
+```text
+workload-knocker version=0.1.0 commit=<sha> build_date=<RFC3339 UTC>
+```
+
+Release images get the three values from build arguments. A binary built with `go build` or
+`go install` falls back to the Go build info (module version and VCS revision/time) and shows
+`dev` / `unknown` for what is not available. The same fields are logged at startup.
 
 ## Cluster registry
 
@@ -95,7 +107,7 @@ rules:
 
 - Globs use Go `path.Match` syntax (`*`, `?`, `[a-z]`); they are case sensitive and `*` does not cross `/`.
 - Any rule that matches env, namespace, workload and action and lists the subject allows the request.
-  **There are no deny rules in 0.1.0**: you cannot carve an exception out of a broader allow, so keep
+  **There are no deny rules**: you cannot carve an exception out of a broader allow, so keep
   allow rules narrow and `default: deny`.
 - A merged `foo-api` / `foo-app` / `foo-worker` entry is checked per member workload.
 - Unknown keys, malformed globs, IDs of the wrong shape (for example a usergroup ID under `users`) and a rule

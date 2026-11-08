@@ -1,5 +1,5 @@
-// Package httpserver implements the HTTP server exposing /metrics and /api/v1/stop-all
-// as a server.Lifecycle.
+// Package httpserver implements the HTTP server exposing /metrics, the probes and
+// /api/v1/{start,stop-all} as a server.Lifecycle.
 package httpserver
 
 import (
@@ -23,7 +23,7 @@ type Server struct {
 	ready  atomic.Bool
 }
 
-// New returns a Server with metrics and stop-all / start registered on the mux.
+// New returns a Server with metrics, probes and the API handlers registered on the mux.
 func New(port int, metricsHandler http.Handler, stopAllHandler http.Handler, startHandler http.Handler) *Server {
 	s := &Server{}
 	mux := http.NewServeMux()

@@ -6,14 +6,16 @@
 - `make test` runs `go vet` and `go test -race`.
 - `make test-property` runs the property-based tests.
 - `make docker-build` builds the container image locally.
-- `helm lint charts/workload-knocker` lints the chart.
+- `make licenses` checks dependency licenses.
+- `helm lint charts/workload-knocker --strict --values charts/workload-knocker/ci/test-values.yaml` lints the chart.
+- `go run ./cmd/server --version` prints the build identity.
 
 ## Commits and pull requests
 
 Commit messages and PR titles follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 - Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
-- Scope examples: `chart`, `store`, `slack`, `api`.
+- Scope examples: `chart`, `store`, `slack`, `discord`, `authz`, `api`.
 - Append `!` for breaking changes, for example `feat(api)!: require auth`.
 
 PRs are squash merged, so the PR title becomes the commit message. Link issues with

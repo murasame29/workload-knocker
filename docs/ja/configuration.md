@@ -7,7 +7,7 @@
 | `HTTP_PORT` | `8080` | `/metrics`、ヘルスチェック、`/api/v1/*` の HTTP ポート |
 | `CLUSTER_CONFIG_PATH` | `/etc/workload-knocker/config.yaml` | Cluster Registry ファイル |
 | `CONTROLLER_NAMESPACE` | `workload-control` | managed cluster 上の `workload-state` ConfigMap の namespace |
-| `CLUSTER_RECONCILE_TIMEOUT` | `2s` | Slack コマンド受信時の Reconcile タイムアウト |
+| `CLUSTER_RECONCILE_TIMEOUT` | `2s` | チャット (Slack / Discord) コマンド受信時の Reconcile タイムアウト |
 | `STOP_ALL_TIMEOUT` | `10s` | `/api/v1/stop-all` の cluster ごとのタイムアウト |
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
 | `OPERATION_MODE` | `full` | `full` / `scheduled-stop` / `off`。それ以外は起動時エラー ([動作モード](#動作モードと夜間停止)) |
@@ -20,6 +20,17 @@
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。
+
+## バージョン
+
+`workload-knocker --version` (または `-version`) は、設定を読み込む前に次の 1 行を出力して終了します。
+
+```text
+workload-knocker version=0.1.0 commit=<sha> build_date=<RFC3339 UTC>
+```
+
+リリースイメージでは 3 つの値をビルド引数から埋め込みます。`go build` や `go install` でビルドした場合は Go の build info
+(モジュールバージョンと VCS の revision / time) を使い、取得できない項目は `dev` / `unknown` になります。同じ項目は起動時のログにも出ます。
 
 ## Cluster Registry
 
@@ -95,7 +106,7 @@ rules:
 
 - glob は Go の `path.Match` 構文 (`*` `?` `[a-z]`)。大文字小文字を区別し、`*` は `/` を跨ぎません。
 - env・namespace・workload・action が一致し、かつ subject を列挙するルールが 1 つでもあれば許可です。
-  **0.1.0 に deny ルールはありません**。広い allow から例外を除くことはできないため、allow は狭く書き `default: deny` を保ってください。
+  **deny ルールはありません**。広い allow から例外を除くことはできないため、allow は狭く書き `default: deny` を保ってください。
 - merge された `foo-api` / `foo-app` / `foo-worker` は構成 workload ごとに判定します。
 - 未知のキー、不正な glob、形式の違う ID (例: `users` にユーザーグループ ID)、subject のないルールは読み込み時に拒否します。
 - ファイルは YAML でも JSON でも構いません。

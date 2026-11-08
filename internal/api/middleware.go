@@ -37,7 +37,7 @@ func RequireStop(m mode.Mode, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !m.AllowAPIStop() {
 			writeJSONError(w, http.StatusForbidden,
-				"stop is not allowed in OPERATION_MODE="+string(m)+"; use the Slack command or the scheduled stop")
+				"stop is not allowed in OPERATION_MODE="+string(m)+"; use the chat command or the scheduled stop")
 			return
 		}
 		next.ServeHTTP(w, r)
