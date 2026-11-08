@@ -17,7 +17,6 @@ import (
 	"github.com/murasame29/workload-knocker/internal/k8s"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 // activationTriggerMetric is the metric name that Prometheus trigger queries managed by
@@ -37,18 +36,16 @@ type ClusterStore struct {
 	scaledObj k8s.ScaledObjectLister
 	state     k8s.StateRepository
 	metrics   metrics.MetricsManager
-	tracer    nrx.Tracer
 	workloads map[string]*model.Workload // key: "namespace/name"
 }
 
 // NewClusterStore creates a ClusterStore.
-func NewClusterStore(c config.Cluster, scaledObj k8s.ScaledObjectLister, state k8s.StateRepository, m metrics.MetricsManager, tracer nrx.Tracer) *ClusterStore {
+func NewClusterStore(c config.Cluster, scaledObj k8s.ScaledObjectLister, state k8s.StateRepository, m metrics.MetricsManager) *ClusterStore {
 	return &ClusterStore{
 		cluster:   c,
 		scaledObj: scaledObj,
 		state:     state,
 		metrics:   m,
-		tracer:    tracer,
 		workloads: make(map[string]*model.Workload),
 	}
 }
@@ -173,9 +170,7 @@ func (s *ClusterStore) Reconcile(ctx context.Context) error {
 }
 
 func (s *ClusterStore) reconcile(ctx context.Context) error {
-	span := s.tracer.Start("K8s/ScaledObject/List")
 	items, err := s.scaledObj.List(ctx)
-	span.End()
 	if err != nil {
 		return fmt.Errorf("list ScaledObjects (cluster=%s): %w", s.cluster.Name, err)
 	}
@@ -261,9 +256,7 @@ func hasActivationTrigger(so *kedav1alpha1.ScaledObject) bool {
 
 // restoreLocked restores state from the state repository. Requires mu.
 func (s *ClusterStore) restoreLocked(ctx context.Context) {
-	span := s.tracer.Start("K8s/State/Load")
 	entries, err := s.state.Load(ctx)
-	span.End()
 	if err != nil {
 		slog.Warn("failed to load workload state", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()), slog.String("operation", "load-state"))
 		return
@@ -309,9 +302,7 @@ func (s *ClusterStore) persist(entries map[string]k8s.StateEntry) {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 
-	span := s.tracer.Start("K8s/State/Save")
 	err := s.state.Save(context.Background(), entries)
-	span.End()
 	if err != nil {
 		slog.Warn("failed to save workload state", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()), slog.String("operation", "save-state"))
 	}

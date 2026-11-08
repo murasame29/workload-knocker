@@ -9,9 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/newrelic/go-agent/v3/integrations/logcontext-v2/nrslog"
-	"github.com/newrelic/go-agent/v3/newrelic"
-
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/container"
 	"github.com/murasame29/workload-knocker/internal/server"
@@ -64,26 +61,17 @@ func run() int {
 		serverManager *server.Manager
 		ms            *store.MultiStore
 		registry      *config.Config
-		nrApp         *newrelic.Application
 		httpSrv       *httpserver.Server
 	)
 
-	if err := c.Invoke(func(m *server.Manager, ks *store.MultiStore, r *config.Config, nr *newrelic.Application, h *httpserver.Server) {
+	if err := c.Invoke(func(m *server.Manager, ks *store.MultiStore, r *config.Config, h *httpserver.Server) {
 		serverManager = m
 		ms = ks
 		registry = r
-		nrApp = nr
 		httpSrv = h
 	}); err != nil {
 		slog.Error("failed to resolve components", slog.String("error.message", err.Error()))
 		return 1
-	}
-
-	// Graceful shutdown of New Relic.
-	if nrApp != nil {
-		defer nrApp.Shutdown(5 * time.Second)
-		// Reconfigure slog with nrslog to attach NR-LINKING metadata.
-		slog.SetDefault(slog.New(nrslog.WrapHandler(nrApp, slog.NewJSONHandler(os.Stdout, logOpts))))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

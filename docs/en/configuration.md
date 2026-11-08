@@ -12,8 +12,6 @@
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `SLACK_APP_TOKEN` | required | Slack app-level token (`xapp-...`) |
 | `SLACK_BOT_TOKEN` | required | Slack bot token (`xoxb-...`) |
-| `NEW_RELIC_LICENSE_KEY` | empty | Enables New Relic APM when set |
-| `NEW_RELIC_APP_NAME` | `workload-knocker` | New Relic application name |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
 `WORKLOAD_ENV` is deprecated and ignored (a warning is logged).
@@ -104,3 +102,9 @@ initial sync of all clusters.
 | `workload_knocker_activation` | gauge | `env`, `cluster`, `namespace`, `workload` |
 | `workload_knocker_cluster_reachable` | gauge | `cluster` |
 | `workload_knocker_token_refresh_total` | counter | `cluster`, `result` |
+| `workload_knocker_operations_total` | counter | `env`, `cluster`, `operation`, `result` |
+| `workload_knocker_operation_duration_seconds` | histogram | `env`, `cluster`, `operation` |
+
+`operation` is `start`, `stop` or `stop_all`. `result` is `success`, `error` or `not_found`
+(`error` is only reported by `stop_all`). User IDs and workload names are never used as labels
+to keep cardinality bounded.

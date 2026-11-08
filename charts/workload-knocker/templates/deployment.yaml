@@ -68,15 +68,6 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.slack.secretName | quote }}
                   key: {{ .Values.slack.botTokenKey | quote }}
-            - name: NEW_RELIC_APP_NAME
-              value: {{ .Values.newRelic.appName | quote }}
-            {{- if .Values.newRelic.secretName }}
-            - name: NEW_RELIC_LICENSE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.newRelic.secretName | quote }}
-                  key: {{ .Values.newRelic.licenseKeyKey | quote }}
-            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

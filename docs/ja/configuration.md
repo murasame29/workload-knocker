@@ -12,8 +12,6 @@
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
 | `SLACK_APP_TOKEN` | 必須 | Slack App-level token (`xapp-...`) |
 | `SLACK_BOT_TOKEN` | 必須 | Slack Bot token (`xoxb-...`) |
-| `NEW_RELIC_LICENSE_KEY` | 空 | 設定すると New Relic APM を有効化 |
-| `NEW_RELIC_APP_NAME` | `workload-knocker` | New Relic の Application 名 |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。
@@ -103,3 +101,8 @@ cluster ごとの内訳を返します。
 | `workload_knocker_activation` | gauge | `env`, `cluster`, `namespace`, `workload` |
 | `workload_knocker_cluster_reachable` | gauge | `cluster` |
 | `workload_knocker_token_refresh_total` | counter | `cluster`, `result` |
+| `workload_knocker_operations_total` | counter | `env`, `cluster`, `operation`, `result` |
+| `workload_knocker_operation_duration_seconds` | histogram | `env`, `cluster`, `operation` |
+
+`operation` は `start`、`stop`、`stop_all` のいずれかです。`result` は `success`、`error`、`not_found` のいずれかです
+(`error` を返すのは `stop_all` のみ)。カーディナリティを抑えるため、ユーザー ID と workload 名はラベルに使いません。

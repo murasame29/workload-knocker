@@ -9,8 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync/atomic"
-
-	"github.com/newrelic/go-agent/v3/newrelic"
 )
 
 const componentName = "http"
@@ -26,21 +24,15 @@ type Server struct {
 }
 
 // New returns a Server with metrics and stop-all / start registered on the mux.
-// When nrApp is non-nil, /api/v1/stop-all and /api/v1/start are wrapped in New Relic transactions.
-func New(port int, metricsHandler http.Handler, stopAllHandler http.Handler, startHandler http.Handler, nrApp *newrelic.Application) *Server {
+func New(port int, metricsHandler http.Handler, stopAllHandler http.Handler, startHandler http.Handler) *Server {
 	s := &Server{}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", metricsHandler)
 	mux.HandleFunc("/livez", s.handleLive)
 	mux.HandleFunc("/healthz", s.handleLive)
 	mux.HandleFunc("/readyz", s.handleReady)
-	if nrApp != nil {
-		mux.Handle(newrelic.WrapHandle(nrApp, "/api/v1/stop-all", stopAllHandler))
-		mux.Handle(newrelic.WrapHandle(nrApp, "/api/v1/start", startHandler))
-	} else {
-		mux.Handle("/api/v1/stop-all", stopAllHandler)
-		mux.Handle("/api/v1/start", startHandler)
-	}
+	mux.Handle("/api/v1/stop-all", stopAllHandler)
+	mux.Handle("/api/v1/start", startHandler)
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: mux,

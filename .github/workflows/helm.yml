@@ -80,8 +80,8 @@ jobs:
             'image: "ghcr.io/murasame29/workload-knocker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
             "${RUNNER_TEMP}/digest.yaml"
           grep --fixed-strings --quiet 'name: SLACK_APP_TOKEN' "${RUNNER_TEMP}/default.yaml"
-          if grep --fixed-strings --quiet 'NEW_RELIC_LICENSE_KEY' "${RUNNER_TEMP}/default.yaml"; then
-            echo 'New Relic license key rendered without newRelic.secretName' >&2
+          if grep --extended-regexp --quiet 'NEW_[R]ELIC' "${RUNNER_TEMP}/default.yaml"; then
+            echo 'removed APM environment variable rendered' >&2
             exit 1
           fi
 

@@ -6,10 +6,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
+
+// fakeMetrics records ObserveOperation calls as "env/cluster/operation/result".
+type fakeMetrics struct {
+	metrics.MetricsManager
+	ops []string
+}
+
+func (f *fakeMetrics) ObserveOperation(env, cluster, operation, result string, _ time.Duration) {
+	f.ops = append(f.ops, env+"/"+cluster+"/"+operation+"/"+result)
+}
 
 // fakeStore is a minimal fake of model.WorkloadStore with preset StopAll results.
 type fakeStore struct {
@@ -42,7 +53,7 @@ func TestStopAllHandler_PostSuccess(t *testing.T) {
 		},
 	}
 
-	h := New(store, nrx.New(nil))
+	h := New(store, &fakeMetrics{})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stop-all", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -83,7 +94,7 @@ func TestStopAllHandler_PartialFailure(t *testing.T) {
 		},
 	}
 
-	h := New(store, nrx.New(nil))
+	h := New(store, &fakeMetrics{})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stop-all", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -109,7 +120,7 @@ func TestStopAllHandler_GetReturns405(t *testing.T) {
 	t.Parallel()
 
 	store := &fakeStore{}
-	h := New(store, nrx.New(nil))
+	h := New(store, &fakeMetrics{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/stop-all", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -119,5 +130,33 @@ func TestStopAllHandler_GetReturns405(t *testing.T) {
 	}
 	if store.stopAllCalls != 0 {
 		t.Errorf("StopAll should not be called for GET, got %d calls", store.stopAllCalls)
+	}
+}
+
+func TestStopAllHandler_ObservesPerClusterResult(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{
+		stopAllResult: model.StopAllResult{
+			TotalStopped: 3,
+			PerCluster: map[string]model.ClusterStopResult{
+				"stg":  {Stopped: 3},
+				"prof": {Error: "boom"},
+			},
+		},
+	}
+	m := &fakeMetrics{}
+	h := New(store, m)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/stop-all", nil))
+
+	got := map[string]bool{}
+	for _, op := range m.ops {
+		got[op] = true
+	}
+	for _, want := range []string{"stg//stop_all/success", "prof//stop_all/error"} {
+		if !got[want] {
+			t.Errorf("missing observation %q in %v", want, m.ops)
+		}
 	}
 }

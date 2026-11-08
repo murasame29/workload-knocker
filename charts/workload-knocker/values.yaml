@@ -32,12 +32,6 @@ settings:
   stopAllTimeout: 10s
   shutdownTimeout: 5s
 
-newRelic:
-  # Optional APM. Leave secretName empty to disable.
-  appName: workload-knocker
-  secretName: ""
-  licenseKeyKey: license-key
-
 service:
   type: ClusterIP
   port: 8080
