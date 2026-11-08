@@ -116,7 +116,7 @@ jobs:
             --set-string image.digest=sha256:not-a-digest; then
             echo 'invalid image digest was accepted' >&2; exit 1
           fi
-          if helm lint charts/workload-knocker --strict --values "${values}" \
+          if helm template workload-knocker charts/workload-knocker --values "${values}" \
             --set-string slack.secretName=; then
             echo 'no chat frontend Secret was accepted' >&2; exit 1
           fi
