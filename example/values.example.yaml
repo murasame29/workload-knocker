@@ -27,3 +27,16 @@ slack:
 serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/workload-knocker
+
+# full | scheduled-stop | off (see docs/en/configuration.md)
+mode: full
+
+api:
+  tokenSecret:
+    name: workload-knocker-api
+    key: api-token
+
+nightlyStop:
+  enabled: true
+  schedule: "0 22 * * *"
+  timeZone: Asia/Tokyo

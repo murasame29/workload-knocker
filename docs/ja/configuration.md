@@ -72,9 +72,48 @@ EKS では controller に IAM Role (IRSA) を付与し、その Role を Access 
 - Slack の制限 (checkbox 10 件 / モーダル 100 block) により merge 後 90 エントリまで表示します。
   非表示分は Plan から除外されるため、意図せず停止されることはありません。
 
+## 動作モードと夜間停止
+
+Helm chart は controller の環境変数 `OPERATION_MODE` と `API_TOKEN` を設定します。
+これらは対応する controller がリリース・デプロイされた時点で有効になります。現行バイナリは
+未知の環境変数を無視するため、chart を先に更新しても問題ありません。
+
+| `mode` | API start | API stop / stop-all | `nightlyStop` |
+| --- | --- | --- | --- |
+| `full` (既定) | 可 | 可 | 任意 |
+| `scheduled-stop` | 可 | 不可 (`403`) | 必須 (`enabled: true`) |
+| `off` | 可 | 不可 | 有効化不可 |
+
+`/api/v1/*` を無認証にしないため、どのモードでも `api.tokenSecret.name` は必須です。
+インストール前に Secret を作成します。
+
+```sh
+kubectl create secret generic workload-knocker-api \
+  --namespace workload-knocker \
+  --from-literal=api-token='<random-token>'
+```
+
+`nightlyStop` は、クラスタ内 Service へ `Authorization: Bearer <token>` 付きで
+`POST /api/v1/stop-all` を送る CronJob を作成し、2xx 以外は失敗として扱います。
+
+| 値 | 既定 |
+| --- | --- |
+| `nightlyStop.enabled` | `false` |
+| `nightlyStop.schedule` / `timeZone` | `0 22 * * *` / `Asia/Tokyo` |
+| `nightlyStop.suspend` | `false` |
+| `nightlyStop.startingDeadlineSeconds` | `300` |
+| `nightlyStop.concurrencyPolicy` | `Forbid` |
+| `nightlyStop.successfulJobsHistoryLimit` / `failedJobsHistoryLimit` | `1` / `3` |
+| `nightlyStop.backoffLimit` | `2` |
+| `nightlyStop.requestTimeoutSeconds` / `curlRetries` | `60` / `3` |
+| `nightlyStop.image` | `curlimages/curl` (digest 固定) |
+
+不正な組み合わせ (未知の `mode`、CronJob なしの `scheduled-stop`、CronJob ありの `off`、
+`api.tokenSecret.name` が空) は `helm template` / `helm install` で失敗します。
+
 ## HTTP API
 
-認証はありません。ネットワークで到達範囲を制限してください。
+現行リリースは認証がないため、ネットワークで到達範囲を制限してください。`API_TOKEN` に対応した controller では `/api/v1/*` に `Authorization: Bearer <token>` が必要です。
 
 ### `POST /api/v1/start`
 

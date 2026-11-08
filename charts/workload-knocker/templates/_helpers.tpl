@@ -58,3 +58,35 @@ app.kubernetes.io/instance: {{ .Release.Name | quote }}
 {{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) }}
 {{- end }}
 {{- end }}
+
+{{/* Operation mode and API secret env entries. Fails on inconsistent mode settings. */}}
+{{- define "workload-knocker.apiEnv" -}}
+{{- $mode := .Values.mode -}}
+{{- if not (has $mode (list "full" "scheduled-stop" "off")) -}}
+{{- fail (printf "mode must be one of full, scheduled-stop, off (got %q)" (toString $mode)) -}}
+{{- end -}}
+{{- if and (eq $mode "scheduled-stop") (not .Values.nightlyStop.enabled) -}}
+{{- fail "mode scheduled-stop requires nightlyStop.enabled=true" -}}
+{{- end -}}
+{{- if and (eq $mode "off") .Values.nightlyStop.enabled -}}
+{{- fail "mode off cannot be combined with nightlyStop.enabled=true" -}}
+{{- end -}}
+{{- $secret := required "api.tokenSecret.name is required" .Values.api.tokenSecret.name -}}
+- name: OPERATION_MODE
+  value: {{ $mode | quote }}
+- name: API_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret | quote }}
+      key: {{ .Values.api.tokenSecret.key | quote }}
+{{- end }}
+
+{{/* Nightly stop curl image reference. Digest takes priority. */}}
+{{- define "workload-knocker.nightlyStopImage" -}}
+{{- $i := .Values.nightlyStop.image -}}
+{{- if $i.digest }}
+{{- printf "%s@%s" $i.repository $i.digest }}
+{{- else }}
+{{- printf "%s:%s" $i.repository $i.tag }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,68 @@
+{{- if and .Values.nightlyStop.enabled (ne .Values.mode "off") }}
+{{- $n := .Values.nightlyStop }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ printf "%s-nightly-stop" (include "workload-knocker.fullname" .) | trunc 52 | trimSuffix "-" | quote }}
+  labels:
+    {{- include "workload-knocker.labels" . | nindent 4 }}
+spec:
+  schedule: {{ $n.schedule | quote }}
+  timeZone: {{ $n.timeZone | quote }}
+  suspend: {{ $n.suspend }}
+  concurrencyPolicy: {{ $n.concurrencyPolicy }}
+  startingDeadlineSeconds: {{ $n.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ $n.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $n.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $n.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "workload-knocker.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: nightly-stop
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml $n.podSecurityContext | nindent 12 }}
+          containers:
+            - name: stop-all
+              image: {{ include "workload-knocker.nightlyStopImage" . | quote }}
+              imagePullPolicy: {{ $n.image.pullPolicy }}
+              securityContext:
+                {{- toYaml $n.securityContext | nindent 16 }}
+              env:
+                - name: API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ required "api.tokenSecret.name is required" .Values.api.tokenSecret.name | quote }}
+                      key: {{ .Values.api.tokenSecret.key | quote }}
+                - name: STOP_ALL_URL
+                  value: {{ printf "http://%s.%s.svc:%v/api/v1/stop-all" (include "workload-knocker.fullname" .) .Release.Namespace .Values.service.port | quote }}
+              command:
+                - sh
+                - -c
+                - >-
+                  curl --silent --show-error --fail-with-body
+                  --max-time {{ $n.requestTimeoutSeconds }}
+                  --retry {{ $n.curlRetries }} --retry-connrefused --retry-all-errors
+                  --request POST
+                  --header "Authorization: Bearer ${API_TOKEN}"
+                  "${STOP_ALL_URL}"
+              resources:
+                {{- toYaml $n.resources | nindent 16 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

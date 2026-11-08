@@ -2,6 +2,43 @@
   "type": "object",
   "required": ["config", "slack"],
   "properties": {
+    "mode": {"type": "string", "enum": ["full", "scheduled-stop", "off"]},
+    "api": {
+      "type": "object",
+      "required": ["tokenSecret"],
+      "properties": {
+        "tokenSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1, "maxLength": 253},
+            "key": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"}
+          }
+        }
+      }
+    },
+    "nightlyStop": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "schedule": {"type": "string", "minLength": 1},
+        "timeZone": {"type": "string", "minLength": 1},
+        "suspend": {"type": "boolean"},
+        "startingDeadlineSeconds": {"type": "integer", "minimum": 1},
+        "concurrencyPolicy": {"type": "string", "enum": ["Allow", "Forbid", "Replace"]},
+        "successfulJobsHistoryLimit": {"type": "integer", "minimum": 0},
+        "failedJobsHistoryLimit": {"type": "integer", "minimum": 0},
+        "backoffLimit": {"type": "integer", "minimum": 0},
+        "requestTimeoutSeconds": {"type": "integer", "minimum": 1},
+        "curlRetries": {"type": "integer", "minimum": 0},
+        "image": {
+          "type": "object",
+          "properties": {
+            "digest": {"type": "string", "pattern": "^$|^sha256:[a-f0-9]{64}$"}
+          }
+        }
+      }
+    },
     "replicaCount": {"type": "integer", "minimum": 0, "maximum": 1},
     "image": {
       "type": "object",
