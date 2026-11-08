@@ -41,6 +41,15 @@ jobs:
         with:
           version: ${{ matrix.helm-version }}
 
+      - name: Check chart version and appVersion match
+        run: |
+          chart_version="$(yq -r '.version' charts/workload-knocker/Chart.yaml)"
+          app_version="$(yq -r '.appVersion' charts/workload-knocker/Chart.yaml)"
+          if [[ "${chart_version}" != "${app_version}" ]]; then
+            echo "Chart version ${chart_version} and appVersion ${app_version} must match" >&2
+            exit 1
+          fi
+
       - name: Lint chart
         run: helm lint charts/workload-knocker --strict --values charts/workload-knocker/ci/test-values.yaml
 

@@ -10,7 +10,10 @@
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": false,
       "changelog-path": "CHANGELOG.md",
-      "extra-files": ["charts/workload-knocker/Chart.yaml"],
+      "extra-files": [
+        { "type": "yaml", "path": "charts/workload-knocker/Chart.yaml", "jsonpath": "$.version" },
+        { "type": "yaml", "path": "charts/workload-knocker/Chart.yaml", "jsonpath": "$.appVersion" }
+      ],
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },
