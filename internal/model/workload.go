@@ -2,9 +2,9 @@ package model
 
 import "context"
 
-// Workload はワークロードの状態を表す
+// Workload is the state of a workload
 type Workload struct {
-	Env       string // 所属する Cluster.Env
+	Env       string // owning Cluster.Env
 	Name      string
 	Namespace string
 	Kind      string // Deployment or Rollout
@@ -12,42 +12,42 @@ type Workload struct {
 	StartedBy string
 }
 
-// ClusterRef は Bot / API レイヤが Cluster を参照するための軽量 DTO
+// ClusterRef is a lightweight DTO for the Bot / API layer to reference a Cluster
 type ClusterRef struct {
-	Env  string // env 識別子 (例: stg, stg-us, dev)
+	Env  string // env identifier (e.g. stg, stg-us, dev)
 	Name string // EKS cluster name
 }
 
-// StopAllResult は StopAll の全体結果
+// StopAllResult is the overall result of StopAll
 type StopAllResult struct {
-	TotalStopped int                          // 全 cluster で停止した workload 数の合計
-	PerCluster   map[string]ClusterStopResult // cluster key 単位の結果
+	TotalStopped int                          // total workloads stopped across all clusters
+	PerCluster   map[string]ClusterStopResult // result per cluster key
 }
 
-// ClusterStopResult は単一 cluster の StopAll 結果
+// ClusterStopResult is the StopAll result of a single cluster
 type ClusterStopResult struct {
-	Stopped int    // この cluster で停止した workload 数
-	Error   string // エラーメッセージ ("" のとき成功)
+	Stopped int    // workloads stopped in this cluster
+	Error   string // error message ("" on success)
 }
 
-// WorkloadStore は複数 cluster を横断するワークロード状態の操作インターフェース
-// 本番では MultiStore (各 ClusterStore を集約) が実装、モックではインメモリ実装。
+// WorkloadStore is the interface for workload state operations across clusters.
+// Implemented by MultiStore in production and by an in-memory store in mocks.
 type WorkloadStore interface {
-	// Clusters は登録された全 cluster の参照を返す。
+	// Clusters returns references to all registered clusters.
 	Clusters() []ClusterRef
-	// Namespaces は指定 env で管理対象の namespace 一覧を返す。
+	// Namespaces returns the managed namespaces of the given env.
 	Namespaces(env string) []string
-	// WorkloadsByNamespace は指定 env / namespace の workload 一覧を返す。
+	// WorkloadsByNamespace returns the workloads of the given env / namespace.
 	WorkloadsByNamespace(env, ns string) []*Workload
-	// Start は指定 workload を起動状態にする (replicas=1, startedBy=user)。
+	// Start sets the workload to running (replicas=1, startedBy=user).
 	Start(env, ns, name, user string) bool
-	// Stop は指定 workload を停止状態にする (replicas=0)。
+	// Stop sets the workload to stopped (replicas=0).
 	Stop(env, ns, name string) bool
-	// StopAll は全 cluster の workload を並列に停止する。
-	// 1 cluster の失敗は他 cluster の処理を止めず、結果に格納する。
+	// StopAll stops workloads of all clusters in parallel.
+	// A failure in one cluster does not stop the others; it is recorded in the result.
 	StopAll(ctx context.Context) StopAllResult
-	// Reconcile は指定 env の状態を最新化する (Slack コマンド受信時に呼ぶ)。
+	// Reconcile refreshes the state of the given env (called on Slack commands).
 	Reconcile(ctx context.Context, env string) error
-	// ReconcileAll は全 cluster を並列に Reconcile する (起動時 Bootstrap で呼ぶ)。
+	// ReconcileAll reconciles all clusters in parallel (called at startup Bootstrap).
 	ReconcileAll(ctx context.Context) error
 }

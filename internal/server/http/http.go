@@ -1,5 +1,5 @@
-// Package httpserver は /metrics と /api/v1/stop-all を公開する HTTP server を
-// server.Lifecycle として実装する。
+// Package httpserver implements the HTTP server exposing /metrics and /api/v1/stop-all
+// as a server.Lifecycle.
 package httpserver
 
 import (
@@ -15,18 +15,18 @@ import (
 
 const componentName = "http"
 
-// Server は server.Lifecycle を満たす net/http.Server ラッパ。
+// Server wraps net/http.Server to satisfy server.Lifecycle.
 //
-// Probe エンドポイント:
-//   - /livez, /healthz: 常に 200 (プロセス生存確認)
-//   - /readyz: ready が true の間だけ 200、それ以前は 503
+// Probe endpoints:
+//   - /livez, /healthz: always 200 (process liveness)
+//   - /readyz: 200 only while ready is true, 503 before that
 type Server struct {
 	server *http.Server
 	ready  atomic.Bool
 }
 
-// New は metrics と stop-all / start を mux に登録した Server を返す。
-// nrApp が non-nil の場合 /api/v1/stop-all と /api/v1/start を New Relic transaction でラップする。
+// New returns a Server with metrics and stop-all / start registered on the mux.
+// When nrApp is non-nil, /api/v1/stop-all and /api/v1/start are wrapped in New Relic transactions.
 func New(port int, metricsHandler http.Handler, stopAllHandler http.Handler, startHandler http.Handler, nrApp *newrelic.Application) *Server {
 	s := &Server{}
 	mux := http.NewServeMux()
@@ -50,13 +50,13 @@ func New(port int, metricsHandler http.Handler, stopAllHandler http.Handler, sta
 
 func (s *Server) Name() string { return componentName }
 
-// MarkReady は Bootstrap 完了後に呼び /readyz を 200 へ切り替える。
+// MarkReady switches /readyz to 200 after Bootstrap completes.
 func (s *Server) MarkReady() { s.ready.Store(true) }
 
-// MarkNotReady は graceful shutdown 開始時に呼び /readyz を 503 へ戻す。
+// MarkNotReady returns /readyz to 503 when graceful shutdown starts.
 func (s *Server) MarkNotReady() { s.ready.Store(false) }
 
-// Start は HTTP サーバーをブロッキングで起動する。停止は Shutdown 経由。
+// Start runs the HTTP server, blocking. Stop it via Shutdown.
 func (s *Server) Start(_ context.Context) error {
 	if err := s.server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -64,7 +64,7 @@ func (s *Server) Start(_ context.Context) error {
 	return nil
 }
 
-// Shutdown は graceful に停止する。冪等性のため二重停止時の http.ErrServerClosed は無害化する。
+// Shutdown stops gracefully; http.ErrServerClosed on a repeated stop is ignored (idempotent).
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.MarkNotReady()
 	err := s.server.Shutdown(ctx)

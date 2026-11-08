@@ -1,5 +1,5 @@
-// Package server は長時間動作コンポーネント (HTTP / Slack 等) の起動と graceful shutdown を
-// 統一的に扱う Lifecycle 抽象を提供する。
+// Package server provides the Lifecycle abstraction for starting and gracefully shutting down
+// long-running components (HTTP, Slack, etc.).
 package server
 
 import (
@@ -13,23 +13,23 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Lifecycle はバックグラウンドコンポーネントの起動と graceful shutdown を抽象化する。
-// Start は ctx キャンセルで戻り、Shutdown は冪等。
+// Lifecycle abstracts starting and gracefully shutting down a background component.
+// Start returns on ctx cancellation; Shutdown is idempotent.
 type Lifecycle interface {
 	Name() string
 	Start(ctx context.Context) error
 	Shutdown(ctx context.Context) error
 }
 
-// Manager は複数 Lifecycle を errgroup で並列起動し、ctx.Done() で全コンポーネントに
-// Shutdown を送る supervisor。
+// Manager is a supervisor that starts Lifecycles in parallel via errgroup and
+// sends Shutdown to all of them on ctx.Done().
 type Manager struct {
 	components      []Lifecycle
 	shutdownTimeout time.Duration
 }
 
-// NewManager は Lifecycle を集約した Manager を構築する。
-// shutdownTimeout は各 Lifecycle.Shutdown ごとに独立に適用される。
+// NewManager builds a Manager aggregating Lifecycles.
+// shutdownTimeout applies independently to each Lifecycle.Shutdown.
 func NewManager(shutdownTimeout time.Duration, components ...Lifecycle) *Manager {
 	return &Manager{
 		components:      components,
@@ -37,9 +37,8 @@ func NewManager(shutdownTimeout time.Duration, components ...Lifecycle) *Manager
 	}
 }
 
-// Run は全 Lifecycle を並列起動し、ctx 完了を契機に Shutdown を駆動して errgroup.Wait の結果を返す。
-// shutdownAll の完了 (各 Lifecycle.Shutdown の wg.Wait) も待ってから戻るため、呼び出し元が
-// プロセスを exit させる前に in-flight ハンドラが必ず完了する。
+// Run starts all Lifecycles in parallel, drives Shutdown on ctx completion and returns the errgroup.Wait result.
+// It waits for shutdownAll to finish, so in-flight handlers complete before the caller exits the process.
 func (m *Manager) Run(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 

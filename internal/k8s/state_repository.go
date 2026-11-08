@@ -16,22 +16,22 @@ const (
 	stateConfigMapDataKey = "state.json"
 )
 
-// StateEntry はワークロード状態の永続化単位。
+// StateEntry is the persisted unit of workload state.
 type StateEntry struct {
 	Replicas  int    `json:"replicas"`
 	StartedBy string `json:"startedBy,omitempty"`
 }
 
-// StateRepository は workload state を永続化する抽象。
-// 永続先は controller cluster の ConfigMap だが、テストでは in-memory 実装を差し込める。
+// StateRepository persists workload state.
+// It is backed by a ConfigMap on the controller cluster; tests can inject an in-memory one.
 type StateRepository interface {
-	// Load は永続化された state を返す。未初期化なら自動で空を作って空 map を返す。
+	// Load returns the persisted state, creating an empty one if uninitialized.
 	Load(ctx context.Context) (map[string]StateEntry, error)
-	// Save は state を上書き保存する。冪等。
+	// Save overwrites the state. Idempotent.
 	Save(ctx context.Context, entries map[string]StateEntry) error
 }
 
-// configMapStateRepository は controller cluster 上の ConfigMap に state を永続化する。
+// configMapStateRepository persists state in a ConfigMap on the controller cluster.
 type configMapStateRepository struct {
 	client    kubernetes.Interface
 	namespace string
@@ -39,8 +39,8 @@ type configMapStateRepository struct {
 	dataKey   string
 }
 
-// NewConfigMapStateRepository は controller cluster の <namespace>/<workload-state> ConfigMap を
-// 使う StateRepository 実装を返す。
+// NewConfigMapStateRepository returns a StateRepository that uses the
+// <namespace>/<workload-state> ConfigMap on the controller cluster.
 func NewConfigMapStateRepository(client kubernetes.Interface, namespace string) StateRepository {
 	return &configMapStateRepository{
 		client:    client,
@@ -85,7 +85,7 @@ func (r *configMapStateRepository) Save(ctx context.Context, entries map[string]
 		if !k8serrors.IsNotFound(err) {
 			return fmt.Errorf("get state configmap for update: %w", err)
 		}
-		// NotFound: 新規作成
+		// NotFound: create it
 		cm = &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: r.name, Namespace: r.namespace},
 			Data:       map[string]string{r.dataKey: string(data)},

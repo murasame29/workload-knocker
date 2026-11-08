@@ -12,7 +12,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/model"
 )
 
-// helperConfig は handlers_test 共通の Cluster Registry 設定を返す (validate 済み)。
+// helperConfig returns the Cluster Registry config shared by handlers_test (validated).
 func helperConfig(t *testing.T, cs ...config.Cluster) *config.Config {
 	t.Helper()
 	cfg := &config.Config{
@@ -25,8 +25,8 @@ func helperConfig(t *testing.T, cs ...config.Cluster) *config.Config {
 	return cfg
 }
 
-// TestRegistryLookup_UnknownCommandReturnsNotFound は未登録のスラッシュコマンドが
-// registry で解決できないことを検証する。
+// TestRegistryLookup_UnknownCommandReturnsNotFound verifies an unregistered slash command
+// cannot be resolved in the registry.
 func TestRegistryLookup_UnknownCommandReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -44,9 +44,9 @@ func TestRegistryLookup_UnknownCommandReturnsNotFound(t *testing.T) {
 	}
 }
 
-// TestRegistryLookup_KnownCommandResolvesCluster は登録済みのスラッシュコマンドが
-// 期待通りの cluster を返すことを検証する。handleSlashCommand が Modal の
-// private_metadata に使う Env / Name を信頼できることを保証する。
+// TestRegistryLookup_KnownCommandResolvesCluster verifies a registered slash command returns the
+// expected cluster, so the Env / Name that handleSlashCommand puts in the Modal
+// private_metadata can be trusted.
 func TestRegistryLookup_KnownCommandResolvesCluster(t *testing.T) {
 	t.Parallel()
 
@@ -71,8 +71,8 @@ func TestRegistryLookup_KnownCommandResolvesCluster(t *testing.T) {
 	}
 }
 
-// TestModalMetadata_RoundTrip は Modal の private_metadata に格納する modalMetadata の
-// JSON シリアライズ/デシリアライズで cluster (= env) フィールドが保持されることを検証する。
+// TestModalMetadata_RoundTrip verifies the cluster (= env) field survives JSON (de)serialization of
+// modalMetadata stored in the Modal private_metadata.
 func TestModalMetadata_RoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -98,8 +98,8 @@ func TestModalMetadata_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestModalMetadata_OmitsEmptyNamespace は namespace 未設定時に omitempty が効いて
-// private_metadata のサイズを抑えられることを確認する。
+// TestModalMetadata_OmitsEmptyNamespace verifies omitempty keeps private_metadata small
+// when namespace is unset.
 func TestModalMetadata_OmitsEmptyNamespace(t *testing.T) {
 	t.Parallel()
 
@@ -122,18 +122,17 @@ func TestModalMetadata_OmitsEmptyNamespace(t *testing.T) {
 	}
 }
 
-// TestPreviewMetadata_NameOnlyEncodingBuysHeadroom は ToStart / ToStop を
-// workload 名のみで持つ設計により、10 件超の差分が private_metadata (3000 文字) に
-// 収まることを検証する。同じ差分を "cluster/namespace/name" のフル tuple で持つと
-// 上限を超えるため、この encoding が必須であることも合わせて記録する。
+// TestPreviewMetadata_NameOnlyEncodingBuysHeadroom verifies that keeping only workload names in
+// ToStart / ToStop fits a diff of more than 10 items in private_metadata (3000 chars).
+// Full "cluster/namespace/name" tuples would exceed the limit, so this encoding is required.
 func TestPreviewMetadata_NameOnlyEncodingBuysHeadroom(t *testing.T) {
 	t.Parallel()
 
-	const count = 50 // 実運用で想定される上限規模
+	const count = 50 // upper bound expected in real operation
 	names := make([]string, 0, count)
 	tuples := make([]string, 0, count)
 	for i := range count {
-		// 実運用相当の長さ (40 文字) の workload 名
+		// workload name of a realistic length (40 chars)
 		name := fmt.Sprintf("security-checksheet-search-app-%09d", i)
 		names = append(names, name)
 		tuples = append(tuples, "stg/inhouse-solutions/"+name)
@@ -173,8 +172,8 @@ func TestPreviewMetadata_NameOnlyEncodingBuysHeadroom(t *testing.T) {
 	}
 }
 
-// TestWorkloadCheckboxBlocks_SplitsAtSlackLimit は checkboxes element の 10 options
-// 上限を超えないように block が分割され、かつ全 workload が 1 度ずつ現れることを検証する。
+// TestWorkloadCheckboxBlocks_SplitsAtSlackLimit verifies blocks are split so the checkboxes
+// 10-option limit is not exceeded and each workload appears exactly once.
 func TestWorkloadCheckboxBlocks_SplitsAtSlackLimit(t *testing.T) {
 	t.Parallel()
 
@@ -254,13 +253,13 @@ func TestWorkloadCheckboxBlocks_SplitsAtSlackLimit(t *testing.T) {
 	}
 }
 
-// TestWorkloadCheckboxBlocks_InitialOptionsReflectRunning は稼働中の workload だけが
-// initial_options に入ることを検証する。空スライスは Slack が拒否するため nil であること。
+// TestWorkloadCheckboxBlocks_InitialOptionsReflectRunning verifies only running workloads go into
+// initial_options; an empty slice is rejected by Slack, so it must be nil.
 func TestWorkloadCheckboxBlocks_InitialOptionsReflectRunning(t *testing.T) {
 	t.Parallel()
 
 	workloads := makeWorkloads(15)
-	// 偶数 index のみ稼働中にする
+	// Make only even indexes running
 	running := make(map[string]bool)
 	for i, w := range workloads {
 		if i%2 == 0 {
@@ -290,20 +289,20 @@ func TestWorkloadCheckboxBlocks_InitialOptionsReflectRunning(t *testing.T) {
 	}
 }
 
-// TestWorkloadCheckboxBlocks_FitsModalBlockLimit は上限件数を描画しても
-// Modal の 100 block 制限に収まることを検証する。
+// TestWorkloadCheckboxBlocks_FitsModalBlockLimit verifies rendering the max count fits
+// the 100-block Modal limit.
 func TestWorkloadCheckboxBlocks_FitsModalBlockLimit(t *testing.T) {
 	t.Parallel()
 
 	blocks := workloadCheckboxBlocks("ns", groupWorkloads(makeWorkloads(maxWorkloadOptions)))
-	total := len(blocks) + reservedModalBlocks // namespace select + 警告 section
+	total := len(blocks) + reservedModalBlocks // namespace select + warning section
 	if total > slackModalMaxBlocks {
 		t.Errorf("total blocks = %d, want <= %d", total, slackModalMaxBlocks)
 	}
 }
 
-// TestSelectedWorkloadNames_CollectsAcrossBlocks は分割された複数 checkbox block の
-// 選択状態が 1 つの集合に畳み込まれ、無関係な block が混入しないことを検証する。
+// TestSelectedWorkloadNames_CollectsAcrossBlocks verifies the selections of split checkbox blocks
+// fold into one set with no unrelated blocks mixed in.
 func TestSelectedWorkloadNames_CollectsAcrossBlocks(t *testing.T) {
 	t.Parallel()
 
@@ -318,13 +317,13 @@ func TestSelectedWorkloadNames_CollectsAcrossBlocks(t *testing.T) {
 				{Value: "app-c"},
 			}},
 		},
-		// 分割前の単一 block 形式も prefix 一致で回収できる
+		// The old single block form is also collected by prefix match
 		blockSelectWorkloads: {
 			actionSelectWorkloads: {SelectedOptions: []slack.OptionBlockObject{
 				{Value: "app-d"},
 			}},
 		},
-		// namespace select は対象外
+		// The namespace select is excluded
 		blockSelectNamespace: {
 			actionSelectNamespace: {SelectedOption: slack.OptionBlockObject{Value: "ns"}},
 		},
@@ -346,9 +345,8 @@ func TestSelectedWorkloadNames_CollectsAcrossBlocks(t *testing.T) {
 	}
 }
 
-// TestSortedWorkloads_IsDeterministic は store の map 走査順に依存せず
-// name 昇順で安定した並びになることを検証する。checkbox の分割境界と
-// submit 時の truncate 位置を一致させる前提。
+// TestSortedWorkloads_IsDeterministic verifies a stable name-ascending order independent of store map
+// iteration order, so checkbox split boundaries match truncation at submit.
 func TestSortedWorkloads_IsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -363,20 +361,20 @@ func TestSortedWorkloads_IsDeterministic(t *testing.T) {
 			t.Errorf("index %d: got %q, want %q", i, w.Name, want[i])
 		}
 	}
-	// 入力スライスを破壊しないこと (store が返す実体を並べ替えないため)
+	// Do not mutate the input slice (the store returns the underlying entities)
 	if input[0].Name != "charlie" {
 		t.Errorf("input was mutated: input[0] = %q, want %q", input[0].Name, "charlie")
 	}
 }
 
-// TestMrkdwnSections_RespectsTextLimit は section block の 3000 文字上限を超えないよう
-// 分割され、全行が保持されることを検証する。
+// TestMrkdwnSections_RespectsTextLimit verifies sections are split within the 3000-char limit
+// and all lines are kept.
 func TestMrkdwnSections_RespectsTextLimit(t *testing.T) {
 	t.Parallel()
 
 	lines := make([]string, 0, maxWorkloadOptions)
 	for i := range maxWorkloadOptions {
-		lines = append(lines, fmt.Sprintf("🟢 security-checksheet-search-app-%09d: 停止 → *起動*", i))
+		lines = append(lines, fmt.Sprintf("🟢 security-checksheet-search-app-%09d: stopped → *start*", i))
 	}
 
 	blocks := mrkdwnSections("header", lines)
@@ -406,7 +404,7 @@ func TestMrkdwnSections_RespectsTextLimit(t *testing.T) {
 	}
 }
 
-// makeWorkloads は停止状態の workload を n 件生成する (name は昇順)。
+// makeWorkloads creates n stopped workloads (names ascending).
 func makeWorkloads(n int) []*model.Workload {
 	out := make([]*model.Workload, 0, n)
 	for i := range n {
@@ -420,8 +418,8 @@ func makeWorkloads(n int) []*model.Workload {
 	return out
 }
 
-// TestModalTitle_FitsWithinSlackLimit は modalTitle が Slack の plain_text title 上限
-// (24 文字) を超えないことを検証する。OpenView が invalid_arguments で失敗するのを防ぐ。
+// TestModalTitle_FitsWithinSlackLimit verifies modalTitle stays within the Slack plain_text title limit
+// (24 chars), preventing OpenView from failing with invalid_arguments.
 func TestModalTitle_FitsWithinSlackLimit(t *testing.T) {
 	t.Parallel()
 

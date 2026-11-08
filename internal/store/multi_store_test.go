@@ -14,7 +14,7 @@ import (
 	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
-// newFakeRegistry は与えられた cluster 列で validated *Config を構築する。
+// newFakeRegistry builds a validated *Config from the given clusters.
 func newFakeRegistry(t *testing.T, cs ...config.Cluster) *config.Config {
 	t.Helper()
 	cfg := &config.Config{
@@ -27,8 +27,8 @@ func newFakeRegistry(t *testing.T, cs ...config.Cluster) *config.Config {
 	return cfg
 }
 
-// newTestMultiStore は ClusterStore を直接組み立てて MultiStore を作る (NewMultiStore を経由しない)。
-// 各 env に対応する fake K8s clientset を入れた map を渡すと、それぞれの ClusterStore に注入される。
+// newTestMultiStore builds a MultiStore by assembling ClusterStores directly (bypassing NewMultiStore).
+// A map of fake K8s clientsets per env is injected into each ClusterStore.
 func newTestMultiStore(
 	t *testing.T,
 	reg *config.Config,
@@ -140,7 +140,7 @@ func TestMultiStore_Start_ScopedToCluster(t *testing.T) {
 	}
 }
 
-// TestMultiStore_Start_UnknownClusterReturnsFalse は不在 env で呼んだ場合に false が返ることを確認する。
+// TestMultiStore_Start_UnknownClusterReturnsFalse verifies false is returned for an absent env.
 func TestMultiStore_Start_UnknownClusterReturnsFalse(t *testing.T) {
 	t.Parallel()
 

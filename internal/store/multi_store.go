@@ -17,13 +17,13 @@ import (
 	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
-// RestConfigSource は config.Cluster から *rest.Config を取得する抽象。
-// 本番では k8sauth.Multiplexer が満たす。テストでは fake を差し込める。
+// RestConfigSource obtains a *rest.Config from a config.Cluster.
+// k8sauth.Multiplexer satisfies it in production; tests can inject a fake.
 type RestConfigSource interface {
 	RestConfig(ctx context.Context, c config.Cluster) (*rest.Config, error)
 }
 
-// MultiStore は *config.Config に登録された全 ClusterStore を集約し model.WorkloadStore を実装する。
+// MultiStore aggregates all ClusterStores in *config.Config and implements model.WorkloadStore.
 type MultiStore struct {
 	registry       *config.Config
 	stores         map[string]*ClusterStore // key = Cluster.Env
@@ -31,14 +31,14 @@ type MultiStore struct {
 	stopAllTimeout time.Duration
 }
 
-// コンパイル時 interface 充足チェック
+// Compile-time interface check.
 var _ model.WorkloadStore = (*MultiStore)(nil)
 
-// NewMultiStore は registry に登録された各 cluster の ClusterStore を eager に構築する。
-// stopAllTimeout は StopAll の per-cluster タイムアウト。
-// RestConfigSource (k8sauth.Multiplexer) で取得した *rest.Config を k8s.NewClusterAccess に渡し、
-// ScaledObjectLister + StateRepository を生成して ClusterStore に注入する。
-// クライアント生成失敗は warning ログに留め、その cluster をスキップする。全 cluster 失敗時のみ error。
+// NewMultiStore eagerly builds a ClusterStore for each registered cluster.
+// stopAllTimeout is the per-cluster timeout of StopAll.
+// It passes the *rest.Config from RestConfigSource to k8s.NewClusterAccess and injects the resulting
+// ScaledObjectLister + StateRepository into the ClusterStore.
+// A client creation failure only logs a warning and skips that cluster; error only if all fail.
 func NewMultiStore(ctx context.Context, reg *config.Config, src RestConfigSource, m metrics.MetricsManager, tracer nrx.Tracer, stopAllTimeout time.Duration) (*MultiStore, error) {
 	controllerNs := reg.Controller.Namespace
 	stores := make(map[string]*ClusterStore)
@@ -68,7 +68,7 @@ func NewMultiStore(ctx context.Context, reg *config.Config, src RestConfigSource
 	}, nil
 }
 
-// NewMultiStoreFromClusterStores は事前に構築済みの ClusterStore を集約する (主にテスト用)。
+// NewMultiStoreFromClusterStores aggregates prebuilt ClusterStores (mainly for tests).
 func NewMultiStoreFromClusterStores(reg *config.Config, m metrics.MetricsManager, stores map[string]*ClusterStore, stopAllTimeout time.Duration) (*MultiStore, error) {
 	if len(stores) == 0 {
 		return nil, fmt.Errorf("multi-store: no cluster stores provided")
@@ -76,8 +76,8 @@ func NewMultiStoreFromClusterStores(reg *config.Config, m metrics.MetricsManager
 	return &MultiStore{registry: reg, stores: stores, metrics: m, stopAllTimeout: stopAllTimeout}, nil
 }
 
-// Bootstrap は全 cluster の ClusterStore.Bootstrap を並列に呼ぶ。
-// 1 cluster の失敗は warn log + cluster_reachable=0 に留める。全 cluster 失敗時のみ error を返す。
+// Bootstrap calls ClusterStore.Bootstrap of all clusters in parallel.
+// One cluster failing only logs a warning and sets cluster_reachable=0; error only if all fail.
 func (m *MultiStore) Bootstrap(ctx context.Context) error {
 	var (
 		mu        sync.Mutex
@@ -100,8 +100,8 @@ func (m *MultiStore) Bootstrap(ctx context.Context) error {
 			return nil
 		})
 	}
-	// goroutine 内で error を吸収しているため Wait の戻り値は常に nil。
-	// 将来 return err を入れた際に握り潰さないよう明示。
+	// Errors are absorbed inside the goroutines, so Wait always returns nil;
+	// kept explicit so a future return err is not swallowed.
 	_ = g.Wait()
 	if successes == 0 {
 		return fmt.Errorf("multi-store: bootstrap failed for all %d clusters", len(m.stores))
@@ -109,7 +109,7 @@ func (m *MultiStore) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-// Clusters は registry の全 cluster を ClusterRef として返す。
+// Clusters returns all registry clusters as ClusterRefs.
 func (m *MultiStore) Clusters() []model.ClusterRef {
 	clusters := m.registry.All()
 	out := make([]model.ClusterRef, 0, len(clusters))
@@ -119,7 +119,7 @@ func (m *MultiStore) Clusters() []model.ClusterRef {
 	return out
 }
 
-// Namespaces は指定 cluster の namespace 一覧を返す。cluster 不在時は nil。
+// Namespaces returns the namespaces of the given cluster, or nil if absent.
 func (m *MultiStore) Namespaces(env string) []string {
 	cs, ok := m.stores[env]
 	if !ok {
@@ -128,7 +128,7 @@ func (m *MultiStore) Namespaces(env string) []string {
 	return cs.Namespaces()
 }
 
-// WorkloadsByNamespace は指定 cluster / namespace の workload 一覧を返す。
+// WorkloadsByNamespace returns the workloads of the given cluster / namespace.
 func (m *MultiStore) WorkloadsByNamespace(env, ns string) []*model.Workload {
 	cs, ok := m.stores[env]
 	if !ok {
@@ -141,7 +141,7 @@ func (m *MultiStore) WorkloadsByNamespace(env, ns string) []*model.Workload {
 	return wls
 }
 
-// Start は指定 cluster / ns / name の workload を起動状態にする。
+// Start sets the workload of the given cluster / ns / name to running.
 func (m *MultiStore) Start(env, ns, name, user string) bool {
 	cs, ok := m.stores[env]
 	if !ok {
@@ -150,7 +150,7 @@ func (m *MultiStore) Start(env, ns, name, user string) bool {
 	return cs.Start(ns, name, user)
 }
 
-// Stop は指定 cluster / ns / name の workload を停止状態にする。
+// Stop sets the workload of the given cluster / ns / name to stopped.
 func (m *MultiStore) Stop(env, ns, name string) bool {
 	cs, ok := m.stores[env]
 	if !ok {
@@ -159,8 +159,8 @@ func (m *MultiStore) Stop(env, ns, name string) bool {
 	return cs.Stop(ns, name)
 }
 
-// StopAll は登録された全 cluster の StopAll を並列に実行する。
-// 1 cluster の失敗は他 cluster の処理を継続する。per-cluster timeout は m.stopAllTimeout。
+// StopAll runs StopAll on all registered clusters in parallel.
+// One cluster failing does not affect the others. The per-cluster timeout is m.stopAllTimeout.
 func (m *MultiStore) StopAll(ctx context.Context) model.StopAllResult {
 	var mu sync.Mutex
 	result := model.StopAllResult{
@@ -184,12 +184,12 @@ func (m *MultiStore) StopAll(ctx context.Context) model.StopAllResult {
 			return nil
 		})
 	}
-	// 各 goroutine は error を返さないので Wait は常に nil を返す (per-cluster の error は result.PerCluster に集約)。
+	// Goroutines return no error, so Wait returns nil (per-cluster errors go to result.PerCluster).
 	_ = g.Wait()
 	return result
 }
 
-// Reconcile は指定 cluster の reconcile を呼ぶ。cluster 不在時は error。
+// Reconcile calls reconcile on the given cluster. Error if the cluster is absent.
 func (m *MultiStore) Reconcile(ctx context.Context, env string) error {
 	cs, ok := m.stores[env]
 	if !ok {
@@ -198,7 +198,7 @@ func (m *MultiStore) Reconcile(ctx context.Context, env string) error {
 	return cs.Reconcile(ctx)
 }
 
-// ReconcileAll は全 cluster の reconcile を並列に呼ぶ。1 cluster 失敗で全体を止めない。
+// ReconcileAll reconciles all clusters in parallel; one failure does not stop the rest.
 func (m *MultiStore) ReconcileAll(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for key, cs := range m.stores {
@@ -209,7 +209,7 @@ func (m *MultiStore) ReconcileAll(ctx context.Context) error {
 			return nil
 		})
 	}
-	// 各 goroutine は error を吸収するので Wait は常に nil を返す。
+	// Goroutines absorb errors, so Wait returns nil.
 	_ = g.Wait()
 	return nil
 }

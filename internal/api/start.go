@@ -10,36 +10,36 @@ import (
 	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
-// defaultStartUser は start リクエストで user が未指定のときに記録する既定値。
-// Slack 経由の起動 (Slack username) と区別できるよう REST 由来であることを示す。
+// defaultStartUser is recorded when the start request omits user.
+// It marks REST-originated starts, distinct from Slack username starts.
 const defaultStartUser = "rest-api"
 
-// StartHandler は /api/v1/start エンドポイントのハンドラ。
-// 指定 env / namespace のワークロードを起動状態 (replicas=1) にする。
-// Slack Modal の "起動" フローと同じ store.Start を呼ぶ REST 版。
+// StartHandler handles /api/v1/start.
+// It sets workloads of the given env / namespace to running (replicas=1),
+// calling the same store.Start as the Slack Modal start flow.
 type StartHandler struct {
 	store  model.WorkloadStore
 	tracer nrx.Tracer
 }
 
-// NewStartHandler は StartHandler のコンストラクタ。
+// NewStartHandler constructs a StartHandler.
 func NewStartHandler(store model.WorkloadStore, tracer nrx.Tracer) *StartHandler {
 	return &StartHandler{store: store, tracer: tracer}
 }
 
-// startRequest は POST body の JSON スキーマ。
+// startRequest is the JSON schema of the POST body.
 type startRequest struct {
-	// Env は Cluster Registry の env 識別子 (例: stg, dev)。必須。
+	// Env is the Cluster Registry env identifier (e.g. stg, dev). Required.
 	Env string `json:"env"`
-	// Namespace は対象 namespace。必須。
+	// Namespace is the target namespace. Required.
 	Namespace string `json:"namespace"`
-	// Workloads は起動する workload 名のリスト。1 件以上必須。
+	// Workloads lists workload names to start. At least one is required.
 	Workloads []string `json:"workloads"`
-	// User は操作者の識別子。省略時は "rest-api"。
+	// User identifies the operator. Defaults to "rest-api".
 	User string `json:"user,omitempty"`
 }
 
-// startResponse は HTTP レスポンス JSON のスキーマ。
+// startResponse is the JSON schema of the HTTP response.
 type startResponse struct {
 	Env          string   `json:"env"`
 	Namespace    string   `json:"namespace"`
@@ -49,13 +49,13 @@ type startResponse struct {
 	Message      string   `json:"message"`
 }
 
-// ServeHTTP は net/http.Handler インターフェースを実装する。
+// ServeHTTP implements net/http.Handler.
 //
-// ステータスコード:
-//   - 405: POST 以外
-//   - 400: JSON パース失敗 / env・namespace・workloads の必須欠落
-//   - 404: env が Cluster Registry に存在しない / 指定 workload が 1 件も見つからない
-//   - 200: 1 件以上起動できた (見つからなかった workload は not_found に列挙)
+// Status codes:
+//   - 405: method other than POST
+//   - 400: JSON parse failure, or missing env / namespace / workloads
+//   - 404: env not in the Cluster Registry, or none of the workloads found
+//   - 200: at least one started (workloads not found are listed in not_found)
 func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -81,8 +81,8 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// env が Cluster Registry に登録されているか確認する。
-	// 未登録の env は store.Start が false を返すが、workload not_found と区別するため先に 404 で弾く。
+	// Check that env is registered in the Cluster Registry.
+	// store.Start returns false for an unknown env, so reject it with 404 first to tell it from not_found.
 	if !h.clusterExists(req.Env) {
 		http.Error(w, fmt.Sprintf("cluster env %q not found in registry", req.Env), http.StatusNotFound)
 		return
@@ -93,10 +93,10 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		user = defaultStartUser
 	}
 
-	// 最新の ScaledObject 状態をオンデマンドで反映する (Slack コマンド受信時と同じ)。
-	// 失敗してもキャッシュ済みの状態で続行する。
+	// Refresh the latest ScaledObject state on demand (same as on a Slack command).
+	// On failure, continue with the cached state.
 	if err := h.store.Reconcile(r.Context(), req.Env); err != nil {
-		slog.WarnContext(r.Context(), "ScaledObject の reconcile に失敗、キャッシュで続行",
+		slog.WarnContext(r.Context(), "ScaledObject reconcile failed, continuing with cache",
 			slog.String("cluster.env", req.Env), slog.String("error.message", err.Error()))
 	}
 
@@ -125,7 +125,7 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 	message := "workloads started"
 	if len(started) == 0 {
-		// 指定 workload が 1 件も見つからなかった (namespace / name の指定ミス)。
+		// None of the specified workloads were found (wrong namespace / name).
 		status = http.StatusNotFound
 		message = "no matching workloads were found"
 	} else if len(notFound) > 0 {
@@ -153,7 +153,7 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// clusterExists は env が Cluster Registry に登録されているかを返す。
+// clusterExists reports whether env is registered in the Cluster Registry.
 func (h *StartHandler) clusterExists(env string) bool {
 	for _, c := range h.store.Clusters() {
 		if c.Env == env {

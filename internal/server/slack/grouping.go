@@ -8,35 +8,31 @@ import (
 	"github.com/murasame29/workload-knocker/internal/model"
 )
 
-// mergeableSuffixes は 1 チェックボックスに merge する対象の workload 名 suffix。
+// mergeableSuffixes are workload name suffixes merged into one checkbox.
 //
-// labs namespace のように 1 サービスが役割ごとの Deployment に分かれている
-// (<service>-api / <service>-app / <service>-worker) ケースでは、利用者から見ると
-// 「サービス 1 つ」なので個別にチェックさせる意味がない。base 名が同じで suffix だけが
-// 異なる workload を束ね、1 回のチェックで全メンバーを起動/停止する。
-//
-// 副作用として checkbox の options 件数が減るため、10 件上限の分割数も抑えられる。
+// When one service is split into per-role Deployments (<service>-api / <service>-app / <service>-worker),
+// users see it as a single service, so workloads sharing a base name are bundled and one check
+// starts/stops all members. This also reduces option counts against the 10-item limit.
 var mergeableSuffixes = []string{"api", "app", "worker"}
 
-// workloadGroup は Slack Modal 上で 1 つのチェックボックスとして扱う workload の集合。
-// Grouped=false のときはメンバー 1 件の単体 workload を表す。
+// workloadGroup is a set of workloads shown as one checkbox in the Slack Modal.
+// Grouped=false means a single-member standalone workload.
 type workloadGroup struct {
-	// Key は表示・ソートに使う識別子。merge 時は共通の base 名、単体時は workload 名。
+	// Key is the identifier for display and sorting: the shared base name when merged, else the workload name.
 	Key string
-	// Grouped は複数 workload を 1 チェックボックスに merge したかどうか。
+	// Grouped reports whether multiple workloads were merged into one checkbox.
 	Grouped bool
-	// Members は対象 workload。name の昇順。
+	// Members are the target workloads, sorted by name ascending.
 	Members []*model.Workload
 }
 
-// groupWorkloads は workload 一覧を Modal の表示単位に束ね、Key の昇順 (a→z) で返す。
+// groupWorkloads bundles workloads into Modal display units, sorted by Key ascending (a-z).
 //
-// merge するのは base 名が同じ mergeable suffix 付き workload が 2 件以上あるときだけ。
-// 1 件しかない場合 (例: api だけ存在) は従来通り workload 名のまま単体表示する。
+// Merging happens only when two or more workloads share a base name with a mergeable suffix;
+// a lone one (e.g. only api) stays a standalone workload.
 //
-// 並び順を固定するのは表示のためだけでなく、checkbox の分割境界と
-// 表示上限で truncate する位置を render 時と submit 時で一致させるため
-// (sortedWorkloads と同じ理由)。
+// The order is fixed not only for display but so the checkbox split boundary and the truncation point
+// match between render and submit (same reason as sortedWorkloads).
 func groupWorkloads(workloads []*model.Workload) []workloadGroup {
 	byBase := make(map[string][]*model.Workload)
 	var singles []*model.Workload
@@ -52,7 +48,7 @@ func groupWorkloads(workloads []*model.Workload) []workloadGroup {
 	groups := make([]workloadGroup, 0, len(byBase)+len(singles))
 	for base, members := range byBase {
 		if len(members) < 2 {
-			// suffix 付きでも 1 件だけなら merge しない。
+			// Do not merge a single suffixed workload.
 			singles = append(singles, members...)
 			continue
 		}
@@ -66,8 +62,8 @@ func groupWorkloads(workloads []*model.Workload) []workloadGroup {
 		groups = append(groups, workloadGroup{Key: w.Name, Members: []*model.Workload{w}})
 	}
 
-	// Key 昇順。Key が衝突した場合 (base 名と同名の workload が併存) は
-	// option value で安定化する。
+	// Sort by Key ascending; when Keys collide (a workload named like the base exists),
+	// stabilize by option value.
 	slices.SortFunc(groups, func(a, b workloadGroup) int {
 		if c := strings.Compare(a.Key, b.Key); c != 0 {
 			return c
@@ -77,9 +73,9 @@ func groupWorkloads(workloads []*model.Workload) []workloadGroup {
 	return groups
 }
 
-// renderedGroups は private_metadata の rendered 件数に合わせて差分計算の対象を絞る。
-// 表示上限で truncate された group を「未チェック = 停止」と誤判定しないためのガード。
-// rendered が 0 (旧 Modal 由来で未設定) や現在の件数以上のときは全件を返す。
+// renderedGroups limits the diff to the rendered count in private_metadata,
+// so groups truncated by the display limit are not mistaken for "unchecked = stopped".
+// A rendered of 0 (unset, from an old Modal) or >= the current count returns all groups.
 func renderedGroups(groups []workloadGroup, rendered int) []workloadGroup {
 	if rendered <= 0 || rendered >= len(groups) {
 		return groups
@@ -87,7 +83,7 @@ func renderedGroups(groups []workloadGroup, rendered int) []workloadGroup {
 	return groups[:rendered]
 }
 
-// splitMergeableSuffix は name が "<base>-<mergeable suffix>" 形式なら base を返す。
+// splitMergeableSuffix returns base when name has the form "<base>-<mergeable suffix>".
 func splitMergeableSuffix(name string) (string, bool) {
 	for _, sfx := range mergeableSuffixes {
 		trailer := "-" + sfx
@@ -98,12 +94,12 @@ func splitMergeableSuffix(name string) (string, bool) {
 	return "", false
 }
 
-// Value は Slack option の value。代表メンバー (name 昇順の先頭) の workload 名を使う。
-// メンバー全員の名前を詰め込むと option value の 75 文字上限を超えるため、
-// submit 側では「いずれかのメンバー名が選択されていれば ON」として解釈する。
+// Value is the Slack option value: the name of the representative member (first by name).
+// Packing all member names would exceed the 75-char option value limit, so submit
+// treats the group as ON if any member name is selected.
 func (g workloadGroup) Value() string { return g.Members[0].Name }
 
-// Names はメンバーの workload 名を name 昇順で返す。
+// Names returns the member workload names sorted by name.
 func (g workloadGroup) Names() []string {
 	out := make([]string, 0, len(g.Members))
 	for _, w := range g.Members {
@@ -112,7 +108,7 @@ func (g workloadGroup) Names() []string {
 	return out
 }
 
-// runningCount は起動中 (replicas > 0) のメンバー数を返す。
+// runningCount returns the number of running (replicas > 0) members.
 func (g workloadGroup) runningCount() int {
 	n := 0
 	for _, w := range g.Members {
@@ -123,13 +119,12 @@ func (g workloadGroup) runningCount() int {
 	return n
 }
 
-// anyRunning は 1 件以上のメンバーが起動中かを返す。
-// チェックボックスの初期選択に使う。部分起動 (🟡) でチェックを外してしまうと
-// 「変更なしで Plan → 稼働中のメンバーが停止される」ことになるため、
-// 稼働側に寄せて「不足メンバーを起動する」方向に収束させる。
+// anyRunning reports whether at least one member is running; used for the initial checkbox selection.
+// Unchecking on partial start (🟡) would make an unchanged Plan stop running members,
+// so lean toward running and converge on starting the missing members.
 func (g workloadGroup) anyRunning() bool { return g.runningCount() > 0 }
 
-// suffixes は merge されたメンバーの suffix を name 昇順で返す。
+// suffixes returns the suffixes of the merged members sorted by name.
 func (g workloadGroup) suffixes() []string {
 	out := make([]string, 0, len(g.Members))
 	for _, w := range g.Members {
@@ -138,12 +133,12 @@ func (g workloadGroup) suffixes() []string {
 	return out
 }
 
-// label はチェックボックスに表示するテキストを返す。
+// label returns the text shown on the checkbox.
 //
-//	単体      : workloadLabel と同じ ("🟢 name (N pod)" / "🔴 name")
-//	merge 済み: "🟢 base (api, app, worker)"             … 全メンバー起動中
-//	            "🟡 base (api, app, worker) 2/3 起動中"  … 部分起動
-//	            "🔴 base (api, app, worker)"             … 全メンバー停止中
+//	standalone: same as workloadLabel ("🟢 name (N pod)" / "🔴 name")
+//	merged:     "🟢 base (api, app, worker)"             ... all members running
+//	            "🟡 base (api, app, worker) 2/3 running" ... partially running
+//	            "🔴 base (api, app, worker)"             ... all members stopped
 func (g workloadGroup) label() string {
 	if !g.Grouped {
 		return truncateOptionText(workloadLabel(g.Members[0]))
@@ -160,13 +155,13 @@ func (g workloadGroup) label() string {
 
 	text := fmt.Sprintf("%s %s (%s)", icon, g.Key, strings.Join(g.suffixes(), ", "))
 	if running > 0 && running < len(g.Members) {
-		text += fmt.Sprintf(" %d/%d 起動中", running, len(g.Members))
+		text += fmt.Sprintf(" %d/%d running", running, len(g.Members))
 	}
 	return truncateOptionText(text)
 }
 
-// changeLabel はプレビュー行に出す対象表記を返す。names は今回変更するメンバー名。
-// merge 済みの場合は変更対象の suffix だけを列挙する (例: "checkout (app, worker)")。
+// changeLabel returns the target notation for a preview line; names are the members changed now.
+// For merged groups it lists only the changed suffixes (e.g. "checkout (app, worker)").
 func (g workloadGroup) changeLabel(names []string) string {
 	if len(names) == 0 {
 		return g.Key
@@ -181,7 +176,7 @@ func (g workloadGroup) changeLabel(names []string) string {
 	return fmt.Sprintf("%s (%s)", g.Key, strings.Join(sfx, ", "))
 }
 
-// truncateOptionText は Slack option text の文字数上限に収める。
+// truncateOptionText fits Slack option text within the character limit.
 func truncateOptionText(s string) string {
 	runes := []rune(s)
 	if len(runes) <= slackOptionTextMaxLen {

@@ -24,7 +24,7 @@ const (
 	testStateConfigMapKey = "state.json"
 )
 
-// fakeMetrics は metrics.MetricsManager を満たす最小実装。
+// fakeMetrics is a minimal implementation of metrics.MetricsManager.
 type fakeMetrics struct {
 	mu             sync.Mutex
 	activations    map[string]float64 // key: "env/cluster/ns/name"
@@ -78,7 +78,7 @@ func (f *fakeMetrics) IncTokenRefresh(cluster, result string) {
 
 func (f *fakeMetrics) Handler() http.Handler { return http.NotFoundHandler() }
 
-// testCluster は env をキーにしたテスト用 Cluster fixture を返す。Cluster.Name は "<env>-cluster"。
+// testCluster returns a test Cluster fixture keyed by env. Cluster.Name is "<env>-cluster".
 func testCluster(env string) config.Cluster {
 	return config.Cluster{
 		Env:      env,
@@ -88,7 +88,7 @@ func testCluster(env string) config.Cluster {
 	}
 }
 
-// makeScaledObject は activation trigger 付きの ScaledObject を生成する。
+// makeScaledObject creates a ScaledObject with an activation trigger.
 func makeScaledObject(ns, name string) *kedav1alpha1.ScaledObject {
 	return &kedav1alpha1.ScaledObject{
 		ObjectMeta: metav1.ObjectMeta{
@@ -112,7 +112,7 @@ func makeScaledObject(ns, name string) *kedav1alpha1.ScaledObject {
 	}
 }
 
-// newTestStore は fake K8s clients から ClusterStore を構築するヘルパー。
+// newTestStore is a helper that builds a ClusterStore from fake K8s clients.
 func newTestStore(t *testing.T, c config.Cluster, kc *fake.Clientset, kk *kedafake.Clientset, m *fakeMetrics) *ClusterStore {
 	t.Helper()
 	return NewClusterStore(
@@ -168,7 +168,7 @@ func TestClusterStore_Bootstrap_RegistersScaledObjects(t *testing.T) {
 	}
 }
 
-// readState は state ConfigMap の中身を JSON deserialize して返す。
+// readState JSON-deserializes the state ConfigMap contents and returns them.
 func readState(t *testing.T, kc *fake.Clientset) map[string]struct {
 	Replicas  int    `json:"replicas"`
 	StartedBy string `json:"startedBy,omitempty"`
@@ -305,7 +305,7 @@ func TestClusterStore_StopAll_ReturnsCount(t *testing.T) {
 	}
 }
 
-// TestClusterStore_Bootstrap_WithExistingConfigMap は state ConfigMap が事前にある場合の復元を確認する。
+// TestClusterStore_Bootstrap_WithExistingConfigMap checks restoration when a state ConfigMap already exists.
 func TestClusterStore_Bootstrap_WithExistingConfigMap(t *testing.T) {
 	t.Parallel()
 

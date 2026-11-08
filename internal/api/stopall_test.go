@@ -11,7 +11,7 @@ import (
 	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
-// fakeStore は model.WorkloadStore の最小 fake。StopAll の結果を事前登録する。
+// fakeStore is a minimal fake of model.WorkloadStore with preset StopAll results.
 type fakeStore struct {
 	stopAllResult model.StopAllResult
 	stopAllCalls  int
@@ -88,7 +88,7 @@ func TestStopAllHandler_PartialFailure(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	// 部分成功でも 200 OK
+	// 200 OK even on partial success
 	if rec.Code != http.StatusOK {
 		t.Errorf("status: got %d, want 200 (partial success allowed)", rec.Code)
 	}

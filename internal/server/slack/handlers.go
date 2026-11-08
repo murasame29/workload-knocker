@@ -23,41 +23,39 @@ const (
 	callbackWorkloadModal = "workload_modal"
 	callbackPreviewModal  = "preview_modal"
 
-	// slackModalTitleMaxLen は Slack Modal の plain_text title の最大文字数。
-	// 超過すると invalid_arguments で OpenView が拒否される。
+	// slackModalTitleMaxLen is the max length of a Slack Modal plain_text title.
+	// Exceeding it makes OpenView fail with invalid_arguments.
 	slackModalTitleMaxLen = 24
 
-	// checkboxMaxOptions は Slack checkboxes element に載せられる options の上限。
-	// 超過すると invalid_arguments で OpenView / UpdateView が拒否されるため、
-	// 表示エントリはこの件数ごとに複数の input block へ分割する。
+	// checkboxMaxOptions is the max options in a Slack checkboxes element.
+	// Exceeding it makes OpenView / UpdateView fail with invalid_arguments, so entries are
+	// split across multiple input blocks of this size.
 	checkboxMaxOptions = 10
 
-	// slackOptionTextMaxLen は option object の text の最大文字数。
+	// slackOptionTextMaxLen is the max length of an option object text.
 	slackOptionTextMaxLen = 75
 
-	// slackModalMaxBlocks は Modal 1 つに含められる block 数の上限。
+	// slackModalMaxBlocks is the max number of blocks in one Modal.
 	slackModalMaxBlocks = 100
 
-	// reservedModalBlocks は workload checkbox 以外に確保しておく block 数。
-	// (namespace select + 表示上限超過の警告 section)
+	// reservedModalBlocks is the number of blocks reserved besides workload checkboxes
+	// (namespace select + truncation warning section).
 	reservedModalBlocks = 2
 
-	// maxWorkloadCheckboxBlocks / maxWorkloadOptions は 1 つの Modal で扱える
-	// checkbox block 数と表示エントリ件数の上限。
-	// エントリは suffix merge 後の単位なので、workload 実数はこれより多くなり得る。
+	// maxWorkloadCheckboxBlocks / maxWorkloadOptions cap checkbox blocks and display entries per Modal.
+	// Entries are post-merge units, so the real workload count may be higher.
 	maxWorkloadCheckboxBlocks = (slackModalMaxBlocks - reservedModalBlocks) / checkboxMaxOptions
 	maxWorkloadOptions        = maxWorkloadCheckboxBlocks * checkboxMaxOptions
 
-	// slackPrivateMetadataMaxLen は view.private_metadata の最大文字数。
+	// slackPrivateMetadataMaxLen is the max length of view.private_metadata.
 	slackPrivateMetadataMaxLen = 3000
 
-	// slackSectionTextMaxLen は section block の text の最大文字数。
+	// slackSectionTextMaxLen is the max length of a section block text.
 	slackSectionTextMaxLen = 3000
 )
 
-// modalTitle は Slack Modal の title を生成する。
-// 24 文字以内に収めるため "🚀 <key>" 形式を基本とし、それでも超過する場合は truncate する。
-// emoji 1 文字 + space + key の組み合わせで実用上収まる前提。
+// modalTitle builds the Slack Modal title.
+// It uses "🚀 <key>" to fit 24 characters and truncates if it still overflows.
 func modalTitle(cl config.Cluster) string {
 	title := "🚀 " + cl.Env
 	runes := []rune(title)
@@ -67,14 +65,12 @@ func modalTitle(cl config.Cluster) string {
 	return string(runes[:slackModalTitleMaxLen])
 }
 
-// sortedWorkloads は workload を name 昇順に並べたコピーを返す。
-// store は map 走査で返すため順序が不定であり、そのままでは
-//   - checkbox の分割境界と表示順が毎回入れ替わる
-//   - 表示上限で truncate する対象が render 時と submit 時でズレる
+// sortedWorkloads returns a copy of workloads sorted by name.
+// The store returns map iteration order, which would make checkbox split boundaries and the
+// truncation target differ between render and submit; fixing the order keeps them identical.
 //
-// という問題が起きる。ここで順序を固定して両者を一致させる。
-// 表示エントリ全体の並びは groupWorkloads が Key 昇順で確定させ、
-// 本関数は merge されたエントリ内のメンバー順 (= suffix の表示順) を担う。
+// groupWorkloads fixes the order of whole entries by Key; this function orders members
+// inside a merged entry (the suffix display order).
 func sortedWorkloads(ws []*model.Workload) []*model.Workload {
 	out := slices.Clone(ws)
 	slices.SortFunc(out, func(a, b *model.Workload) int {
@@ -83,7 +79,7 @@ func sortedWorkloads(ws []*model.Workload) []*model.Workload {
 	return out
 }
 
-// workloadLabel は checkbox に表示する単体 workload のラベルを返す。
+// workloadLabel returns the label of a standalone workload checkbox.
 func workloadLabel(w *model.Workload) string {
 	if w.Replicas > 0 {
 		return fmt.Sprintf("🟢 %s (%d pod)", w.Name, w.Replicas)
@@ -91,9 +87,9 @@ func workloadLabel(w *model.Workload) string {
 	return fmt.Sprintf("🔴 %s", w.Name)
 }
 
-// namespaceInputBlock は namespace の static_select ブロックを生成する。
-// 表示順は a→z に固定する (store は map 走査で返すため順序が不定)。
-// selected が非空かつ一覧に含まれる場合は初期選択にする。
+// namespaceInputBlock builds the namespace static_select block.
+// Options are sorted a-z (the store returns map order).
+// A non-empty selected that is in the list becomes the initial selection.
 func namespaceInputBlock(namespaces []string, selected string) *slack.InputBlock {
 	sorted := slices.Clone(namespaces)
 	slices.Sort(sorted)
@@ -114,7 +110,7 @@ func namespaceInputBlock(namespaces []string, selected string) *slack.InputBlock
 
 	nsSelect := slack.NewOptionsSelectBlockElement(
 		"static_select",
-		slack.NewTextBlockObject("plain_text", "Namespace を選択", false, false),
+		slack.NewTextBlockObject("plain_text", "Select a namespace", false, false),
 		actionSelectNamespace,
 		options...,
 	)
@@ -132,11 +128,10 @@ func namespaceInputBlock(namespaces []string, selected string) *slack.InputBlock
 	return block
 }
 
-// workloadCheckboxBlocks は表示エントリを checkboxMaxOptions 件ずつの input block に
-// 分割して返す。block_id / action_id は blockSelectWorkloads / actionSelectWorkloads に
-// 連番を付与した形 (例: "block_workloads_0") で、submit 時は prefix でまとめて回収する。
-// option の value は代表 workload 名のみ (option value は 75 文字上限があるため
-// "cluster/namespace/name" のフル tuple は使わない)。
+// workloadCheckboxBlocks splits display entries into input blocks of checkboxMaxOptions each.
+// block_id / action_id are blockSelectWorkloads / actionSelectWorkloads plus a sequence number
+// (e.g. "block_workloads_0"); submit collects them by prefix. The option value is only the
+// representative workload name (option values are capped at 75 chars, so no full tuple).
 func workloadCheckboxBlocks(namespace string, groups []workloadGroup) []slack.Block {
 	blocks := make([]slack.Block, 0, (len(groups)+checkboxMaxOptions-1)/checkboxMaxOptions)
 
@@ -167,16 +162,16 @@ func workloadCheckboxBlocks(namespace string, groups []workloadGroup) []slack.Bl
 			checkboxes.InitialOptions = initialOptions
 		}
 
-		// 分割時はどの範囲の block か分かるよう label に連番を出す。
+		// When split, number the label so the block range is clear.
 		label := fmt.Sprintf("Workloads (%s)", namespace)
 		if len(groups) > checkboxMaxOptions {
 			label = fmt.Sprintf("Workloads (%s) %d-%d", namespace, start+1, end)
 		}
 
-		// hint は先頭 block だけに付けて縦の冗長さを抑える。
+		// Attach the hint only to the first block to reduce vertical redundancy.
 		var hint *slack.TextBlockObject
 		if idx == 0 {
-			hint = slack.NewTextBlockObject("plain_text", "✅ = 起動  ☐ = 停止", false, false)
+			hint = slack.NewTextBlockObject("plain_text", "✅ = running  ☐ = stopped", false, false)
 		}
 
 		block := slack.NewInputBlock(
@@ -192,9 +187,8 @@ func workloadCheckboxBlocks(namespace string, groups []workloadGroup) []slack.Bl
 	return blocks
 }
 
-// selectedWorkloadNames は分割された全 checkbox block の選択状態を 1 つの集合に畳み込む。
-// prefix 一致で走査するので、分割前の単一 block ("block_workloads") 由来の
-// 送信内容もそのまま回収できる。
+// selectedWorkloadNames folds the selection of all split checkbox blocks into one set.
+// It scans by prefix, so submissions from the old single block ("block_workloads") also work.
 func selectedWorkloadNames(values map[string]map[string]slack.BlockAction) map[string]bool {
 	selected := make(map[string]bool)
 	for blockID, actions := range values {
@@ -213,9 +207,8 @@ func selectedWorkloadNames(values map[string]map[string]slack.BlockAction) map[s
 	return selected
 }
 
-// mrkdwnSections は header + lines を section block の text 上限 (3000 文字) に
-// 収まるよう複数 section に分割する。1 行あたりの長さは workload 名 (K8s 上限 253 文字)
-// で抑えられているため、1 行が単独で上限を超えることはない。
+// mrkdwnSections splits header + lines into sections within the section text limit (3000 chars).
+// A single line cannot exceed the limit because workload names are capped (K8s limit 253 chars).
 func mrkdwnSections(header string, lines []string) []slack.Block {
 	var blocks []slack.Block
 	current := header
@@ -238,34 +231,33 @@ func mrkdwnSections(header string, lines []string) []slack.Block {
 	return blocks
 }
 
-// modalMetadata は Modal の private_metadata に埋め込む情報。
-// Cluster は Slack スラッシュコマンドから解決した cluster.Key を保持する。
+// modalMetadata is the information embedded in the Modal private_metadata.
+// Cluster holds the cluster.Key resolved from the Slack slash command.
 type modalMetadata struct {
 	ChannelID string `json:"channel_id"`
 	UserID    string `json:"user_id"`
 	Cluster   string `json:"cluster"`
 	Namespace string `json:"namespace,omitempty"`
-	// Rendered は Modal の checkbox に実際に描画した workload 件数。
-	// 表示上限で truncate された workload を submit 時に「未チェック = 停止」と
-	// 誤判定しないよう、差分計算の対象範囲を復元するために使う。
+	// Rendered is the number of workloads actually rendered as checkboxes.
+	// It restores the diff scope so workloads truncated by the display limit are not
+	// mistaken for "unchecked = stopped" on submit.
 	Rendered int `json:"rendered,omitempty"`
 }
 
-// previewMetadata はプレビュー Modal の private_metadata。
-// ToStart / ToStop は workload 名のみを保持する (cluster / namespace は同一 struct の
-// フィールドで一意に決まる)。private_metadata は 3000 文字上限があり、
-// "cluster/namespace/name" のフル tuple では件数が増えたときに破綻するため。
+// previewMetadata is the private_metadata of the preview Modal.
+// ToStart / ToStop hold only workload names (cluster / namespace are fixed by the same struct).
+// private_metadata is capped at 3000 chars, which full "cluster/namespace/name" tuples would break.
 type previewMetadata struct {
 	ChannelID string   `json:"channel_id"`
 	UserID    string   `json:"user_id"`
 	Cluster   string   `json:"cluster"`
 	Namespace string   `json:"namespace"`
-	ToStart   []string `json:"to_start"` // workload 名
-	ToStop    []string `json:"to_stop"`  // workload 名
+	ToStart   []string `json:"to_start"` // workload name
+	ToStop    []string `json:"to_stop"`  // workload name
 }
 
-// handleSlashCommand は /workload-knocker-* を処理する。
-// cluster は b.registry.BySlashCommand(cmd.Command) で解決する。
+// handleSlashCommand handles /workload-knocker-*.
+// The cluster is resolved via b.registry.BySlashCommand(cmd.Command).
 func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 	txn := b.startTransaction("SlackBot/SlashCommand")
 	if txn != nil {
@@ -278,7 +270,7 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 	if !ok {
 		slog.Warn("unknown slash command", slog.String("command", cmd.Command))
 		if _, err := b.client.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText("⚠️ このスラッシュコマンドは Cluster Registry に登録されていません", false),
+			slack.MsgOptionText("⚠️ This slash command is not registered in the Cluster Registry", false),
 		); err != nil {
 			slog.Error("failed to post ephemeral message", slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
 		}
@@ -291,22 +283,22 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 		txn.AddAttribute("cluster.env", cl.Env)
 	}
 
-	slog.Info("slash command 受信", slog.String("user.name", cmd.UserName), slog.String("command", cmd.Command), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
+	slog.Info("slash command received", slog.String("user.name", cmd.UserName), slog.String("command", cmd.Command), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
 
-	// 最新の ScaledObject 状態をオンデマンドで反映する。
-	// 失敗してもキャッシュ済みの registry で続行する。
+	// Reflect the latest ScaledObject state on demand.
+	// On failure, continue with the cached registry.
 	reconcileCtx, cancel := context.WithTimeout(context.Background(), b.cfg.ClusterReconcileTimeout)
 	defer cancel()
 	if err := b.store.Reconcile(reconcileCtx, cl.Env); err != nil {
-		slog.Warn("ScaledObject の reconcile に失敗、キャッシュで続行", slog.String("error.message", err.Error()))
+		slog.Warn("ScaledObject reconcile failed, continuing with cache", slog.String("error.message", err.Error()))
 	}
 
 	namespaces := b.store.Namespaces(cl.Env)
 
-	// namespace が未登録の場合は Modal を開かずにエラーを返す
+	// If no namespace is registered, return an error without opening the Modal
 	if len(namespaces) == 0 {
 		if _, err := b.client.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText("⚠️ 管理対象のワークロードがまだ登録されていません。ScaledObject の検出をお待ちください。", false),
+			slack.MsgOptionText("⚠️ No managed workloads are registered yet. Please wait for ScaledObject discovery.", false),
 		); err != nil {
 			slog.Error("failed to post ephemeral message", slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
 		}
@@ -334,11 +326,11 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 	}
 
 	if _, err := b.client.OpenView(cmd.TriggerID, modal); err != nil {
-		slog.Error("Modal のオープンに失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to open Modal", slog.String("error.message", err.Error()))
 	}
 }
 
-// handleInteraction は Slack のインタラクションを処理する（view_submission 以外）
+// handleInteraction handles Slack interactions (other than view_submission).
 func (b *Bot) handleInteraction(callback slack.InteractionCallback) {
 	switch callback.Type {
 	case slack.InteractionTypeBlockActions:
@@ -354,15 +346,15 @@ func (b *Bot) handleInteraction(callback slack.InteractionCallback) {
 	}
 }
 
-// handleViewSubmission は view_submission イベントを処理する
-// Socket Mode では Ack payload に response_action を含めることでモーダルを制御する
+// handleViewSubmission handles view_submission events.
+// In Socket Mode the Ack payload carries response_action to control the modal.
 func (b *Bot) handleViewSubmission(callback slack.InteractionCallback, req *socketmode.Request) {
 	slog.Debug("view submission dispatched", slog.String("view.callback_id", callback.View.CallbackID), slog.String("view.id", callback.View.ID))
 	switch callback.View.CallbackID {
 	case callbackWorkloadModal:
 		b.handleModalSubmit(callback, req)
 	case callbackPreviewModal:
-		// Apply: 空 Ack でモーダルを閉じてからチャンネルに結果を投稿
+		// Apply: close the modal with an empty Ack, then post the result to the channel
 		b.ack(*req)
 		b.handlePreviewConfirm(callback)
 	default:
@@ -371,8 +363,8 @@ func (b *Bot) handleViewSubmission(callback slack.InteractionCallback, req *sock
 	}
 }
 
-// handleNamespaceSelected は namespace 選択後に workload checkboxes を表示する。
-// 稼働中のワークロードは initial_options で初期選択状態にする。
+// handleNamespaceSelected shows the workload checkboxes after a namespace is selected.
+// Running workloads become the initial_options selection.
 func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namespace string) {
 	txn := b.startTransaction("SlackBot/NamespaceSelected")
 	if txn != nil {
@@ -381,16 +373,16 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 		txn.AddAttribute("namespace", namespace)
 	}
 
-	// private_metadata から cluster を取り出して registry で解決する。
+	// Extract the cluster from private_metadata and resolve it via the registry.
 	var meta modalMetadata
 	if err := json.Unmarshal([]byte(callback.View.PrivateMetadata), &meta); err != nil {
-		slog.Error("private_metadata のパースに失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to parse private_metadata", slog.String("error.message", err.Error()))
 		return
 	}
 
 	cl, ok := b.registry.ByEnv(meta.Cluster)
 	if !ok {
-		// 起動後 registry は immutable なので、この時点で消えるのは想定外。防御的にガード。
+		// The registry is immutable after startup, so a missing cluster is unexpected; guard defensively.
 		slog.Warn("cluster not found at namespace selection")
 		return
 	}
@@ -401,27 +393,27 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 		txn.AddAttribute("cluster.env", cl.Env)
 	}
 
-	slog.Info("namespace 選択", slog.String("user.name", callback.User.Name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", namespace))
+	slog.Info("namespace selected", slog.String("user.name", callback.User.Name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", namespace))
 
-	// base 名が同じで suffix (api/app/worker) だけ違う workload は 1 エントリに merge する。
-	// 以降の分割・表示上限・差分計算はすべてこのエントリ単位で扱う。
+	// Merge workloads sharing a base name that differ only by suffix (api/app/worker) into one entry.
+	// Splitting, display limit and diff all operate on these entries.
 	groups := groupWorkloads(b.store.WorkloadsByNamespace(cl.Env, namespace))
 
-	// Modal の block 数上限を超える分は表示できないので切り落とし、警告を出す。
+	// Entries beyond the Modal block limit cannot be shown, so cut them off and warn.
 	truncated := 0
 	if len(groups) > maxWorkloadOptions {
 		truncated = len(groups) - maxWorkloadOptions
 		groups = groups[:maxWorkloadOptions]
-		slog.Warn("表示エントリ件数が Modal の表示上限を超過したため一部を非表示にしました",
+		slog.Warn("display entries exceed the Modal limit; some are hidden",
 			slog.String("cluster.env", cl.Env), slog.String("namespace", namespace),
 			slog.Int("limit", maxWorkloadOptions), slog.Int("truncated", truncated))
 	}
 
-	// namespace select（選択済み状態を維持。表示順は a→z）
+	// namespace select (keep the selected state; sorted a-z)
 	nsBlock := namespaceInputBlock(b.store.Namespaces(cl.Env), namespace)
 
-	// workload checkboxes（稼働中は初期選択。表示順は a→z）
-	// Slack の checkboxes は 10 options 上限なので複数 block に分割する。
+	// workload checkboxes (running ones are initially selected; sorted a-z)
+	// Slack checkboxes allow 10 options max, so split across multiple blocks.
 	blocks := make([]slack.Block, 0, 2+maxWorkloadCheckboxBlocks)
 	blocks = append(blocks, nsBlock)
 	blocks = append(blocks, workloadCheckboxBlocks(namespace, groups)...)
@@ -429,15 +421,15 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 	if truncated > 0 {
 		blocks = append(blocks, slack.NewSectionBlock(
 			slack.NewTextBlockObject("mrkdwn", fmt.Sprintf(
-				":warning: 対象が %d 件あり、Slack Modal の表示上限 (%d 件) を超えています。"+
-					"残り %d 件はこの画面では変更できません。",
+				":warning: There are %d targets, exceeding the Slack Modal display limit (%d). "+
+					"The remaining %d cannot be changed on this screen.",
 				len(groups)+truncated, maxWorkloadOptions, truncated,
 			), false, false),
 			nil, nil,
 		))
 	}
 
-	// private_metadata に namespace と描画件数 (merge 後のエントリ数) を追加 (cluster は維持)
+	// Add namespace and rendered count (post-merge entries) to private_metadata (keep cluster)
 	meta.Namespace = namespace
 	meta.Rendered = len(groups)
 	metaBytes, _ := json.Marshal(meta)
@@ -455,13 +447,13 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 	}
 
 	if _, err := b.client.UpdateView(modal, callback.View.ExternalID, callback.View.Hash, callback.View.ID); err != nil {
-		slog.Error("Modal の更新に失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to update Modal", slog.String("error.message", err.Error()))
 	}
 }
 
-// handleModalSubmit は Plan ボタン押下時に差分を計算してプレビュー Modal を表示する。
-// Socket Mode の view_submission では Ack payload に response_action: update を含めて
-// 同じモーダルをプレビューに切り替える。
+// handleModalSubmit computes the diff on Plan and shows the preview Modal.
+// In Socket Mode view_submission, the Ack payload with response_action: update
+// switches the same modal to the preview.
 func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketmode.Request) {
 	txn := b.startTransaction("SlackBot/Plan")
 	if txn != nil {
@@ -471,7 +463,7 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 
 	var meta modalMetadata
 	if err := json.Unmarshal([]byte(callback.View.PrivateMetadata), &meta); err != nil {
-		slog.Error("private_metadata のパースに失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to parse private_metadata", slog.String("error.message", err.Error()))
 		b.ack(*req)
 		return
 	}
@@ -481,7 +473,7 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		slog.Warn("cluster not found at plan submit")
 		b.ack(*req)
 		if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
-			slack.MsgOptionText("⚠️ 対象 Cluster が Registry から消えています。再度コマンドを実行してください。", false),
+			slack.MsgOptionText("⚠️ The target Cluster is no longer in the Registry. Please run the command again.", false),
 		); err != nil {
 			slog.Error("failed to post ephemeral message", slog.String("error.message", err.Error()))
 		}
@@ -495,13 +487,12 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		txn.AddAttribute("namespace", meta.Namespace)
 	}
 
-	// 選択されたワークロード（チェックあり = 起動したい）。分割された全 checkbox block を畳み込む。
+	// Selected workloads (checked = wants running), folded across all split checkbox blocks.
 	selectedSet := selectedWorkloadNames(callback.View.State.Values)
 
-	// 現在の状態と比較して差分を計算。render 時と同じ順序・同じ merge 単位で組み直す。
-	// Modal に描画されていなかったエントリは差分計算から除外する。
-	// 除外しないと「未表示 = 未チェック = 停止」と解釈され、画面に出ていない
-	// 稼働中の workload が意図せず停止されてしまう。
+	// Compare with the current state; rebuild with the same order and merge unit as render.
+	// Entries not rendered in the Modal are excluded from the diff; otherwise
+	// "not shown = unchecked = stop" would stop running workloads that are off screen.
 	groups := renderedGroups(
 		groupWorkloads(b.store.WorkloadsByNamespace(cl.Env, meta.Namespace)),
 		meta.Rendered,
@@ -511,9 +502,8 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 	var previewLines []string
 
 	for _, g := range groups {
-		// merge されたエントリは代表メンバー名 1 つで全メンバーを表す。
-		// 代表が reconcile で消えて value がずれても追従できるよう、
-		// いずれかのメンバー名が選択されていれば ON とみなす。
+		// A merged entry is represented by one member name; treat it as ON if any member name is
+		// selected, so it still works when the representative disappears on reconcile.
 		wantRunning := false
 		for _, name := range g.Names() {
 			if selectedSet[name] {
@@ -536,30 +526,30 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		}
 
 		if len(startNames) > 0 {
-			previewLines = append(previewLines, fmt.Sprintf("🟢 %s: 停止 → *起動*", g.changeLabel(startNames)))
+			previewLines = append(previewLines, fmt.Sprintf("🟢 %s: stopped → *start*", g.changeLabel(startNames)))
 		}
 		if len(stopNames) > 0 {
-			previewLines = append(previewLines, fmt.Sprintf("🔴 %s: 稼働中 → *停止*", g.changeLabel(stopNames)))
+			previewLines = append(previewLines, fmt.Sprintf("🔴 %s: running → *stop*", g.changeLabel(stopNames)))
 		}
 	}
 
 	envUpper := strings.ToUpper(cl.Env)
 
 	if len(toStart) == 0 && len(toStop) == 0 {
-		// 変更なし — 空 Ack でモーダルを閉じてエフェメラル通知
+		// No changes: close the modal with an empty Ack and send an ephemeral notice
 		b.ack(*req)
 		if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
 			slack.MsgOptionBlocks(
 				slack.NewSectionBlock(
 					slack.NewTextBlockObject("mrkdwn",
-						fmt.Sprintf("ℹ️ *%s / %s / %s* — 変更はありません", envUpper, cl.Name, meta.Namespace),
+						fmt.Sprintf("ℹ️ *%s / %s / %s* — no changes", envUpper, cl.Name, meta.Namespace),
 						false, false,
 					),
 					nil, nil,
 				),
 			),
 		); err != nil {
-			slog.Error("変更なしメッセージの送信に失敗", slog.String("error.message", err.Error()))
+			slog.Error("failed to send no-change message", slog.String("error.message", err.Error()))
 		}
 		return
 	}
@@ -572,16 +562,16 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		ToStart:   toStart,
 		ToStop:    toStop,
 	})
-	// private_metadata は 3000 文字上限。差分が極端に大きい場合はプレビューを
-	// 開けないので、分割実行を促して打ち切る (ユーザー側で対処可能)。
+	// private_metadata is capped at 3000 chars. If the diff is too large the preview cannot
+	// open, so abort and ask the user to split the run.
 	if err != nil || len(previewMeta) > slackPrivateMetadataMaxLen {
-		slog.Warn("preview metadata が private_metadata の上限を超過",
+		slog.Warn("preview metadata exceeds the private_metadata limit",
 			slog.Int("size", len(previewMeta)), slog.Int("limit", slackPrivateMetadataMaxLen),
 			slog.Int("to_start", len(toStart)), slog.Int("to_stop", len(toStop)))
 		b.ack(*req)
 		if _, perr := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
 			slack.MsgOptionText(fmt.Sprintf(
-				"⚠️ 一度に変更する件数が多すぎます (起動 %d 件 / 停止 %d 件)。数回に分けて実行してください。",
+				"⚠️ Too many changes at once (start %d / stop %d). Please split them into several runs.",
 				len(toStart), len(toStop)), false),
 		); perr != nil {
 			slog.Error("failed to post ephemeral message", slog.String("error.message", perr.Error()))
@@ -589,15 +579,15 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		return
 	}
 
-	// プレビュー Modal を response_action: update で表示する
-	previewHeader := fmt.Sprintf("*%s / %s / %s* の変更プレビュー:\n",
+	// Show the preview Modal with response_action: update
+	previewHeader := fmt.Sprintf("*%s / %s / %s* change preview:\n",
 		envUpper, cl.Name, meta.Namespace,
 	)
 
 	previewModal := slack.ModalViewRequest{
 		Type:            slack.VTModal,
 		CallbackID:      callbackPreviewModal,
-		Title:           slack.NewTextBlockObject("plain_text", "変更プレビュー", false, false),
+		Title:           slack.NewTextBlockObject("plain_text", "Change preview", false, false),
 		Submit:          slack.NewTextBlockObject("plain_text", "✅ Apply", false, false),
 		Close:           slack.NewTextBlockObject("plain_text", "Back", false, false),
 		PrivateMetadata: string(previewMeta),
@@ -606,14 +596,14 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		},
 	}
 
-	// Ack payload に response_action: update を含めてモーダルを切り替える
+	// Switch the modal by including response_action: update in the Ack payload
 	b.ack(*req, map[string]any{
 		"response_action": "update",
 		"view":            previewModal,
 	})
 }
 
-// handlePreviewConfirm はプレビューの Apply ボタンで実際に起動/停止を実行する。
+// handlePreviewConfirm runs the actual start/stop on the preview Apply button.
 func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 	txn := b.startTransaction("SlackBot/Apply")
 	if txn != nil {
@@ -623,17 +613,17 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 
 	var meta previewMetadata
 	if err := json.Unmarshal([]byte(callback.View.PrivateMetadata), &meta); err != nil {
-		slog.Error("preview metadata のパースに失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to parse preview metadata", slog.String("error.message", err.Error()))
 		return
 	}
 
-	// 防御的チェック: cluster が registry から消えている場合は何もしない。
-	// (registry は起動後 immutable なので通常は発生しないが、ガードとして残す)
+	// Defensive check: do nothing if the cluster vanished from the registry
+	// (it is immutable after startup, so this is only a guard).
 	cl, ok := b.registry.ByEnv(meta.Cluster)
 	if !ok {
 		slog.Warn("cluster not found in registry at apply time")
 		if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
-			slack.MsgOptionText("⚠️ 対象 Cluster が Registry から消えています。再度コマンドを実行してください。", false),
+			slack.MsgOptionText("⚠️ The target Cluster is no longer in the Registry. Please run the command again.", false),
 		); err != nil {
 			slog.Error("failed to post ephemeral message", slog.String("error.message", err.Error()))
 		}
@@ -653,7 +643,7 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 	user := callback.User.Name
 	var resultLines []string
 
-	// ToStart / ToStop は workload 名のみ。cluster / namespace は meta から解決する。
+	// ToStart / ToStop are workload names only; cluster / namespace come from meta.
 	ns := meta.Namespace
 
 	for _, name := range meta.ToStart {
@@ -661,8 +651,8 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 			continue
 		}
 		b.store.Start(meta.Cluster, ns, name, user)
-		resultLines = append(resultLines, fmt.Sprintf("🟢 %s → 起動", name))
-		slog.Info("ワークロード起動", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", ns), slog.String("user.name", user))
+		resultLines = append(resultLines, fmt.Sprintf("🟢 %s → start", name))
+		slog.Info("workload started", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", ns), slog.String("user.name", user))
 		b.recordCustomEvent("WorkloadKnocker:WorkloadOperation", map[string]any{
 			"action":       "start",
 			"env":          cl.Env,
@@ -679,8 +669,8 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 			continue
 		}
 		b.store.Stop(meta.Cluster, ns, name)
-		resultLines = append(resultLines, fmt.Sprintf("🔴 %s → 停止", name))
-		slog.Info("ワークロード停止", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", ns), slog.String("user.name", user))
+		resultLines = append(resultLines, fmt.Sprintf("🔴 %s → stop", name))
+		slog.Info("workload stopped", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", ns), slog.String("user.name", user))
 		b.recordCustomEvent("WorkloadKnocker:WorkloadOperation", map[string]any{
 			"action":       "stop",
 			"env":          cl.Env,
@@ -692,16 +682,16 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		})
 	}
 
-	resultHeader := fmt.Sprintf("🚀 <@%s> がワークロードを変更しました (%s / %s / %s)",
+	resultHeader := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)",
 		callback.User.ID, envUpper, cl.Name, meta.Namespace,
 	)
 	if len(meta.ToStart) > 0 {
-		resultLines = append(resultLines, "⏰ 自動停止: 今日 22:00 JST")
+		resultLines = append(resultLines, "⏰ Auto-stop: today 22:00 JST")
 	}
 
 	if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
 		slack.MsgOptionBlocks(mrkdwnSections(resultHeader, resultLines)...),
 	); err != nil {
-		slog.Error("結果メッセージの送信に失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to send result message", slog.String("error.message", err.Error()))
 	}
 }

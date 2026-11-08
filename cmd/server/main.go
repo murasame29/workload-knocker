@@ -30,11 +30,11 @@ func run() int {
 
 	cfg, err := config.LoadEnv()
 	if err != nil {
-		slog.Error("設定の読み込みに失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to load config", slog.String("error.message", err.Error()))
 		return 1
 	}
 
-	// LOG_LEVEL 環境変数からログレベルを設定
+	// Set log level from LOG_LEVEL.
 	switch strings.ToLower(cfg.LogLevel) {
 	case "debug":
 		logOpts.Level = slog.LevelDebug
@@ -56,7 +56,7 @@ func run() int {
 
 	c, err := container.BuildServer(cfg)
 	if err != nil {
-		slog.Error("DI コンテナの構築に失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to build DI container", slog.String("error.message", err.Error()))
 		return 1
 	}
 
@@ -75,44 +75,44 @@ func run() int {
 		nrApp = nr
 		httpSrv = h
 	}); err != nil {
-		slog.Error("コンポーネントの取得に失敗", slog.String("error.message", err.Error()))
+		slog.Error("failed to resolve components", slog.String("error.message", err.Error()))
 		return 1
 	}
 
-	// New Relic の graceful shutdown
+	// Graceful shutdown of New Relic.
 	if nrApp != nil {
 		defer nrApp.Shutdown(5 * time.Second)
-		// nrslog で slog を再設定し、NR-LINKING メタデータをログに付与する
+		// Reconfigure slog with nrslog to attach NR-LINKING metadata.
 		slog.SetDefault(slog.New(nrslog.WrapHandler(nrApp, slog.NewJSONHandler(os.Stdout, logOpts))))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// MultiStore を起動時に一度だけ初期化（全 cluster の ScaledObject list + state ConfigMap 復元）。
-	// 30 秒のタイムアウトで全 cluster 並列実行する。
+	// Bootstrap MultiStore once at startup (list ScaledObjects and restore state ConfigMap per cluster).
+	// Runs all clusters in parallel with a 30s timeout.
 	bootstrapCtx, bootstrapCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer bootstrapCancel()
 	if err := ms.Bootstrap(bootstrapCtx); err != nil {
-		slog.Error("MultiStore の Bootstrap に失敗", slog.String("error.message", err.Error()))
+		slog.Error("MultiStore bootstrap failed", slog.String("error.message", err.Error()))
 		return 1
 	}
 	httpSrv.MarkReady()
 
-	// 起動完了ログ: registry の env 一覧を含める
+	// Startup log including the registry env list.
 	envs := make([]string, 0)
 	for _, cl := range registry.All() {
 		envs = append(envs, cl.Env)
 	}
 	slog.Info("workload-knocker started", slog.Any("clusters", envs), slog.Int("cluster.count", len(envs)))
 
-	// HTTP server / Slack gateway を Lifecycle Manager に任せる。
-	// ctx.Done() で全 Lifecycle を並列に Shutdown し、Wait が戻ったら終了。
+	// Hand HTTP server and Slack gateway to the Lifecycle Manager.
+	// ctx.Done() shuts down all lifecycles in parallel; exit when Wait returns.
 	if err := serverManager.Run(ctx); err != nil {
-		slog.Error("ライフサイクルがエラーで終了", slog.String("error.message", err.Error()))
+		slog.Error("lifecycle exited with error", slog.String("error.message", err.Error()))
 		return 1
 	}
 
-	slog.Info("workload-knocker を終了します")
+	slog.Info("workload-knocker stopping")
 	return 0
 }

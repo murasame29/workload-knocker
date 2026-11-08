@@ -103,11 +103,9 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-// k8s.io/client-go は v1.5.x のタグが semver 上最大になってしまうため、
-// v0.x 系の実バージョンへ差し替える。
-// あわせて github.com/kedacore/keda/v2 v2.20.0 が自身の go.mod で行っている
-// k8s.io 系の pin (v0.35.5) と controller-runtime の pin を再現する。
-// (依存モジュールの replace は効かないため、メインモジュール側で宣言する必要がある)
+// Pin k8s.io/client-go to a real v0.x version: the v1.5.x tags would win semver.
+// Also mirror the k8s.io pins (v0.35.5) and controller-runtime pin from keda/v2 v2.20.0.
+// replace in dependencies is ignored, so it must be declared in the main module.
 replace (
 	k8s.io/api => k8s.io/api v0.37.1
 	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.37.1

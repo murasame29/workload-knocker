@@ -10,25 +10,25 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Env は workload-knocker の起動設定 (環境変数由来)。
-// cluster ごとの設定は config.Load で読み込む YAML ファイル側にある。
+// Env is the startup configuration of workload-knocker (from environment variables).
+// Per-cluster settings live in the YAML file read by config.Load.
 type Env struct {
 	HTTPPort int `env:"HTTP_PORT" envDefault:"8080"`
 
-	// ControllerNamespace は state ConfigMap (workload-state) の置き場所となる namespace。
+	// ControllerNamespace is the namespace holding the state ConfigMap (workload-state).
 	ControllerNamespace string `env:"CONTROLLER_NAMESPACE" envDefault:"workload-control"`
 
-	// ClusterConfigPath は Cluster Registry YAML の絶対パス。
-	// 本番では ConfigMap を Pod に RO で volume mount し、その path を指す想定。
+	// ClusterConfigPath is the absolute path of the Cluster Registry YAML.
+	// In production the ConfigMap is mounted read-only into the Pod and this points to it.
 	ClusterConfigPath string `env:"CLUSTER_CONFIG_PATH" envDefault:"/etc/workload-knocker/config.yaml"`
 
-	// ClusterReconcileTimeout は Slack コマンド受信時の Reconcile タイムアウト。
+	// ClusterReconcileTimeout is the Reconcile timeout when a Slack command is received.
 	ClusterReconcileTimeout time.Duration `env:"CLUSTER_RECONCILE_TIMEOUT" envDefault:"2s"`
 
-	// StopAllTimeout は /api/v1/stop-all の per-cluster タイムアウト。
+	// StopAllTimeout is the per-cluster timeout of /api/v1/stop-all.
 	StopAllTimeout time.Duration `env:"STOP_ALL_TIMEOUT" envDefault:"10s"`
 
-	// ShutdownTimeout は server.Manager が各 Lifecycle.Shutdown に与えるタイムアウト。
+	// ShutdownTimeout is the timeout server.Manager gives each Lifecycle.Shutdown.
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"5s"`
 
 	SlackAppToken      string `env:"SLACK_APP_TOKEN,required"`
@@ -38,8 +38,8 @@ type Env struct {
 	LogLevel           string `env:"LOG_LEVEL"              envDefault:"info"`
 }
 
-// LoadEnv は環境変数 (.env ファイルがあれば読込) から Env を構築する。
-// WORKLOAD_ENV が設定されている場合は deprecation warning を出す。
+// LoadEnv builds Env from environment variables (reading a .env file if present).
+// It logs a deprecation warning when WORKLOAD_ENV is set.
 func LoadEnv() (*Env, error) {
 	_ = godotenv.Load()
 

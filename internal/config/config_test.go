@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// writeYAML は tempdir に YAML ファイルを作って path を返す。
+// writeYAML writes a YAML file in a tempdir and returns its path.
 func writeYAML(t *testing.T, name, body string) string {
 	t.Helper()
 	dir := t.TempDir()

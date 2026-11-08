@@ -8,8 +8,8 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// NewClusterAccess は rest.Config から ScaledObjectLister と StateRepository をまとめて生成する。
-// 上位レイヤ (store package) はこの関数経由で K8s API への接続を得る。
+// NewClusterAccess builds a ScaledObjectLister and StateRepository from a rest.Config.
+// The store package gets its K8s API access through this function.
 func NewClusterAccess(cfg *rest.Config, controllerNs string) (ScaledObjectLister, StateRepository, error) {
 	kc, err := kubernetes.NewForConfig(cfg)
 	if err != nil {

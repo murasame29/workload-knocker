@@ -10,19 +10,19 @@ import (
 	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
-// StopAllHandler は /api/v1/stop-all エンドポイントのハンドラ。
-// 登録された全 cluster の StopAll を fan-out し、per-cluster ブレイクダウンを返す。
+// StopAllHandler handles /api/v1/stop-all.
+// It fans out StopAll to every registered cluster and returns a per-cluster breakdown.
 type StopAllHandler struct {
 	store  model.WorkloadStore
 	tracer nrx.Tracer
 }
 
-// New は StopAllHandler のコンストラクタ。
+// New constructs a StopAllHandler.
 func New(store model.WorkloadStore, tracer nrx.Tracer) *StopAllHandler {
 	return &StopAllHandler{store: store, tracer: tracer}
 }
 
-// stopAllResponse は HTTP レスポンス JSON のスキーマ。
+// stopAllResponse is the JSON schema of the HTTP response.
 type stopAllResponse struct {
 	TotalStopped      int                                 `json:"total_stopped"`
 	ClustersTotal     int                                 `json:"clusters_total"`
@@ -32,15 +32,15 @@ type stopAllResponse struct {
 	Message           string                              `json:"message"`
 }
 
-// perClusterStopResultJSON は per-cluster ブレイクダウンの JSON 表現。
+// perClusterStopResultJSON is the JSON form of the per-cluster breakdown.
 type perClusterStopResultJSON struct {
 	Stopped int    `json:"stopped"`
 	Error   string `json:"error,omitempty"`
 }
 
-// ServeHTTP は net/http.Handler インターフェースを実装する。
-// Stop-All は best-effort オペレーションのため、部分成功でも 200 OK を返す。
-// クライアントは per_cluster 結果を見て個別対応する。
+// ServeHTTP implements net/http.Handler.
+// Stop-All is best-effort, so it returns 200 OK even on partial success;
+// clients inspect per_cluster for individual handling.
 func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)

@@ -1,36 +1,30 @@
-// Package nrx は newrelic-go-agent の薄い wrapper を提供する。
+// Package nrx is a thin wrapper around newrelic-go-agent with nil-app safe Tracer interfaces.
 //
-// 目的:
-//   - nil-app safe な Tracer / EventRecorder インターフェースを提供する
-//   - consumer から `*newrelic.Application` 直参照を排除し、テスト容易性を高める
-//
-// 命名注: ディレクトリ名は pkg/newrelic だが、上流 github.com/newrelic/go-agent との
-// import 衝突を避けるためパッケージ名は nrx (NewRelic eXtension)。
+// The package is named nrx to avoid an import clash with upstream github.com/newrelic/go-agent.
 package nrx
 
 import (
 	"github.com/newrelic/go-agent/v3/newrelic"
 )
 
-// Tracer は New Relic transaction の開始を抽象化する。
-// nrApp が nil でも no-op として動作するため、consumer は nil チェック不要。
+// Tracer abstracts starting New Relic transactions.
+// It is a no-op when nrApp is nil, so consumers need no nil check.
 type Tracer interface {
-	// Start は name でトランザクションを開始し、Span ハンドルを返す。
-	// 終了時は span.End() を呼ぶ。nrApp が nil の場合は no-op span を返す。
+	// Start begins a transaction named name and returns a Span; call span.End() when done.
 	Start(name string) Span
-	// RecordEvent は New Relic カスタムイベントを記録する。nrApp が nil の場合は no-op。
+	// RecordEvent records a New Relic custom event.
 	RecordEvent(eventType string, attrs map[string]any)
 }
 
-// Span は開始済みトランザクションへの操作 (属性追加 / 終了) を提供する。
+// Span operates on a started transaction.
 type Span interface {
-	// AddAttribute は transaction にカスタム属性を追加する。
+	// AddAttribute adds a custom attribute to the transaction.
 	AddAttribute(key string, value any)
-	// End は transaction を終了させる。冪等。
+	// End finishes the transaction. Idempotent.
 	End()
 }
 
-// New は *newrelic.Application から Tracer を構築する。app が nil でも安全に動作する。
+// New builds a Tracer from *newrelic.Application. A nil app is safe.
 func New(app *newrelic.Application) Tracer {
 	return &tracer{app: app}
 }
@@ -70,7 +64,7 @@ type noopSpan struct{}
 func (noopSpan) AddAttribute(string, any) {}
 func (noopSpan) End()                     {}
 
-// コンパイル時 interface 充足チェック
+// Compile-time interface check.
 var (
 	_ Tracer = (*tracer)(nil)
 	_ Span   = (*activeSpan)(nil)

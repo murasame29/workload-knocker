@@ -1,10 +1,10 @@
-// Package config は workload-knocker の設定を扱う。
+// Package config handles workload-knocker configuration:
 //
-//   - 環境変数経由のプロセス設定 (env.go: Env, LoadEnv)
-//   - Cluster Registry の YAML スキーマと lookup (config.go: Config, Load)
+//   - process settings from environment variables (env.go: Env, LoadEnv)
+//   - the Cluster Registry YAML schema and lookup (config.go: Config, Load)
 //
-// Cluster Registry はファイル経由で読み込む (本番では ConfigMap を RO で volume mount する)。
-// このため config パッケージは K8s API に依存しない。
+// The Cluster Registry is read from a file (a read-only mounted ConfigMap in production),
+// so this package does not depend on the K8s API.
 package config
 
 import (
@@ -15,14 +15,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Provider type 識別子。
+// Provider type identifiers.
 const (
 	ProviderTypeEKS        = "eks"
 	ProviderTypeKubeconfig = "kubeconfig"
 )
 
-// Config は Cluster Registry の root スキーマ + 検証済み lookup を兼ねる。
-// Validate / Load を通った後は immutable として扱う (hot-reload 対象外)。
+// Config is the root Cluster Registry schema plus the validated lookup.
+// It is immutable once it passes Validate / Load (no hot-reload).
 type Config struct {
 	Controller Controller `yaml:"controller"`
 	Clusters   []Cluster  `yaml:"clusters"`
@@ -31,50 +31,50 @@ type Config struct {
 	bySlashCommand map[string]Cluster
 }
 
-// Controller は workload-knocker Pod が動作するクラスタの設定。
+// Controller is the configuration of the cluster the workload-knocker Pod runs in.
 type Controller struct {
-	// Namespace は state ConfigMap (workload-state) の置き場所。
+	// Namespace holds the state ConfigMap (workload-state).
 	Namespace string `yaml:"namespace"`
 }
 
-// Cluster は managed クラスタ 1 つの設定。
+// Cluster is the configuration of one managed cluster.
 type Cluster struct {
-	// Env は env 識別子 (例: stg, stg-us, dev)。registry 内で一意。metrics ラベル / Modal の key にも使う。
+	// Env is the env identifier (e.g. stg, stg-us, dev), unique in the registry; also used as metrics label / Modal key.
 	Env string `yaml:"env"`
 
-	// Name は cluster name。metrics の cluster ラベル / EKS DescribeCluster の引数に使う。
+	// Name is the cluster name, used as the metrics cluster label and the EKS DescribeCluster argument.
 	Name string `yaml:"name"`
 
 	Provider ClusterProvider `yaml:"provider"`
 	Slack    ClusterSlack    `yaml:"slack"`
 }
 
-// ClusterProvider は cluster への接続方法を表す discriminated union。
-// Type と一致するフィールドのみ参照される。
+// ClusterProvider is a discriminated union describing how to connect to a cluster.
+// Only the field matching Type is used.
 type ClusterProvider struct {
 	Type       string              `yaml:"type"`
 	EKS        *ProviderEKS        `yaml:"eks,omitempty"`
 	Kubeconfig *ProviderKubeconfig `yaml:"kubeconfig,omitempty"`
 }
 
-// ProviderEKS は AWS EKS への接続設定 (IRSA + 任意の cross-account AssumeRole)。
+// ProviderEKS is the AWS EKS connection setting (IRSA + optional cross-account AssumeRole).
 type ProviderEKS struct {
 	Region        string `yaml:"region"`
 	AssumeRoleArn string `yaml:"assumeRoleArn,omitempty"`
 }
 
-// ProviderKubeconfig は kubeconfig ファイル経由の接続設定。
+// ProviderKubeconfig is the kubeconfig file connection setting.
 type ProviderKubeconfig struct {
 	Path    string `yaml:"path"`
 	Context string `yaml:"context,omitempty"`
 }
 
-// ClusterSlack は Slack 関連設定。SlashCommand は registry 内で一意。
+// ClusterSlack holds Slack settings. SlashCommand is unique in the registry.
 type ClusterSlack struct {
 	SlashCommand string `yaml:"slashCommand"`
 }
 
-// All は登録された全 cluster のコピーを返す。
+// All returns a copy of all registered clusters.
 func (c *Config) All() []Cluster {
 	out := make([]Cluster, len(c.Clusters))
 	copy(out, c.Clusters)
@@ -91,13 +91,11 @@ func (c *Config) BySlashCommand(cmd string) (Cluster, bool) {
 	return cl, ok
 }
 
-// Validate は整合性チェックと lookup map の初期化を行う。
-// 検証ルール:
-//   - clusters 1 件以上
-//   - Controller.Namespace, Cluster.Env / Name / Slack.SlashCommand すべて空でない
-//   - Provider.Type は eks / kubeconfig のいずれかで、対応する nested 設定が必須
-//     (他 provider 設定が non-nil なら error)
-//   - Env と SlashCommand は registry 内で一意
+// Validate checks consistency and initializes the lookup map. Rules:
+//   - at least one cluster
+//   - Controller.Namespace, Cluster.Env / Name / Slack.SlashCommand are non-empty
+//   - Provider.Type is eks or kubeconfig with its nested setting present (other providers must be nil)
+//   - Env and SlashCommand are unique in the registry
 func (c *Config) Validate() error {
 	if c.Controller.Namespace == "" {
 		return errors.New("controller.namespace is required")
@@ -167,7 +165,7 @@ func validateProvider(c Cluster) error {
 	return nil
 }
 
-// Parse は YAML バイト列を *Config にパースする。Validate は呼ばないので呼び出し側で実行する。
+// Parse parses YAML bytes into *Config. It does not call Validate; the caller must.
 func Parse(data []byte) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
@@ -176,7 +174,7 @@ func Parse(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
-// Load は path のファイルを読み、Parse + Validate して *Config を返す。
+// Load reads the file at path, then Parses and Validates it into *Config.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
