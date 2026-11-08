@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.1](https://github.com/murasame29/workload-knocker/compare/v0.1.0...v0.1.1) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* the Discord command now has the subcommands start and status; run /<command> start for the previous flow.
+* log keys time and msg are renamed to timestamp and message, and every line carries service.name and service.version.
+
+### Features
+
+* emit structured audit events with a stable schema ([#43](https://github.com/murasame29/workload-knocker/issues/43)) ([dabbb20](https://github.com/murasame29/workload-knocker/commit/dabbb20fce12e143b4fc1d49c1bc6a6d82c8244c))
+* ready message and optional notify channel ([#47](https://github.com/murasame29/workload-knocker/issues/47)) ([1bd37cf](https://github.com/murasame29/workload-knocker/commit/1bd37cff32efede5c4ba3ba9f5ece31e36d39172))
+* register running workloads on discovery and reconcile in the background ([#42](https://github.com/murasame29/workload-knocker/issues/42)) ([6481465](https://github.com/murasame29/workload-knocker/commit/6481465af22e3b400a043f01780fdf24123bf5f4))
+* run duration per start with auto-stop, reminder and extend ([#46](https://github.com/murasame29/workload-knocker/issues/46)) ([94ae486](https://github.com/murasame29/workload-knocker/commit/94ae486f0f787e77b0fe6add9efac9b7b5c41266))
+* show per-workload rollout progress after Confirm ([#44](https://github.com/murasame29/workload-knocker/issues/44)) ([e718357](https://github.com/murasame29/workload-knocker/commit/e718357c75e84201205d00da0721e58f5f18a747))
+* status command listing running workloads and stop times ([#49](https://github.com/murasame29/workload-knocker/issues/49)) ([140aa26](https://github.com/murasame29/workload-knocker/commit/140aa263442a52113d3252aa732405dbf51fa695))
+
 ## 0.1.0 (2026-11-08)
 
 
