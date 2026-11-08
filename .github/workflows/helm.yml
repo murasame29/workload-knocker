@@ -94,6 +94,16 @@ jobs:
           grep --fixed-strings --quiet 'name: DISCORD_BOT_TOKEN' "${RUNNER_TEMP}/discord.yaml"
           grep --fixed-strings --quiet 'name: "workload-knocker-discord"' "${RUNNER_TEMP}/discord.yaml"
           grep --fixed-strings --quiet 'value: "123456789012345678"' "${RUNNER_TEMP}/discord.yaml"
+          helm template workload-knocker charts/workload-knocker \
+            --values charts/workload-knocker/ci/test-values.yaml \
+            --set-string slack.secretName= \
+            --set discord.secretName=workload-knocker-discord \
+            > "${RUNNER_TEMP}/discord-only.yaml"
+          grep --fixed-strings --quiet 'name: DISCORD_BOT_TOKEN' "${RUNNER_TEMP}/discord-only.yaml"
+          if grep --fixed-strings --quiet 'name: SLACK_APP_TOKEN' "${RUNNER_TEMP}/discord-only.yaml"; then
+            echo 'Slack env rendered without slack.secretName' >&2
+            exit 1
+          fi
           if grep --extended-regexp --quiet 'NEW_[R]ELIC' "${RUNNER_TEMP}/default.yaml"; then
             echo 'removed APM environment variable rendered' >&2
             exit 1
@@ -106,9 +116,9 @@ jobs:
             --set-string image.digest=sha256:not-a-digest; then
             echo 'invalid image digest was accepted' >&2; exit 1
           fi
-          if helm lint charts/workload-knocker --strict --values "${values}" \
+          if helm template workload-knocker charts/workload-knocker --values "${values}" \
             --set-string slack.secretName=; then
-            echo 'empty Slack Secret name was accepted' >&2; exit 1
+            echo 'no chat frontend Secret was accepted' >&2; exit 1
           fi
           if helm lint charts/workload-knocker --strict --values "${values}" \
             --set-string discord.guildId=not-a-snowflake; then

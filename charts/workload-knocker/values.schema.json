@@ -1,6 +1,6 @@
 {
   "type": "object",
-  "required": ["config", "slack"],
+  "required": ["config"],
   "properties": {
     "mode": {"type": "string", "enum": ["full", "scheduled-stop", "off"]},
     "api": {
@@ -78,9 +78,9 @@
     },
     "slack": {
       "type": "object",
-      "required": ["secretName", "appTokenKey", "botTokenKey"],
+      "required": ["appTokenKey", "botTokenKey"],
       "properties": {
-        "secretName": {"type": "string", "minLength": 1, "maxLength": 253},
+        "secretName": {"type": "string", "maxLength": 253},
         "appTokenKey": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"},
         "botTokenKey": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"}
       }
