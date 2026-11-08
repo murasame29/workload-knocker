@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeYAML writes a YAML file in a tempdir and returns its path.
@@ -146,5 +147,22 @@ func TestLoadEnv_OperationMode(t *testing.T) {
 	e, err := LoadEnv()
 	if err != nil || e.OperationMode != "off" {
 		t.Fatalf("got %v, %v", e, err)
+	}
+}
+
+func TestLoadEnv_ReconcileInterval(t *testing.T) {
+	e, err := LoadEnv()
+	if err != nil || e.ReconcileInterval != time.Minute {
+		t.Fatalf("default: got (%v, %v), want 1m", e, err)
+	}
+
+	t.Setenv("RECONCILE_INTERVAL", "0")
+	if e, err = LoadEnv(); err != nil || e.ReconcileInterval != 0 {
+		t.Fatalf("0: got (%v, %v), want disabled", e, err)
+	}
+
+	t.Setenv("RECONCILE_INTERVAL", "-1s")
+	if _, err = LoadEnv(); err == nil {
+		t.Fatal("negative interval: want error")
 	}
 }

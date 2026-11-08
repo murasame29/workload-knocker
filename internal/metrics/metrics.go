@@ -20,6 +20,8 @@ type MetricsManager interface {
 	DeleteCluster(env, cluster string)
 	// IncConfigReload counts one hot reload attempt (target: registry|authz, result: success|error).
 	IncConfigReload(target, result string)
+	// IncReconcile counts one background reconcile of a cluster (result: success|error).
+	IncReconcile(cluster, result string)
 	Handler() http.Handler
 }
 
@@ -30,6 +32,7 @@ type Manager struct {
 	tokenRefresh *prometheus.CounterVec
 	operations   *prometheus.CounterVec
 	configReload *prometheus.CounterVec
+	reconcile    *prometheus.CounterVec
 	opDuration   *prometheus.HistogramVec
 	registry     *prometheus.Registry
 }
@@ -93,12 +96,21 @@ func New() *Manager {
 		}
 	}
 
+	reconcile := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "workload_knocker_reconcile_total",
+			Help: "Total number of background reconciles, labeled by cluster and result (success, error)",
+		},
+		[]string{"cluster", "result"},
+	)
+
 	registry.MustRegister(activation)
 	registry.MustRegister(reachable)
 	registry.MustRegister(tokenRefresh)
 	registry.MustRegister(operations)
 	registry.MustRegister(opDuration)
 	registry.MustRegister(configReload)
+	registry.MustRegister(reconcile)
 
 	return &Manager{
 		activation:   activation,
@@ -106,6 +118,7 @@ func New() *Manager {
 		tokenRefresh: tokenRefresh,
 		operations:   operations,
 		configReload: configReload,
+		reconcile:    reconcile,
 		opDuration:   opDuration,
 		registry:     registry,
 	}
@@ -130,6 +143,11 @@ func (m *Manager) DeleteCluster(env, cluster string) {
 // IncConfigReload counts one hot reload attempt.
 func (m *Manager) IncConfigReload(target, result string) {
 	m.configReload.WithLabelValues(target, result).Inc()
+}
+
+// IncReconcile counts one background reconcile of a cluster.
+func (m *Manager) IncReconcile(cluster, result string) {
+	m.reconcile.WithLabelValues(cluster, result).Inc()
 }
 
 // SetReachable updates the reachability Gauge of the given cluster

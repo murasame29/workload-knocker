@@ -8,6 +8,7 @@
 | `CLUSTER_CONFIG_PATH` | `/etc/workload-knocker/config.yaml` | Cluster registry file |
 | `CONTROLLER_NAMESPACE` | `workload-control` | Namespace of the `workload-state` ConfigMap in managed clusters |
 | `CLUSTER_RECONCILE_TIMEOUT` | `2s` | Reconcile timeout when a chat (Slack or Discord) command arrives |
+| `RECONCILE_INTERVAL` | `1m` | Period of the background ScaledObject reconcile of every cluster, bounded per cluster by `CLUSTER_RECONCILE_TIMEOUT`. `0` disables it; a negative value fails at startup. Chart: `settings.reconcileInterval` |
 | `STOP_ALL_TIMEOUT` | `10s` | Per-cluster timeout for `/api/v1/stop-all` |
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
@@ -212,8 +213,17 @@ The chart renders `DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID` only when `discord.
 For EKS, run the controller with an IAM role (IRSA), register that role in the cluster's
 Access Entry with `kubernetes_groups: ["workload-knocker"]`, and apply
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml). The controller
-needs `get/list/watch` on `scaledobjects` and `get/create/update` on ConfigMaps in
-`controller.namespace`.
+needs `get/list/watch` on `scaledobjects`, `get` on `deployments`, `statefulsets` and their `scale`
+subresources, and `get/create/update` on ConfigMaps in `controller.namespace`.
+
+When a ScaledObject is discovered that has no entry in the state ConfigMap, the controller reads
+its scale target (`Deployment` by default, or `StatefulSet`). A target with replicas above 0 is
+registered as running (`workload_knocker_activation` 1, saved to the state ConfigMap) so KEDA does
+not scale it down; otherwise, or if the target cannot be read (a warning is logged), it is
+registered as stopped. Saved state always wins over the live replicas.
+
+ScaledObjects are re-listed every `RECONCILE_INTERVAL`: a new one gets its series within one
+interval and a deleted one loses it, without a chat command.
 
 ## Slack workload modal
 
@@ -314,6 +324,7 @@ initial sync of all clusters.
 | `workload_knocker_operations_total` | counter | `env`, `cluster`, `operation`, `result` |
 | `workload_knocker_operation_duration_seconds` | histogram | `env`, `cluster`, `operation` |
 | `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
+| `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
 
 `operation` is `start`, `stop` or `stop_all`. `result` is `success`, `error` or `not_found`
 (`error` is only reported by `stop_all`). User IDs and workload names are never used as labels

@@ -91,7 +91,11 @@ func NewClusterFactory(src RestConfigSource, m metrics.MetricsManager) ClusterFa
 		if err != nil {
 			return nil, fmt.Errorf("build cluster access: %w", err)
 		}
-		return NewClusterStore(c, lister, repo, m), nil
+		targets, err := k8s.NewScaleTargetReaderForConfig(restCfg)
+		if err != nil {
+			return nil, fmt.Errorf("build scale target reader: %w", err)
+		}
+		return NewClusterStore(c, lister, repo, m, WithScaleTargetReader(targets)), nil
 	}
 }
 

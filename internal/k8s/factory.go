@@ -21,3 +21,12 @@ func NewClusterAccess(cfg *rest.Config, controllerNs string) (ScaledObjectLister
 	}
 	return NewKEDAScaledObjectLister(kk), NewConfigMapStateRepository(kc, controllerNs), nil
 }
+
+// NewScaleTargetReaderForConfig builds a ScaleTargetReader from a rest.Config.
+func NewScaleTargetReaderForConfig(cfg *rest.Config) (ScaleTargetReader, error) {
+	kc, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes.NewForConfig: %w", err)
+	}
+	return NewScaleTargetReader(kc), nil
+}

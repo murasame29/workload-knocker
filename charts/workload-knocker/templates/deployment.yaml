@@ -59,6 +59,8 @@ spec:
               value: {{ .Values.settings.controllerNamespace | quote }}
             - name: CLUSTER_RECONCILE_TIMEOUT
               value: {{ .Values.settings.clusterReconcileTimeout | quote }}
+            - name: RECONCILE_INTERVAL
+              value: {{ .Values.settings.reconcileInterval | quote }}
             - name: STOP_ALL_TIMEOUT
               value: {{ .Values.settings.stopAllTimeout | quote }}
             - name: SHUTDOWN_TIMEOUT

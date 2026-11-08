@@ -8,6 +8,7 @@
 | `CLUSTER_CONFIG_PATH` | `/etc/workload-knocker/config.yaml` | Cluster Registry ファイル |
 | `CONTROLLER_NAMESPACE` | `workload-control` | managed cluster 上の `workload-state` ConfigMap の namespace |
 | `CLUSTER_RECONCILE_TIMEOUT` | `2s` | チャット (Slack / Discord) コマンド受信時の Reconcile タイムアウト |
+| `RECONCILE_INTERVAL` | `1m` | 全 cluster の ScaledObject をバックグラウンドで再同期する間隔。cluster ごとに `CLUSTER_RECONCILE_TIMEOUT` で打ち切ります。`0` で無効、負の値は起動時エラー。Chart: `settings.reconcileInterval` |
 | `STOP_ALL_TIMEOUT` | `10s` | `/api/v1/stop-all` の cluster ごとのタイムアウト |
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
 | `OPERATION_MODE` | `full` | `full` / `scheduled-stop` / `off`。それ以外は起動時エラー ([動作モード](#動作モードと夜間停止)) |
@@ -206,8 +207,17 @@ chart は `discord.secretName` を設定したときだけ `DISCORD_BOT_TOKEN` �
 EKS では controller に IAM Role (IRSA) を付与し、その Role を Access Entry に
 `kubernetes_groups: ["workload-knocker"]` で登録して、
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml) を適用します。
-必要な権限は `scaledobjects` の `get/list/watch` と、`controller.namespace` の ConfigMap の
-`get/create/update` です。
+必要な権限は `scaledobjects` の `get/list/watch`、`deployments` / `statefulsets` とその `scale`
+サブリソースの `get`、`controller.namespace` の ConfigMap の `get/create/update` です。
+
+state ConfigMap にエントリが無い ScaledObject を新たに検出すると、scale target
+(既定は `Deployment`、または `StatefulSet`) の replicas を読みます。replicas が 0 より大きければ
+running として登録し (`workload_knocker_activation` を 1、state ConfigMap にも保存)、KEDA に
+scale down させません。0 の場合や読み取りに失敗した場合 (warning ログを出力) は stopped で登録します。
+保存済みの state は常に実際の replicas より優先されます。
+
+ScaledObject は `RECONCILE_INTERVAL` ごとに再取得します。新規作成された ScaledObject は 1 interval 以内に
+series が作られ、削除されたものは series が消えます (チャットコマンド不要)。
 
 ## Slack の workload モーダル
 
@@ -307,6 +317,7 @@ cluster ごとの内訳を返します。
 | `workload_knocker_operations_total` | counter | `env`, `cluster`, `operation`, `result` |
 | `workload_knocker_operation_duration_seconds` | histogram | `env`, `cluster`, `operation` |
 | `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
+| `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
 
 `operation` は `start`、`stop`、`stop_all` のいずれかです。`result` は `success`、`error`、`not_found` のいずれかです
 (`error` を返すのは `stop_all` のみ)。カーディナリティを抑えるため、ユーザー ID と workload 名はラベルに使いません。
