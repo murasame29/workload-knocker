@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/murasame29/workload-knocker/compare/v0.1.0...v0.1.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **chart:** make the Slack Secret optional ([#27](https://github.com/murasame29/workload-knocker/issues/27)) ([b4af1de](https://github.com/murasame29/workload-knocker/commit/b4af1de3bb4a64c2183d9a0716f3ccfab2d8d01b))
+
 ## 0.1.0 (2026-11-08)
 
 
