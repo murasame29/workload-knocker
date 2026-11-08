@@ -25,6 +25,59 @@ slack:
   appTokenKey: app-token
   botTokenKey: bot-token
 
+# Operation mode (OPERATION_MODE env of the controller).
+#   full           API can start, stop and stop-all. nightlyStop is optional.
+#   scheduled-stop API can only start; stop endpoints return 403. nightlyStop.enabled must be true.
+#   off            No scheduled stop. Stopping stays manual (chat). nightlyStop.enabled must be false.
+mode: full
+
+api:
+  # Secret holding the bearer token that protects /api/v1/*. Required in every mode:
+  # the API must never be unauthenticated.
+  tokenSecret:
+    name: ""
+    key: api-token
+
+# CronJob that calls POST /api/v1/stop-all. Allowed when mode is full or scheduled-stop.
+nightlyStop:
+  enabled: false
+  schedule: "0 22 * * *"
+  timeZone: Asia/Tokyo
+  suspend: false
+  startingDeadlineSeconds: 300
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  backoffLimit: 2
+  # Per-attempt curl limits.
+  requestTimeoutSeconds: 60
+  curlRetries: 3
+  image:
+    repository: curlimages/curl
+    tag: "8.11.1"
+    # Digest of the multi-arch index for the tag above (verified with docker buildx imagetools inspect).
+    # Takes priority over tag.
+    digest: sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
 settings:
   logLevel: info
   controllerNamespace: workload-control

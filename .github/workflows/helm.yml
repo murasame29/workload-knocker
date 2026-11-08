@@ -105,6 +105,39 @@ jobs:
             echo 'missing ServiceAccount name was accepted' >&2; exit 1
           fi
 
+      - name: Operation mode matrix
+        shell: bash
+        run: |
+          values=charts/workload-knocker/ci/test-values.yaml
+          render() { helm template workload-knocker charts/workload-knocker --values "${values}" "$@"; }
+          expect_cronjob() {
+            local want="$1"; shift
+            helm lint charts/workload-knocker --strict --values "${values}" "$@"
+            local count
+            count="$(render "$@" | grep --count '^kind: CronJob$' || true)"
+            if [[ "${count}" != "${want}" ]]; then
+              echo "expected ${want} CronJob for: $*, got ${count}" >&2; exit 1
+            fi
+          }
+          expect_cronjob 0
+          expect_cronjob 0 --set mode=full
+          expect_cronjob 1 --set mode=full --set nightlyStop.enabled=true
+          expect_cronjob 1 --set mode=scheduled-stop --set nightlyStop.enabled=true
+          expect_cronjob 0 --set mode=off
+          render --set mode=scheduled-stop --set nightlyStop.enabled=true \
+            | grep --fixed-strings --quiet 'value: "scheduled-stop"'
+          render --set nightlyStop.enabled=true \
+            | grep --fixed-strings --quiet '/api/v1/stop-all'
+          reject() {
+            if render "$@" > /dev/null 2>&1; then
+              echo "accepted invalid values: $*" >&2; exit 1
+            fi
+          }
+          reject --set mode=scheduled-stop
+          reject --set mode=off --set nightlyStop.enabled=true
+          reject --set mode=bad
+          reject --set api.tokenSecret.name=
+
       - name: Package chart and verify license material
         shell: bash
         run: |

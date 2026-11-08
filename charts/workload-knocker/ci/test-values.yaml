@@ -18,3 +18,7 @@ slack:
 serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/workload-knocker
+
+api:
+  tokenSecret:
+    name: workload-knocker-api

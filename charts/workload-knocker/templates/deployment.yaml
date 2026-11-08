@@ -58,6 +58,7 @@ spec:
               value: {{ .Values.settings.shutdownTimeout | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.settings.logLevel | quote }}
+            {{- include "workload-knocker.apiEnv" . | nindent 12 }}
             - name: SLACK_APP_TOKEN
               valueFrom:
                 secretKeyRef:

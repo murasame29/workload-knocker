@@ -74,9 +74,48 @@ needs `get/list/watch` on `scaledobjects` and `get/create/update` on ConfigMaps 
 - Slack allows 10 options per checkbox block and 100 blocks per modal, so at most 90 merged
   entries are shown. Hidden entries are excluded from the plan and are never stopped by accident.
 
+## Operation modes and nightly stop
+
+The Helm chart sets the controller's `OPERATION_MODE` and `API_TOKEN` environment variables.
+These take effect once a controller release that supports them is deployed. Current
+binaries ignore unknown environment variables, so the chart can be upgraded first.
+
+| `mode` | API start | API stop / stop-all | `nightlyStop` |
+| --- | --- | --- | --- |
+| `full` (default) | yes | yes | optional |
+| `scheduled-stop` | yes | no (`403`) | required (`enabled: true`) |
+| `off` | yes | no | must not be enabled |
+
+`api.tokenSecret.name` is required in every mode so that `/api/v1/*` is never unauthenticated.
+Create the Secret before installing:
+
+```sh
+kubectl create secret generic workload-knocker-api \
+  --namespace workload-knocker \
+  --from-literal=api-token='<random-token>'
+```
+
+`nightlyStop` renders a CronJob that sends `POST /api/v1/stop-all` to the in-cluster Service with
+`Authorization: Bearer <token>` and fails on any non-2xx response.
+
+| Value | Default |
+| --- | --- |
+| `nightlyStop.enabled` | `false` |
+| `nightlyStop.schedule` / `timeZone` | `0 22 * * *` / `Asia/Tokyo` |
+| `nightlyStop.suspend` | `false` |
+| `nightlyStop.startingDeadlineSeconds` | `300` |
+| `nightlyStop.concurrencyPolicy` | `Forbid` |
+| `nightlyStop.successfulJobsHistoryLimit` / `failedJobsHistoryLimit` | `1` / `3` |
+| `nightlyStop.backoffLimit` | `2` |
+| `nightlyStop.requestTimeoutSeconds` / `curlRetries` | `60` / `3` |
+| `nightlyStop.image` | `curlimages/curl`, pinned by digest |
+
+Invalid combinations (unknown `mode`, `scheduled-stop` without the CronJob, `off` with the
+CronJob, empty `api.tokenSecret.name`) fail at `helm template`/`helm install`.
+
 ## HTTP API
 
-Unauthenticated. Restrict network access.
+Current releases are unauthenticated: restrict network access. Controllers that support `API_TOKEN` require `Authorization: Bearer <token>` on `/api/v1/*`.
 
 ### `POST /api/v1/start`
 
