@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/k8s"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 // activationTriggerMetric is the metric name that Prometheus trigger queries managed by
@@ -80,7 +82,7 @@ func (s *ClusterStore) Namespaces() []string {
 	return ns
 }
 
-// WorkloadsByNamespace returns the workloads of the given namespace.
+// WorkloadsByNamespace returns copies of the workloads of the given namespace.
 func (s *ClusterStore) WorkloadsByNamespace(ns string) []*model.Workload {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -88,7 +90,8 @@ func (s *ClusterStore) WorkloadsByNamespace(ns string) []*model.Workload {
 	var result []*model.Workload
 	for _, w := range s.workloads {
 		if w.Namespace == ns {
-			result = append(result, w)
+			c := *w
+			result = append(result, &c)
 		}
 	}
 	return result
@@ -96,7 +99,7 @@ func (s *ClusterStore) WorkloadsByNamespace(ns string) []*model.Workload {
 
 // Start sets the workload to running: in-memory update, then persist, then metrics.
 // Persisting (a K8s API call) runs under persistMu after releasing mu.
-func (s *ClusterStore) Start(ns, name, user string) bool {
+func (s *ClusterStore) Start(ns, name, user string, stopAt time.Time) bool {
 	s.mu.Lock()
 	w, ok := s.workloads[ns+"/"+name]
 	if !ok {
@@ -105,12 +108,29 @@ func (s *ClusterStore) Start(ns, name, user string) bool {
 	}
 	w.Replicas = 1
 	w.StartedBy = user
+	w.StopAt = stopAt
 	entries := s.snapshotEntriesLocked()
 	s.mu.Unlock()
 
 	s.persist(entries)
 	s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, 1)
 
+	return true
+}
+
+// SetStopAt moves the auto-stop of a running workload.
+func (s *ClusterStore) SetStopAt(ns, name string, stopAt time.Time) bool {
+	s.mu.Lock()
+	w, ok := s.workloads[ns+"/"+name]
+	if !ok || w.Replicas == 0 {
+		s.mu.Unlock()
+		return false
+	}
+	w.StopAt = stopAt
+	entries := s.snapshotEntriesLocked()
+	s.mu.Unlock()
+
+	s.persist(entries)
 	return true
 }
 
@@ -124,6 +144,7 @@ func (s *ClusterStore) Stop(ns, name string) bool {
 	}
 	w.Replicas = 0
 	w.StartedBy = ""
+	w.StopAt = time.Time{}
 	entries := s.snapshotEntriesLocked()
 	s.mu.Unlock()
 
@@ -153,6 +174,7 @@ func (s *ClusterStore) StopAll(_ context.Context, allow func(namespace, workload
 		}
 		w.Replicas = 0
 		w.StartedBy = ""
+		w.StopAt = time.Time{}
 		changed = append(changed, meta{ns: w.Namespace, name: w.Name})
 	}
 	slices.Sort(skipped)
@@ -328,8 +350,14 @@ func (s *ClusterStore) handleScaledObjectLocked(so *kedav1alpha1.ScaledObject, i
 		return false
 	}
 
+	def, maxDur, problems := runlimit.FromAnnotations(so.Annotations)
+	if len(problems) > 0 {
+		slog.Warn("invalid run duration annotation ignored", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns), slog.Any("annotations", problems))
+	}
+
 	if existing, ok := s.workloads[key]; ok {
 		existing.Kind = kind
+		existing.DefaultDuration, existing.MaxDuration = def, maxDur
 		return false
 	}
 
@@ -345,6 +373,9 @@ func (s *ClusterStore) handleScaledObjectLocked(so *kedav1alpha1.ScaledObject, i
 		Namespace: ns,
 		Kind:      kind,
 		Replicas:  replicas,
+
+		DefaultDuration: def,
+		MaxDuration:     maxDur,
 	}
 	s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, activation)
 
@@ -375,6 +406,7 @@ func (s *ClusterStore) restoreLocked(entries map[string]k8s.StateEntry) {
 		}
 		w.Replicas = entry.Replicas
 		w.StartedBy = entry.StartedBy
+		w.StopAt = entry.StopAt
 	}
 
 	for _, w := range s.workloads {
@@ -396,6 +428,7 @@ func (s *ClusterStore) snapshotEntriesLocked() map[string]k8s.StateEntry {
 		entries[key] = k8s.StateEntry{
 			Replicas:  w.Replicas,
 			StartedBy: w.StartedBy,
+			StopAt:    w.StopAt,
 		}
 	}
 	return entries

@@ -245,6 +245,8 @@ func (b *Bot) dispatch(i *discordgo.Interaction) {
 		b.handleCommand(i)
 	case discordgo.InteractionMessageComponent:
 		b.handleComponent(i)
+	case discordgo.InteractionModalSubmit:
+		b.handleModal(i)
 	default:
 		slog.Debug("unhandled discord interaction type", slog.String("interaction.type", i.Type.String()))
 	}

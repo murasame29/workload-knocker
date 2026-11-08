@@ -12,6 +12,9 @@
 | `STOP_ALL_TIMEOUT` | `10s` | Per-cluster timeout for `/api/v1/stop-all` |
 | `ROLLOUT_POLL_INTERVAL` | `5s` | How often the scale targets are polled after Confirm (at least `1s`) |
 | `ROLLOUT_WATCH_TIMEOUT` | `10m` | When rollout progress gives up and shows the last observed reason. Must be above the poll interval and below `15m` (Discord interaction token lifetime); other values fail at startup |
+| `DEFAULT_RUN_DURATION` | `0` | Auto-stop delay of a start that gives no duration. `0` means no auto-stop (the previous behavior). Must be `0` or at least `15m`, and not above `MAX_RUN_DURATION`. Chart: `settings.defaultRunDuration` |
+| `MAX_RUN_DURATION` | `24h` | Upper bound of a run duration and of the remaining run time after an extension. At least `15m`. Chart: `settings.maxRunDuration` |
+| `STOP_REMINDER` | `15m` | How long before the auto-stop the reminder fires. `0` disables it. Delivery needs a notify channel (see [Run duration](#run-duration)). Chart: `settings.stopReminder` |
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
 | `AUTHZ_CONFIG_PATH` | unset | Authorization policy file. Unset and no file at `/etc/workload-knocker/authz.yaml`: authorization is disabled and everyone may start and stop everything (one info log at startup). Set, or the default file exists: it must parse or startup fails (see [Authorization](#authorization)) |
@@ -255,6 +258,42 @@ applied workload in its cluster every `ROLLOUT_POLL_INTERVAL` and reports one li
 - Slack allows 10 options per checkbox block and 100 blocks per modal, so at most 90 merged
   entries are shown. Hidden entries are excluded from the plan and are never stopped by accident.
 
+## Run duration
+
+A start can carry a run duration. The controller stores `stopAt` per workload in the `workload-state`
+ConfigMap and the background loop (`RECONCILE_INTERVAL`, so the stop is accurate to about one interval)
+stops expired workloads, also after a restart. Stopping a workload clears `stopAt`. The nightly stop keeps
+working; whichever comes first stops the workload. State written by older versions has no `stopAt` and means
+"no auto-stop". With `RECONCILE_INTERVAL=0` no auto-stop fires.
+
+Defaults can be set per workload with ScaledObject annotations; the environment variables are the fallback:
+
+| Annotation | Fallback | Meaning |
+|---|---|---|
+| `workload-knocker.io/default-duration` | `DEFAULT_RUN_DURATION` | Go duration such as `4h`. `0` disables the default for this workload. Values between `0` and `15m` are ignored with a warning |
+| `workload-knocker.io/max-duration` | `MAX_RUN_DURATION` | Go duration, at least `15m`. Invalid values are ignored with a warning |
+
+A default above the maximum is lowered to the maximum.
+
+- **Discord**: the plan preview shows each start with its stop time (in the viewer's time zone) and a
+  **Change duration** button. It opens a modal with one input per started workload (at most 5, the first 5 if
+  there are more) prefilled with the current value in hours. Enter hours as a number (`3`, `1.5`; minimum `0.25`);
+  empty means the workload default. An invalid value gets an ephemeral reply with the reason and a **Try again**
+  button that reopens the modal with the previous input.
+- **Slack**: the workload modal has an optional **Run duration (hours)** number input (decimals allowed) that applies
+  to every workload started in that submission. Empty means each workload's default. Out-of-range values are
+  rejected with an inline error.
+- **REST**: `POST /api/v1/start` accepts `duration` (Go duration, for example `"3h"`); see [HTTP API](#post-apiv1start).
+- **Extend**: `POST /api/v1/extend` and the frontend service add time to a running workload's `stopAt`. It is
+  authorized like a start and allowed in every operation mode. The remaining run time after the extension may not
+  exceed the maximum; otherwise the extension is rejected.
+- **Reminder**: `STOP_REMINDER` before `stopAt` the reconcile loop calls a `StopReminder` once per workload and stop
+  time (remembered in memory, so a restart may send it again). The default receiver does nothing; posting it with an
+  **Extend 1h** button is wired by the notify channel feature.
+
+Audit events: a start records `workload_knocker.duration_seconds` and `workload_knocker.stop_at`; an extension
+is `workload.extend`; an expiry is `workload.auto_stop` with source `scheduler`.
+
 ## Operation modes and nightly stop
 
 The Helm chart sets the controller's `OPERATION_MODE` and `API_TOKEN` environment variables.
@@ -321,9 +360,24 @@ Checks run in this order: authentication, operation mode, request validation.
 {"env": "stg", "namespace": "my-namespace", "workloads": ["a", "b"], "user": "ci-bot"}
 ```
 
-`user` is optional (default `rest-api`). Returns `200` with `started`, `not_found` and `forbidden` lists,
+`user` is optional (default `rest-api`). `duration` is optional (a Go duration such as `"3h"` or `"90m"`; empty
+uses the workload default) and must be between `15m` and the workload's maximum, otherwise nothing is started and the
+status is `400`. Returns `200` with `started`, `not_found` and `forbidden` lists and `stop_at` (RFC 3339 per started
+workload with an auto-stop),
 `400` for invalid input, `403` when every requested workload is refused by the [authorization policy](#authorization),
 `404` for an unknown `env` or when no workload was found.
+
+### `POST /api/v1/extend`
+
+```json
+{"env": "stg", "namespace": "my-namespace", "workloads": ["a"], "duration": "1h"}
+```
+
+Adds `duration` (required, at least `15m`) to the `stopAt` of each running workload, checked like a start against
+the `api` subject. Returns `200` with `extended` (workload to new stop time), `not_found`, `forbidden` and `failed`
+(stopped workload, no auto-stop scheduled, or the maximum would be exceeded). `403` when everything was refused,
+`404` for an unknown `env` or no matching workload, `409` when workloads exist but none could be extended, `400` for
+invalid input.
 
 ### `POST /api/v1/stop-all`
 
@@ -347,6 +401,7 @@ initial sync of all clusters.
 | `workload_knocker_operation_duration_seconds` | histogram | `env`, `cluster`, `operation` |
 | `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
 | `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
+| `workload_knocker_auto_stops_total` | counter | `env`, `cluster`, `result` (`success`, `error`) |
 
 `operation` is `start`, `stop` or `stop_all`. `result` is `success`, `error` or `not_found`
 (`error` is only reported by `stop_all`). User IDs and workload names are never used as labels

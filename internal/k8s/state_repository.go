@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,6 +21,8 @@ const (
 type StateEntry struct {
 	Replicas  int    `json:"replicas"`
 	StartedBy string `json:"startedBy,omitempty"`
+	// StopAt is the auto-stop time; absent in state written by older versions (no auto-stop).
+	StopAt time.Time `json:"stopAt,omitzero"`
 }
 
 // StateRepository persists workload state.

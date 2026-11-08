@@ -11,6 +11,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/murasame29/workload-knocker/internal/mode"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 // Env is the startup configuration of workload-knocker (from environment variables).
@@ -48,6 +49,17 @@ type Env struct {
 	// MaxRolloutWatchTimeout, the lifetime of a Discord interaction token.
 	RolloutWatchTimeout time.Duration `env:"ROLLOUT_WATCH_TIMEOUT" envDefault:"10m"`
 
+	// DefaultRunDuration is the auto-stop delay of a start without an explicit duration; 0 = none.
+	// The workload-knocker.io/default-duration annotation overrides it per workload.
+	DefaultRunDuration time.Duration `env:"DEFAULT_RUN_DURATION" envDefault:"0"`
+
+	// MaxRunDuration caps the run duration of a start or extension; the
+	// workload-knocker.io/max-duration annotation overrides it per workload.
+	MaxRunDuration time.Duration `env:"MAX_RUN_DURATION" envDefault:"24h"`
+
+	// StopReminder is how long before the auto-stop the reminder fires; 0 disables it.
+	StopReminder time.Duration `env:"STOP_REMINDER" envDefault:"15m"`
+
 	// OperationMode is full | scheduled-stop | off; see internal/mode.
 	OperationMode mode.Mode `env:"OPERATION_MODE" envDefault:"full"`
 
@@ -80,6 +92,28 @@ func (e *Env) ValidateRollout() error {
 	return nil
 }
 
+// ValidateRunDuration checks the run duration settings.
+func (e *Env) ValidateRunDuration() error {
+	if e.MaxRunDuration < runlimit.MinDuration {
+		return fmt.Errorf("MAX_RUN_DURATION must be at least %s, got %s", runlimit.MinDuration, e.MaxRunDuration)
+	}
+	if e.DefaultRunDuration < 0 || (e.DefaultRunDuration > 0 && e.DefaultRunDuration < runlimit.MinDuration) {
+		return fmt.Errorf("DEFAULT_RUN_DURATION must be 0 or at least %s, got %s", runlimit.MinDuration, e.DefaultRunDuration)
+	}
+	if e.DefaultRunDuration > e.MaxRunDuration {
+		return fmt.Errorf("DEFAULT_RUN_DURATION %s exceeds MAX_RUN_DURATION %s", e.DefaultRunDuration, e.MaxRunDuration)
+	}
+	if e.StopReminder < 0 {
+		return fmt.Errorf("STOP_REMINDER must not be negative, got %s", e.StopReminder)
+	}
+	return nil
+}
+
+// RunDefaults returns the controller-wide run duration settings.
+func (e *Env) RunDefaults() runlimit.Defaults {
+	return runlimit.Defaults{Default: e.DefaultRunDuration, Max: e.MaxRunDuration}
+}
+
 // ValidateFrontends checks the env required by the frontends enabled in the registry.
 func (e *Env) ValidateFrontends(reg *Config) error {
 	if reg.FrontendEnabled(FrontendSlack) && (e.SlackAppToken == "" || e.SlackBotToken == "") {
@@ -104,6 +138,9 @@ func LoadEnv() (*Env, error) {
 	if err := cfg.ValidateRollout(); err != nil {
 		return nil, fmt.Errorf("config.LoadEnv: %w", err)
 	}
+	if err := cfg.ValidateRunDuration(); err != nil {
+		return nil, fmt.Errorf("config.LoadEnv: %w", err)
+	}
 
 	if v := os.Getenv("WORKLOAD_ENV"); v != "" {
 		slog.Warn("WORKLOAD_ENV is deprecated. Configure cluster env in cluster registry config file.", slog.String("workload_env", v))
@@ -111,6 +148,10 @@ func LoadEnv() (*Env, error) {
 
 	if cfg.ReconcileInterval < 0 {
 		return nil, fmt.Errorf("config.LoadEnv: RECONCILE_INTERVAL must not be negative, got %s", cfg.ReconcileInterval)
+	}
+
+	if cfg.ReconcileInterval == 0 && (cfg.DefaultRunDuration > 0 || cfg.StopReminder > 0) {
+		slog.Warn("RECONCILE_INTERVAL is 0: run durations and reminders are stored but never fire, because the background loop drives the auto-stop")
 	}
 
 	if cfg.APIToken == "" {

@@ -17,14 +17,14 @@ Every start and stop emits one audit event per workload to stdout (JSON). The me
 
 | Key | Values / format |
 |---|---|
-| `event.name` | `workload.start`, `workload.stop`, `workload.stop_all`. Reserved for upcoming features: `workload.extend`, `workload.auto_stop`, `reservation.create`, `reservation.cancel`, `reservation.execute` |
+| `event.name` | `workload.start`, `workload.stop`, `workload.stop_all`, `workload.extend`, `workload.auto_stop`. Reserved for upcoming features: `reservation.create`, `reservation.cancel`, `reservation.execute` |
 | `event.outcome` | `success`; `failure` (WARN, e.g. the workload was not found or its cluster failed); `denied` (authorization policy or operation mode refused it) |
-| `workload_knocker.source` | `discord`, `slack`, `api`, `nightly-stop`; `scheduler` is reserved |
+| `workload_knocker.source` | `discord`, `slack`, `api`, `nightly-stop`, `scheduler` (auto-stop) |
 | `workload_knocker.request_id` | Random 128-bit hex. In chat it is created at the plan preview and reused by the confirm; for the API it is created per request |
 | `enduser.id` | `discord:<user id>`, `slack:<user id>` or `api` |
 | `k8s.cluster.name` | Cluster name from the registry |
 | `k8s.namespace.name`, `workload.name`, `workload.kind` | Target workload. Omitted when the event is not tied to a workload (a rejected API request) or the kind is unknown |
-| `workload_knocker.duration_seconds`, `workload_knocker.stop_at` | Reserved for features that set a duration; omitted today |
+| `workload_knocker.duration_seconds`, `workload_knocker.stop_at` | Run duration of a start or the added time of an extension; the stop time. Omitted when there is none |
 | `error.type`, `error.message` | Only for `failure` |
 
 Levels are INFO for `success` and `denied`, WARN for `failure`. Tokens and message content are never logged.

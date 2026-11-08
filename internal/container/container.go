@@ -13,6 +13,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/api"
 	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
+	"github.com/murasame29/workload-knocker/internal/autostop"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	k8sauth "github.com/murasame29/workload-knocker/internal/k8s/auth"
@@ -23,6 +24,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/reconcile"
 	"github.com/murasame29/workload-knocker/internal/reload"
 	"github.com/murasame29/workload-knocker/internal/rollout"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 	"github.com/murasame29/workload-knocker/internal/server"
 	discordbot "github.com/murasame29/workload-knocker/internal/server/discord"
 	httpserver "github.com/murasame29/workload-knocker/internal/server/http"
@@ -85,15 +87,18 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 
 		// /api/v1/stop-all
 		api.New,
-		// /api/v1/start
+		// Run duration settings, /api/v1/start and /api/v1/extend
+		func(cfg *config.Env) runlimit.Defaults { return cfg.RunDefaults() },
 		api.NewStartHandler,
+		api.NewExtendHandler,
 
 		// HTTP Server (server.Lifecycle)
-		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler) *httpserver.Server {
+		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler, extend *api.ExtendHandler) *httpserver.Server {
 			rec := audit.NewSlog()
 			return httpserver.New(cfg.HTTPPort, m.Handler(),
 				api.Authenticate(cfg.APIToken, rec, api.RequireStop(cfg.OperationMode, rec, stopAll)),
-				api.Authenticate(cfg.APIToken, rec, start))
+				api.Authenticate(cfg.APIToken, rec, start),
+				api.Authenticate(cfg.APIToken, rec, extend))
 		},
 		// Rollout progress after Confirm: per-cluster readers and the tracker
 		func(mux *k8sauth.Multiplexer, live *config.Holder) *rollout.Readers {
@@ -105,9 +110,14 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		// Chat frontends: only those configured by at least one cluster are enabled
 		newFrontends,
 
+		// Auto-stop of expired workloads; the stop reminder receiver is passed via autostop.WithReminder
+		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager) *autostop.Hook {
+			return autostop.New(ws, m, cfg.StopReminder)
+		},
+
 		// Background reconcile (per-tick hooks for other features are passed here)
-		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager) *reconcile.Loop {
-			return reconcile.New(ws, m, cfg.ReconcileInterval, cfg.ClusterReconcileTimeout)
+		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager, as *autostop.Hook) *reconcile.Loop {
+			return reconcile.New(ws, m, cfg.ReconcileInterval, cfg.ClusterReconcileTimeout, as)
 		},
 
 		// Lifecycle Manager: single entry point to start and stop from main
@@ -135,14 +145,14 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *authz.Holder, ws model.WorkloadStore, m metrics.MetricsManager, rt *rollout.Tracker) ([]frontend.Frontend, error) {
 	var fs []frontend.Frontend
 	if reg.FrontendEnabled(config.FrontendSlack) {
-		b, err := slackbot.New(cfg, ws, live, az, m, frontend.WithRollout(rt))
+		b, err := slackbot.New(cfg, ws, live, az, m, frontend.WithRollout(rt), frontend.WithRunDefaults(cfg.RunDefaults()))
 		if err != nil {
 			return nil, err
 		}
 		fs = append(fs, b)
 	}
 	if reg.FrontendEnabled(config.FrontendDiscord) {
-		b, err := discordbot.New(cfg, ws, live, az, m, frontend.WithRollout(rt))
+		b, err := discordbot.New(cfg, ws, live, az, m, frontend.WithRollout(rt), frontend.WithRunDefaults(cfg.RunDefaults()))
 		if err != nil {
 			return nil, err
 		}

@@ -118,7 +118,7 @@ func TestReload_RemovesClusterAndItsSeries(t *testing.T) {
 	if !slices.Equal(res.Removed, []string{"b"}) {
 		t.Errorf("Removed = %v", res.Removed)
 	}
-	if ms.Namespaces("b") != nil || ms.Start("b", "ns", "w", "u") {
+	if ms.Namespaces("b") != nil || ms.Start("b", "ns", "w", "u", time.Time{}) {
 		t.Error("removed cluster must no longer be served")
 	}
 	if !slices.Equal(m.deletedClusters, []string{"b/b-cluster"}) {
@@ -190,7 +190,7 @@ func TestReload_ChangedClusterBootstrapFailureKeepsOldStore(t *testing.T) {
 	if after, _ := ms.storeFor("a"); after != before {
 		t.Error("old store must be kept when the new one cannot bootstrap")
 	}
-	if !ms.Start("a", "ns", "w", "u") {
+	if !ms.Start("a", "ns", "w", "u", time.Time{}) {
 		t.Error("old store must still serve")
 	}
 }
@@ -250,7 +250,7 @@ func TestReload_ConcurrentRequestsDuringSwap(t *testing.T) {
 			defer wg.Done()
 			for ctx.Err() == nil {
 				ms.Namespaces("a")
-				ms.Start("a", "ns", "w", "u")
+				ms.Start("a", "ns", "w", "u", time.Time{})
 				ms.Clusters()
 				ms.StopAll(context.Background(), nil)
 			}
@@ -274,8 +274,8 @@ func TestStopAll_FilterSkipsRunningWorkloads(t *testing.T) {
 
 	objs := map[string][][2]string{"a": {{"ns", "mine"}, {"ns", "theirs"}, {"ns", "idle"}}}
 	ms, _, _ := newReloadFixture(t, objs, "a")
-	ms.Start("a", "ns", "mine", "u")
-	ms.Start("a", "ns", "theirs", "u")
+	ms.Start("a", "ns", "mine", "u", time.Time{})
+	ms.Start("a", "ns", "theirs", "u", time.Time{})
 
 	res := ms.StopAll(context.Background(), func(env, ns, name string) bool { return name != "theirs" && name != "idle" })
 

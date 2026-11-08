@@ -3,8 +3,9 @@
 | Path | Contents |
 |---|---|
 | `cmd/server/` | Entry point (`main.go`), including the `--version` flag |
-| `internal/api/` | REST handlers (`/api/v1/start`, `/api/v1/stop-all`) and bearer auth middleware |
+| `internal/api/` | REST handlers (`/api/v1/start`, `/api/v1/extend`, `/api/v1/stop-all`) and bearer auth middleware |
 | `internal/audit/` | Audit event schema and recorder (see [audit-log.md](audit-log.md)) |
+| `internal/autostop/` | Reconcile hook that stops expired workloads and calls the stop reminder |
 | `internal/authz/` | Authorization policy parsing and evaluation |
 | `internal/config/` | Environment variables and the cluster registry |
 | `internal/container/` | Dependency wiring |
@@ -17,6 +18,7 @@
 | `internal/reconcile/` | Background reconcile loop with per-tick hooks |
 | `internal/reload/` | Hot reload of the registry and the policy |
 | `internal/rollout/` | Rollout progress tracking after Confirm (polling, state machine, per-cluster readers) |
+| `internal/runlimit/` | Run duration defaults, limits, parsing and extension rules |
 | `internal/server/` | Lifecycle manager, HTTP server, Slack and Discord bots |
 | `internal/store/` | Per-cluster and multi-cluster workload state |
 | `internal/version/` | Build identity (`Version`, `Commit`, `BuildDate`) |

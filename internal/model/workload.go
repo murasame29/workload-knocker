@@ -1,6 +1,9 @@
 package model
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Workload is the state of a workload
 type Workload struct {
@@ -10,6 +13,11 @@ type Workload struct {
 	Kind      string // Deployment or Rollout
 	Replicas  int
 	StartedBy string
+	// StopAt is when the workload is stopped automatically; zero means no auto-stop.
+	StopAt time.Time
+	// DefaultDuration / MaxDuration are the ScaledObject annotation overrides (nil / 0 = unset).
+	DefaultDuration *time.Duration
+	MaxDuration     time.Duration
 }
 
 // ClusterRef is a lightweight DTO for the Bot / API layer to reference a Cluster
@@ -43,9 +51,12 @@ type WorkloadStore interface {
 	Namespaces(env string) []string
 	// WorkloadsByNamespace returns the workloads of the given env / namespace.
 	WorkloadsByNamespace(env, ns string) []*Workload
-	// Start sets the workload to running (replicas=1, startedBy=user).
-	Start(env, ns, name, user string) bool
-	// Stop sets the workload to stopped (replicas=0).
+	// Start sets the workload to running (replicas=1, startedBy=user) and schedules its
+	// auto-stop at stopAt (zero = none).
+	Start(env, ns, name, user string, stopAt time.Time) bool
+	// SetStopAt moves the auto-stop of a running workload; false when it is unknown or stopped.
+	SetStopAt(env, ns, name string, stopAt time.Time) bool
+	// Stop sets the workload to stopped (replicas=0) and clears its auto-stop.
 	Stop(env, ns, name string) bool
 	// StopAll stops the workloads allowed by the filter in all clusters in parallel.
 	// A failure in one cluster does not stop the others; it is recorded in the result.

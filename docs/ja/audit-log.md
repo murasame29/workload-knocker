@@ -17,14 +17,14 @@ start / stop の操作ごとに、ワークロード 1 件につき 1 つの監�
 
 | キー | 値 / 形式 |
 |---|---|
-| `event.name` | `workload.start`、`workload.stop`、`workload.stop_all`。今後の機能用に予約: `workload.extend`、`workload.auto_stop`、`reservation.create`、`reservation.cancel`、`reservation.execute` |
+| `event.name` | `workload.start`、`workload.stop`、`workload.stop_all`、`workload.extend`、`workload.auto_stop`。今後の機能用に予約: `reservation.create`、`reservation.cancel`、`reservation.execute` |
 | `event.outcome` | `success`、`failure` (WARN。ワークロードが見つからない、クラスタが失敗した等)、`denied` (認可ポリシーまたは動作モードが拒否) |
-| `workload_knocker.source` | `discord`、`slack`、`api`、`nightly-stop`。`scheduler` は予約 |
+| `workload_knocker.source` | `discord`、`slack`、`api`、`nightly-stop`、`scheduler` (自動停止) |
 | `workload_knocker.request_id` | ランダムな 128 bit の 16 進数。チャットではプラン確認で生成され、Confirm で再利用されます。API ではリクエストごとに生成されます |
 | `enduser.id` | `discord:<user id>`、`slack:<user id>`、または `api` |
 | `k8s.cluster.name` | レジストリ上のクラスタ名 |
 | `k8s.namespace.name`、`workload.name`、`workload.kind` | 対象ワークロード。ワークロードに紐づかないイベント (拒否された API リクエスト) や kind 不明の場合は出力されません |
-| `workload_knocker.duration_seconds`、`workload_knocker.stop_at` | 期間を指定する機能用に予約。現在は出力されません |
+| `workload_knocker.duration_seconds`、`workload_knocker.stop_at` | start の実行時間または延長した時間と停止時刻。無い場合は出力されません |
 | `error.type`、`error.message` | `failure` のときのみ |
 
 レベルは `success` と `denied` が INFO、`failure` が WARN です。トークンやメッセージ本文は記録しません。

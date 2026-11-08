@@ -176,7 +176,7 @@ func TestPreviewView_TextAndTruncation(t *testing.T) {
 		{Action: frontend.ActionStart, Label: "checkout (app, worker)"},
 		{Action: frontend.ActionStop, Label: "batch"},
 	}
-	v := previewView("tok", testCluster(), "labs", changes, nil)
+	v := previewView("tok", testCluster(), "labs", changes, nil, nil)
 	for _, want := range []string{"**STG / example-staging**", "labs change preview:", "🟢 checkout (app, worker): stopped → **start**", "🔴 batch: running → **stop**"} {
 		if !strings.Contains(v.Content, want) {
 			t.Errorf("preview lacks %q:\n%s", want, v.Content)
@@ -191,7 +191,7 @@ func TestPreviewView_TextAndTruncation(t *testing.T) {
 	for i := range 200 {
 		many = append(many, frontend.Change{Action: frontend.ActionStart, Label: fmt.Sprintf("workload-with-a-long-name-%03d", i)})
 	}
-	big := previewView("tok", testCluster(), "labs", many, nil).Content
+	big := previewView("tok", testCluster(), "labs", many, nil, nil).Content
 	if len(big) > contentMaxLen || !strings.Contains(big, "more") {
 		t.Errorf("long preview len=%d, want <= %d with a remainder note", len(big), contentMaxLen)
 	}
@@ -250,7 +250,7 @@ func (f *fakeStore) Namespaces(string) []string { return []string{"labs"} }
 func (f *fakeStore) WorkloadsByNamespace(string, string) []*model.Workload {
 	return f.workloads
 }
-func (f *fakeStore) Start(_, _, name, user string) bool {
+func (f *fakeStore) Start(_, _, name, user string, _ time.Time) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "start:"+name+":"+user)
