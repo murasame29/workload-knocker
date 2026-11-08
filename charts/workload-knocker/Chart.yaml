@@ -1,9 +1,11 @@
 apiVersion: v2
 name: workload-knocker
-description: Slack and Discord driven on/off controller for KEDA-scaled Kubernetes workloads
+description: >-
+  Slack and Discord driven on/off controller for KEDA-scaled Kubernetes
+  workloads
 type: application
-version: 0.1.0 # x-release-please-version
-appVersion: "0.1.0" # x-release-please-version
+version: 0.1.0
+appVersion: 0.1.0
 home: https://github.com/murasame29/workload-knocker
 sources:
   - https://github.com/murasame29/workload-knocker
