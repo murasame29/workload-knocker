@@ -11,7 +11,6 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 // newFakeRegistry builds a validated *Config from the given clusters.
@@ -50,7 +49,7 @@ func newTestMultiStore(
 		}
 		lister := k8s.NewKEDAScaledObjectLister(kk)
 		repo := k8s.NewConfigMapStateRepository(kc, controllerNs)
-		stores[c.Env] = NewClusterStore(c, lister, repo, m, nrx.New(nil))
+		stores[c.Env] = NewClusterStore(c, lister, repo, m)
 	}
 	ms, err := NewMultiStoreFromClusterStores(reg, m, stores, 10*time.Second)
 	if err != nil {

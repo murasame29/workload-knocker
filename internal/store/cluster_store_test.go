@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	kedafake "github.com/kedacore/keda/v2/pkg/generated/clientset/versioned/fake"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 const (
@@ -69,6 +69,8 @@ func (f *fakeMetrics) SetReachable(cluster string, value float64) {
 	f.reachable[cluster] = value
 }
 
+func (f *fakeMetrics) ObserveOperation(env, cluster, operation, result string, d time.Duration) {}
+
 func (f *fakeMetrics) IncTokenRefresh(cluster, result string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -120,7 +122,6 @@ func newTestStore(t *testing.T, c config.Cluster, kc *fake.Clientset, kk *kedafa
 		k8s.NewKEDAScaledObjectLister(kk),
 		k8s.NewConfigMapStateRepository(kc, testControllerNs),
 		m,
-		nrx.New(nil),
 	)
 }
 

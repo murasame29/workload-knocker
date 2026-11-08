@@ -31,11 +31,9 @@ type Env struct {
 	// ShutdownTimeout is the timeout server.Manager gives each Lifecycle.Shutdown.
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"5s"`
 
-	SlackAppToken      string `env:"SLACK_APP_TOKEN,required"`
-	SlackBotToken      string `env:"SLACK_BOT_TOKEN,required"`
-	NewRelicLicenseKey string `env:"NEW_RELIC_LICENSE_KEY"  envDefault:""`
-	NewRelicAppName    string `env:"NEW_RELIC_APP_NAME"     envDefault:"workload-knocker"`
-	LogLevel           string `env:"LOG_LEVEL"              envDefault:"info"`
+	SlackAppToken string `env:"SLACK_APP_TOKEN,required"`
+	SlackBotToken string `env:"SLACK_BOT_TOKEN,required"`
+	LogLevel      string `env:"LOG_LEVEL"              envDefault:"info"`
 }
 
 // LoadEnv builds Env from environment variables (reading a .env file if present).

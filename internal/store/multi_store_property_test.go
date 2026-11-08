@@ -11,7 +11,6 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 // buildMultiStoreFromFixture returns a MultiStore with N fixed clusters.
@@ -74,7 +73,7 @@ func buildMultiStoreFromFixture(t *rapid.T, clusterCount int) (*MultiStore, []co
 			makeScaledObject("ns-1", "wl-b"),
 			makeScaledObject("ns-2", "wl-a"),
 		)
-		stores[c.Env] = NewClusterStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m, nrx.New(nil))
+		stores[c.Env] = NewClusterStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m)
 	}
 	ms, err := NewMultiStoreFromClusterStores(reg, m, stores, 10*time.Second)
 	if err != nil {

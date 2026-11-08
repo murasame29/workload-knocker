@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 // defaultStartUser is recorded when the start request omits user.
@@ -18,13 +19,13 @@ const defaultStartUser = "rest-api"
 // It sets workloads of the given env / namespace to running (replicas=1),
 // calling the same store.Start as the Slack Modal start flow.
 type StartHandler struct {
-	store  model.WorkloadStore
-	tracer nrx.Tracer
+	store   model.WorkloadStore
+	metrics metrics.MetricsManager
 }
 
 // NewStartHandler constructs a StartHandler.
-func NewStartHandler(store model.WorkloadStore, tracer nrx.Tracer) *StartHandler {
-	return &StartHandler{store: store, tracer: tracer}
+func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager) *StartHandler {
+	return &StartHandler{store: store, metrics: m}
 }
 
 // startRequest is the JSON schema of the POST body.
@@ -100,24 +101,20 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.String("cluster.env", req.Env), slog.String("error.message", err.Error()))
 	}
 
+	cluster := h.clusterName(req.Env)
 	started := make([]string, 0, len(req.Workloads))
 	notFound := make([]string, 0)
 	for _, name := range req.Workloads {
-		if h.store.Start(req.Env, req.Namespace, name, user) {
+		begin := time.Now()
+		ok := h.store.Start(req.Env, req.Namespace, name, user)
+		if ok {
+			h.metrics.ObserveOperation(req.Env, cluster, "start", "success", time.Since(begin))
 			started = append(started, name)
 			slog.InfoContext(r.Context(), "workload started via REST API",
 				slog.String("cluster.env", req.Env), slog.String("namespace", req.Namespace),
 				slog.String("workload", name), slog.String("user.name", user))
-			h.tracer.RecordEvent("WorkloadKnocker:WorkloadOperation", map[string]any{
-				"action":       "start",
-				"env":          req.Env,
-				"namespace":    req.Namespace,
-				"workload":     name,
-				"user":         user,
-				"source":       "rest-api",
-				"service.name": "workload-knocker",
-			})
 		} else {
+			h.metrics.ObserveOperation(req.Env, cluster, "start", "not_found", time.Since(begin))
 			notFound = append(notFound, name)
 		}
 	}
@@ -151,6 +148,16 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "failed to encode response",
 			slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
 	}
+}
+
+// clusterName returns the cluster name of env, or "" when unknown.
+func (h *StartHandler) clusterName(env string) string {
+	for _, c := range h.store.Clusters() {
+		if c.Env == env {
+			return c.Name
+		}
+	}
+	return ""
 }
 
 // clusterExists reports whether env is registered in the Cluster Registry.

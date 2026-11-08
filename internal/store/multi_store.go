@@ -14,7 +14,6 @@ import (
 	"github.com/murasame29/workload-knocker/internal/k8s"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 // RestConfigSource obtains a *rest.Config from a config.Cluster.
@@ -39,7 +38,7 @@ var _ model.WorkloadStore = (*MultiStore)(nil)
 // It passes the *rest.Config from RestConfigSource to k8s.NewClusterAccess and injects the resulting
 // ScaledObjectLister + StateRepository into the ClusterStore.
 // A client creation failure only logs a warning and skips that cluster; error only if all fail.
-func NewMultiStore(ctx context.Context, reg *config.Config, src RestConfigSource, m metrics.MetricsManager, tracer nrx.Tracer, stopAllTimeout time.Duration) (*MultiStore, error) {
+func NewMultiStore(ctx context.Context, reg *config.Config, src RestConfigSource, m metrics.MetricsManager, stopAllTimeout time.Duration) (*MultiStore, error) {
 	controllerNs := reg.Controller.Namespace
 	stores := make(map[string]*ClusterStore)
 	for _, c := range reg.All() {
@@ -55,7 +54,7 @@ func NewMultiStore(ctx context.Context, reg *config.Config, src RestConfigSource
 			m.SetReachable(c.Name, 0)
 			continue
 		}
-		stores[c.Env] = NewClusterStore(c, lister, repo, m, tracer)
+		stores[c.Env] = NewClusterStore(c, lister, repo, m)
 	}
 	if len(stores) == 0 {
 		return nil, fmt.Errorf("multi-store: no managed cluster could be initialized (all clients failed)")

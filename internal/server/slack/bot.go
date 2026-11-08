@@ -13,8 +13,8 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 const (
@@ -32,7 +32,7 @@ type Bot struct {
 	store    model.WorkloadStore
 	registry *config.Config
 	cfg      *config.Env
-	tracer   nrx.Tracer
+	metrics  metrics.MetricsManager
 
 	// sem is a semaphore limiting concurrent goroutines.
 	sem chan struct{}
@@ -44,7 +44,7 @@ type Bot struct {
 
 // New creates a Bot.
 // registry resolves clusters from Slack slash commands.
-func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, tracer nrx.Tracer) (*Bot, error) {
+func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, m metrics.MetricsManager) (*Bot, error) {
 	if cfg.SlackAppToken == "" || cfg.SlackBotToken == "" {
 		return nil, fmt.Errorf("slackbot.New: slack tokens are required")
 	}
@@ -61,7 +61,7 @@ func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, tr
 		store:    store,
 		registry: registry,
 		cfg:      cfg,
-		tracer:   tracer,
+		metrics:  m,
 		sem:      make(chan struct{}, maxConcurrentEvents),
 		done:     make(chan struct{}),
 	}, nil
@@ -182,20 +182,10 @@ func (b *Bot) handleEvents() {
 	}
 }
 
-// startTransaction delegates to the tracer; a no-op tracer yields a no-op span.
-func (b *Bot) startTransaction(name string) nrx.Span {
-	return b.tracer.Start(name)
-}
-
 // ack is a thin wrapper that logs b.socket.Ack errors at WARN.
 // A failed Slack Ack is hard to recover from, so only log and keep running.
 func (b *Bot) ack(req socketmode.Request, payload ...any) {
 	if err := b.socket.Ack(req, payload...); err != nil {
 		slog.Warn("socket mode ack failed", slog.String("error.message", err.Error()))
 	}
-}
-
-// recordCustomEvent delegates to the tracer.
-func (b *Bot) recordCustomEvent(eventType string, params map[string]any) {
-	b.tracer.RecordEvent(eventType, params)
 }

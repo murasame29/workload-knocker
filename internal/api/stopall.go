@@ -5,21 +5,22 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 // StopAllHandler handles /api/v1/stop-all.
 // It fans out StopAll to every registered cluster and returns a per-cluster breakdown.
 type StopAllHandler struct {
-	store  model.WorkloadStore
-	tracer nrx.Tracer
+	store   model.WorkloadStore
+	metrics metrics.MetricsManager
 }
 
 // New constructs a StopAllHandler.
-func New(store model.WorkloadStore, tracer nrx.Tracer) *StopAllHandler {
-	return &StopAllHandler{store: store, tracer: tracer}
+func New(store model.WorkloadStore, m metrics.MetricsManager) *StopAllHandler {
+	return &StopAllHandler{store: store, metrics: m}
 }
 
 // stopAllResponse is the JSON schema of the HTTP response.
@@ -47,7 +48,13 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	begin := time.Now()
 	result := h.store.StopAll(r.Context())
+	elapsed := time.Since(begin)
+	clusterNames := make(map[string]string)
+	for _, c := range h.store.Clusters() {
+		clusterNames[c.Env] = c.Name
+	}
 
 	per := make(map[string]perClusterStopResultJSON, len(result.PerCluster))
 	succeeded, failed := 0, 0
@@ -55,19 +62,12 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		per[k] = perClusterStopResultJSON{Stopped: v.Stopped, Error: v.Error}
 		if v.Error == "" {
 			succeeded++
+			h.metrics.ObserveOperation(k, clusterNames[k], "stop_all", "success", elapsed)
 		} else {
 			failed++
+			h.metrics.ObserveOperation(k, clusterNames[k], "stop_all", "error", elapsed)
 		}
 	}
-
-	h.tracer.RecordEvent("WorkloadKnocker:WorkloadOperation", map[string]any{
-		"action":             "stop_all",
-		"stopped":            result.TotalStopped,
-		"clusters_total":     succeeded + failed,
-		"clusters_succeeded": succeeded,
-		"clusters_failed":    failed,
-		"service.name":       "workload-knocker",
-	})
 
 	slog.InfoContext(r.Context(), "stop-all completed", slog.Int("total_stopped", result.TotalStopped), slog.Int("clusters_total", succeeded+failed), slog.Int("clusters_succeeded", succeeded), slog.Int("clusters_failed", failed))
 

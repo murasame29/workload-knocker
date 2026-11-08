@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -13,6 +14,8 @@ type MetricsManager interface {
 	DeleteMetric(env, cluster, namespace, workload string)
 	SetReachable(cluster string, value float64)
 	IncTokenRefresh(cluster, result string)
+	// ObserveOperation records one workload operation (operation: start|stop|stop_all, result: success|error|not_found).
+	ObserveOperation(env, cluster, operation, result string, d time.Duration)
 	Handler() http.Handler
 }
 
@@ -21,6 +24,8 @@ type Manager struct {
 	activation   *prometheus.GaugeVec
 	reachable    *prometheus.GaugeVec
 	tokenRefresh *prometheus.CounterVec
+	operations   *prometheus.CounterVec
+	opDuration   *prometheus.HistogramVec
 	registry     *prometheus.Registry
 }
 
@@ -52,14 +57,35 @@ func New() *Manager {
 		[]string{"cluster", "result"},
 	)
 
+	operations := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "workload_knocker_operations_total",
+			Help: "Total number of workload operations, labeled by env, cluster, operation (start, stop, stop_all) and result (success, error, not_found)",
+		},
+		[]string{"env", "cluster", "operation", "result"},
+	)
+
+	opDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "workload_knocker_operation_duration_seconds",
+			Help:    "Duration of workload operations in seconds, labeled by env, cluster and operation",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"env", "cluster", "operation"},
+	)
+
 	registry.MustRegister(activation)
 	registry.MustRegister(reachable)
 	registry.MustRegister(tokenRefresh)
+	registry.MustRegister(operations)
+	registry.MustRegister(opDuration)
 
 	return &Manager{
 		activation:   activation,
 		reachable:    reachable,
 		tokenRefresh: tokenRefresh,
+		operations:   operations,
+		opDuration:   opDuration,
 		registry:     registry,
 	}
 }
@@ -82,6 +108,13 @@ func (m *Manager) SetReachable(cluster string, value float64) {
 // IncTokenRefresh increments the token refresh Counter by 1. result is "success" or "error"
 func (m *Manager) IncTokenRefresh(cluster, result string) {
 	m.tokenRefresh.WithLabelValues(cluster, result).Inc()
+}
+
+// ObserveOperation counts one workload operation and records its duration.
+// Labels are bounded (env, cluster, fixed operation/result sets); never pass user IDs or workload names.
+func (m *Manager) ObserveOperation(env, cluster, operation, result string, d time.Duration) {
+	m.operations.WithLabelValues(env, cluster, operation, result).Inc()
+	m.opDuration.WithLabelValues(env, cluster, operation).Observe(d.Seconds())
 }
 
 // Handler returns the http.Handler exposing Prometheus metrics

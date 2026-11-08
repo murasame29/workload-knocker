@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -259,13 +260,6 @@ type previewMetadata struct {
 // handleSlashCommand handles /workload-knocker-*.
 // The cluster is resolved via b.registry.BySlashCommand(cmd.Command).
 func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
-	txn := b.startTransaction("SlackBot/SlashCommand")
-	if txn != nil {
-		defer txn.End()
-		txn.AddAttribute("user.name", cmd.UserName)
-		txn.AddAttribute("command", cmd.Command)
-	}
-
 	cl, ok := b.registry.BySlashCommand(cmd.Command)
 	if !ok {
 		slog.Warn("unknown slash command", slog.String("command", cmd.Command))
@@ -275,12 +269,6 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 			slog.Error("failed to post ephemeral message", slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
 		}
 		return
-	}
-
-	if txn != nil {
-
-		txn.AddAttribute("cluster.name", cl.Name)
-		txn.AddAttribute("cluster.env", cl.Env)
 	}
 
 	slog.Info("slash command received", slog.String("user.name", cmd.UserName), slog.String("command", cmd.Command), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
@@ -366,13 +354,6 @@ func (b *Bot) handleViewSubmission(callback slack.InteractionCallback, req *sock
 // handleNamespaceSelected shows the workload checkboxes after a namespace is selected.
 // Running workloads become the initial_options selection.
 func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namespace string) {
-	txn := b.startTransaction("SlackBot/NamespaceSelected")
-	if txn != nil {
-		defer txn.End()
-		txn.AddAttribute("user.name", callback.User.Name)
-		txn.AddAttribute("namespace", namespace)
-	}
-
 	// Extract the cluster from private_metadata and resolve it via the registry.
 	var meta modalMetadata
 	if err := json.Unmarshal([]byte(callback.View.PrivateMetadata), &meta); err != nil {
@@ -385,12 +366,6 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 		// The registry is immutable after startup, so a missing cluster is unexpected; guard defensively.
 		slog.Warn("cluster not found at namespace selection")
 		return
-	}
-
-	if txn != nil {
-
-		txn.AddAttribute("cluster.name", cl.Name)
-		txn.AddAttribute("cluster.env", cl.Env)
 	}
 
 	slog.Info("namespace selected", slog.String("user.name", callback.User.Name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", namespace))
@@ -455,12 +430,6 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 // In Socket Mode view_submission, the Ack payload with response_action: update
 // switches the same modal to the preview.
 func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketmode.Request) {
-	txn := b.startTransaction("SlackBot/Plan")
-	if txn != nil {
-		defer txn.End()
-		txn.AddAttribute("user.name", callback.User.Name)
-	}
-
 	var meta modalMetadata
 	if err := json.Unmarshal([]byte(callback.View.PrivateMetadata), &meta); err != nil {
 		slog.Error("failed to parse private_metadata", slog.String("error.message", err.Error()))
@@ -478,13 +447,6 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 			slog.Error("failed to post ephemeral message", slog.String("error.message", err.Error()))
 		}
 		return
-	}
-
-	if txn != nil {
-
-		txn.AddAttribute("cluster.name", cl.Name)
-		txn.AddAttribute("cluster.env", cl.Env)
-		txn.AddAttribute("namespace", meta.Namespace)
 	}
 
 	// Selected workloads (checked = wants running), folded across all split checkbox blocks.
@@ -605,12 +567,6 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 
 // handlePreviewConfirm runs the actual start/stop on the preview Apply button.
 func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
-	txn := b.startTransaction("SlackBot/Apply")
-	if txn != nil {
-		defer txn.End()
-		txn.AddAttribute("user.name", callback.User.Name)
-	}
-
 	var meta previewMetadata
 	if err := json.Unmarshal([]byte(callback.View.PrivateMetadata), &meta); err != nil {
 		slog.Error("failed to parse preview metadata", slog.String("error.message", err.Error()))
@@ -630,15 +586,6 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		return
 	}
 
-	if txn != nil {
-
-		txn.AddAttribute("cluster.name", cl.Name)
-		txn.AddAttribute("cluster.env", cl.Env)
-		txn.AddAttribute("namespace", meta.Namespace)
-		txn.AddAttribute("to_start_count", len(meta.ToStart))
-		txn.AddAttribute("to_stop_count", len(meta.ToStop))
-	}
-
 	envUpper := strings.ToUpper(cl.Env)
 	user := callback.User.Name
 	var resultLines []string
@@ -650,36 +597,22 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		if name == "" {
 			continue
 		}
-		b.store.Start(meta.Cluster, ns, name, user)
+		begin := time.Now()
+		ok := b.store.Start(meta.Cluster, ns, name, user)
+		b.metrics.ObserveOperation(cl.Env, cl.Name, "start", resultLabel(ok), time.Since(begin))
 		resultLines = append(resultLines, fmt.Sprintf("🟢 %s → start", name))
 		slog.Info("workload started", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", ns), slog.String("user.name", user))
-		b.recordCustomEvent("WorkloadKnocker:WorkloadOperation", map[string]any{
-			"action":       "start",
-			"env":          cl.Env,
-			"cluster":      cl.Name,
-			"namespace":    ns,
-			"workload":     name,
-			"user":         user,
-			"service.name": "workload-knocker",
-		})
 	}
 
 	for _, name := range meta.ToStop {
 		if name == "" {
 			continue
 		}
-		b.store.Stop(meta.Cluster, ns, name)
+		begin := time.Now()
+		ok := b.store.Stop(meta.Cluster, ns, name)
+		b.metrics.ObserveOperation(cl.Env, cl.Name, "stop", resultLabel(ok), time.Since(begin))
 		resultLines = append(resultLines, fmt.Sprintf("🔴 %s → stop", name))
 		slog.Info("workload stopped", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", ns), slog.String("user.name", user))
-		b.recordCustomEvent("WorkloadKnocker:WorkloadOperation", map[string]any{
-			"action":       "stop",
-			"env":          cl.Env,
-			"cluster":      cl.Name,
-			"namespace":    ns,
-			"workload":     name,
-			"user":         user,
-			"service.name": "workload-knocker",
-		})
 	}
 
 	resultHeader := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)",
@@ -694,4 +627,12 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 	); err != nil {
 		slog.Error("failed to send result message", slog.String("error.message", err.Error()))
 	}
+}
+
+// resultLabel maps a store Start/Stop outcome to the metrics result label.
+func resultLabel(ok bool) string {
+	if ok {
+		return "success"
+	}
+	return "not_found"
 }

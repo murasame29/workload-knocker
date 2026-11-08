@@ -3,12 +3,10 @@ package container
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/newrelic/go-agent/v3/newrelic"
 	"go.uber.org/dig"
 
 	"github.com/murasame29/workload-knocker/internal/api"
@@ -22,7 +20,6 @@ import (
 	httpserver "github.com/murasame29/workload-knocker/internal/server/http"
 	slackbot "github.com/murasame29/workload-knocker/internal/server/slack"
 	"github.com/murasame29/workload-knocker/internal/store"
-	nrx "github.com/murasame29/workload-knocker/pkg/newrelic"
 )
 
 // BuildServer builds the DI container and registers all providers.
@@ -37,12 +34,6 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	providers := []any{
 		// MetricsManager
 		func() metrics.MetricsManager { return metrics.New() },
-
-		// New Relic Application: nil (no-op) when the license key is unset
-		newNewRelicApp,
-
-		// Tracer: nil-safe wrapper of *newrelic.Application
-		nrx.New,
 
 		// AWS Config (IRSA + default credential chain), consumed by the eks Provider
 		newAWSConfig,
@@ -74,8 +65,8 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		api.NewStartHandler,
 
 		// HTTP Server (server.Lifecycle)
-		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler, nrApp *newrelic.Application) *httpserver.Server {
-			return httpserver.New(cfg.HTTPPort, m.Handler(), stopAll, start, nrApp)
+		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler) *httpserver.Server {
+			return httpserver.New(cfg.HTTPPort, m.Handler(), stopAll, start)
 		},
 		// Slack Bot (server.Lifecycle)
 		slackbot.New,
@@ -95,29 +86,6 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	return c, nil
 }
 
-// newNewRelicApp constructs the New Relic Application.
-// Returns nil when the license key is unset or init fails (the Tracer then no-ops).
-func newNewRelicApp(cfg *config.Env) *newrelic.Application {
-	if cfg.NewRelicLicenseKey == "" {
-		slog.Warn("NEW_RELIC_LICENSE_KEY is not set; New Relic is disabled")
-		return nil
-	}
-	app, err := newrelic.NewApplication(
-		newrelic.ConfigAppName(cfg.NewRelicAppName),
-		newrelic.ConfigLicense(cfg.NewRelicLicenseKey),
-		newrelic.ConfigDistributedTracerEnabled(true),
-		newrelic.ConfigAppLogEnabled(false),
-		newrelic.ConfigAppLogForwardingEnabled(false),
-		newrelic.ConfigAppLogDecoratingEnabled(true),
-	)
-	if err != nil {
-		slog.Warn("failed to initialize New Relic", slog.String("error.message", err.Error()))
-		return nil
-	}
-	slog.Info("New Relic APM initialized", slog.String("app_name", cfg.NewRelicAppName))
-	return app
-}
-
 func newAWSConfig() (aws.Config, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -128,8 +96,8 @@ func newAWSConfig() (aws.Config, error) {
 	return awsCfg, nil
 }
 
-func newMultiStore(cfg *config.Env, reg *config.Config, mux *k8sauth.Multiplexer, m metrics.MetricsManager, tracer nrx.Tracer) (*store.MultiStore, error) {
+func newMultiStore(cfg *config.Env, reg *config.Config, mux *k8sauth.Multiplexer, m metrics.MetricsManager) (*store.MultiStore, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return store.NewMultiStore(ctx, reg, mux, m, tracer, cfg.StopAllTimeout)
+	return store.NewMultiStore(ctx, reg, mux, m, cfg.StopAllTimeout)
 }
