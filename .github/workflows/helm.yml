@@ -8,7 +8,7 @@ on:
       - 'example/values.example.yaml'
       - 'hack/check_chart_package.sh'
       - '.github/workflows/helm.yml'
-      - '.github/workflows/chart-release.yml'
+      - '.github/workflows/release.yml'
   push:
     branches: [main]
     paths:
@@ -16,7 +16,7 @@ on:
       - 'example/values.example.yaml'
       - 'hack/check_chart_package.sh'
       - '.github/workflows/helm.yml'
-      - '.github/workflows/chart-release.yml'
+      - '.github/workflows/release.yml'
 
 permissions:
   contents: read
@@ -71,8 +71,9 @@ jobs:
 
       - name: Assert rendered contract
         run: |
+          app_version="$(helm show chart charts/workload-knocker | awk -F': *' '$1 == "appVersion" { gsub(/"/, "", $2); print $2; exit }')"
           grep --fixed-strings --quiet \
-            'image: "ghcr.io/murasame29/workload-knocker:0.1.0"' "${RUNNER_TEMP}/default.yaml"
+            "image: \"ghcr.io/murasame29/workload-knocker:${app_version}\"" "${RUNNER_TEMP}/default.yaml"
           grep --fixed-strings --quiet \
             'image: "ghcr.io/murasame29/workload-knocker:9.9.9-test"' "${RUNNER_TEMP}/tag.yaml"
           grep --fixed-strings --quiet \
