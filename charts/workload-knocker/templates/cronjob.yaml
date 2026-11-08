@@ -54,6 +54,7 @@ spec:
                   --retry {{ $n.curlRetries }} --retry-connrefused --retry-all-errors
                   --request POST
                   --header "Authorization: Bearer ${API_TOKEN}"
+                  --header "X-Workload-Knocker-Source: nightly-stop"
                   "${STOP_ALL_URL}"
               resources:
                 {{- toYaml $n.resources | nindent 16 }}

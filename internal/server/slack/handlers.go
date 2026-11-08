@@ -10,6 +10,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
@@ -246,6 +247,8 @@ type previewMetadata struct {
 	Namespace string   `json:"namespace"`
 	ToStart   []string `json:"to_start"` // workload name
 	ToStop    []string `json:"to_stop"`  // workload name
+	// RequestID ties the preview and the apply of one operation in the audit log.
+	RequestID string `json:"request_id"`
 }
 
 // planLines renders the allowed plan changes for the preview modal.
@@ -500,7 +503,8 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 	// "not shown = unchecked = stop" would stop running workloads that are off screen.
 	sub := b.subject(callback.User.ID)
 	listing := b.svc.List(sub, cl.Env, meta.Namespace, frontend.Limits{PageSize: checkboxMaxOptions})
-	plan := b.svc.Plan(sub, cl, meta.Namespace, frontend.Rendered(listing.Entries, meta.Rendered), selectedSet)
+	requestID := audit.NewRequestID()
+	plan := b.svc.Plan(sub, cl, meta.Namespace, frontend.Rendered(listing.Entries, meta.Rendered), selectedSet, requestID)
 	toStart, toStop := plan.ToStart, plan.ToStop
 
 	previewLines := planLines(plan)
@@ -527,6 +531,7 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		Namespace: meta.Namespace,
 		ToStart:   toStart,
 		ToStop:    toStop,
+		RequestID: requestID,
 	})
 	// private_metadata is capped at 3000 chars. If the diff is too large the preview cannot
 	// open, so abort and ask the user to split the run.
@@ -597,6 +602,7 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		Namespace: meta.Namespace,
 		User:      user,
 		Subject:   b.subject(callback.User.ID),
+		RequestID: meta.RequestID,
 		ToStart:   meta.ToStart,
 		ToStop:    meta.ToStop,
 	})

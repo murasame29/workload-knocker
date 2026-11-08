@@ -7,11 +7,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/mode"
 )
 
 // Authenticate requires "Authorization: Bearer <token>" and fails closed (503) when token is empty.
-func Authenticate(token string, next http.Handler) http.Handler {
+func Authenticate(token string, rec audit.Recorder, next http.Handler) http.Handler {
 	want := sha256.Sum256([]byte(token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
@@ -21,11 +22,13 @@ func Authenticate(token string, next http.Handler) http.Handler {
 		scheme, got, ok := strings.Cut(r.Header.Get("Authorization"), " ")
 		if !ok || !strings.EqualFold(scheme, "Bearer") {
 			unauthorized(w)
+			recordDenied(rec, r)
 			return
 		}
 		sum := sha256.Sum256([]byte(strings.TrimSpace(got)))
 		if subtle.ConstantTimeCompare(sum[:], want[:]) != 1 {
 			unauthorized(w)
+			recordDenied(rec, r)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -33,11 +36,12 @@ func Authenticate(token string, next http.Handler) http.Handler {
 }
 
 // RequireStop rejects the request with 403 unless the mode allows API stops.
-func RequireStop(m mode.Mode, next http.Handler) http.Handler {
+func RequireStop(m mode.Mode, rec audit.Recorder, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !m.AllowAPIStop() {
 			writeJSONError(w, http.StatusForbidden,
 				"stop is not allowed in OPERATION_MODE="+string(m)+"; use the chat command or the scheduled stop")
+			recordDenied(rec, r)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -54,4 +58,27 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(append(b, '\n'))
+}
+
+// SourceHeader lets the nightly CronJob identify itself; any other value is recorded as "api".
+const SourceHeader = "X-Workload-Knocker-Source"
+
+// sourceOf returns the audit source of a stop-all request.
+func sourceOf(r *http.Request) audit.Source {
+	if r.Header.Get(SourceHeader) == string(audit.SourceNightlyStop) {
+		return audit.SourceNightlyStop
+	}
+	return audit.SourceAPI
+}
+
+// recordDenied emits a workload-less denied event for a request refused before reaching a handler.
+func recordDenied(rec audit.Recorder, r *http.Request) {
+	event, source := audit.WorkloadStart, audit.SourceAPI
+	if strings.HasSuffix(r.URL.Path, "/stop-all") {
+		event, source = audit.WorkloadStopAll, sourceOf(r)
+	}
+	rec.Record(r.Context(), audit.Record{
+		Event: event, Outcome: audit.Denied, Source: source,
+		RequestID: audit.NewRequestID(), EndUser: audit.EndUserAPI,
+	})
 }

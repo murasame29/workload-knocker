@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/mode"
 )
 
@@ -14,9 +15,9 @@ const testToken = "test-token-value"
 func chain(token string, m mode.Mode, stop bool) http.Handler {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	if stop {
-		return Authenticate(token, RequireStop(m, ok))
+		return Authenticate(token, audit.NewSlog(), RequireStop(m, audit.NewSlog(), ok))
 	}
-	return Authenticate(token, ok)
+	return Authenticate(token, audit.NewSlog(), ok)
 }
 
 func do(h http.Handler, authz string) *httptest.ResponseRecorder {

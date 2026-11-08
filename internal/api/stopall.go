@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
@@ -18,11 +20,12 @@ type StopAllHandler struct {
 	store   model.WorkloadStore
 	metrics metrics.MetricsManager
 	authz   authz.Authorizer
+	audit   audit.Recorder
 }
 
 // New constructs a StopAllHandler; az decides which workloads the api subject may stop.
 func New(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer) *StopAllHandler {
-	return &StopAllHandler{store: store, metrics: m, authz: az}
+	return &StopAllHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog()}
 }
 
 // stopAllResponse is the JSON schema of the HTTP response.
@@ -53,6 +56,7 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	running := h.runningWorkloads()
 	begin := time.Now()
 	result := h.store.StopAll(r.Context(), func(env, ns, name string) bool {
 		return h.authz.Allowed(authz.APISubject, env, ns, name, authz.ActionStop)
@@ -77,7 +81,7 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	slog.InfoContext(r.Context(), "stop-all completed", slog.Int("total_stopped", result.TotalStopped), slog.Int("clusters_total", succeeded+failed), slog.Int("clusters_succeeded", succeeded), slog.Int("clusters_failed", failed), slog.Int("total_skipped", skipped))
+	h.recordAll(r, running, result, clusterNames)
 
 	message := "stop-all dispatched to all clusters"
 	if skipped > 0 {
@@ -98,5 +102,40 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.ErrorContext(r.Context(), "failed to encode response", slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
+	}
+}
+
+// runningWorkloads snapshots the running workloads before StopAll; the store reports only counts.
+func (h *StopAllHandler) runningWorkloads() []model.Workload {
+	var out []model.Workload
+	for _, c := range h.store.Clusters() {
+		for _, ns := range h.store.Namespaces(c.Env) {
+			for _, w := range h.store.WorkloadsByNamespace(c.Env, ns) {
+				if w.Replicas > 0 {
+					out = append(out, model.Workload{Env: c.Env, Namespace: ns, Name: w.Name, Kind: w.Kind})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// recordAll emits one event per workload that was running when the request arrived.
+func (h *StopAllHandler) recordAll(r *http.Request, running []model.Workload, result model.StopAllResult, clusterNames map[string]string) {
+	requestID, source := audit.NewRequestID(), sourceOf(r)
+	for _, w := range running {
+		rec := audit.Record{
+			Event: audit.WorkloadStopAll, Source: source, RequestID: requestID, EndUser: audit.EndUserAPI,
+			Cluster: clusterNames[w.Env], Namespace: w.Namespace, WorkloadName: w.Name, WorkloadKind: w.Kind,
+		}
+		switch cr := result.PerCluster[w.Env]; {
+		case !h.authz.Allowed(authz.APISubject, w.Env, w.Namespace, w.Name, authz.ActionStop):
+			rec.Outcome = audit.Denied
+		case cr.Error != "":
+			rec.Outcome, rec.Err = audit.Failure, errors.New(cr.Error)
+		default:
+			rec.Outcome = audit.Success
+		}
+		h.audit.Record(r.Context(), rec)
 	}
 }

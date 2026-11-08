@@ -218,7 +218,7 @@ func TestService_Plan_RejectsUnauthorizedChanges(t *testing.T) {
 	svc := NewService(&fakeStore{}, metrics.New(), 0,
 		WithAuthorizer(onlyWorkloads([]authz.Action{authz.ActionStart}, "checkout-api")))
 
-	plan := svc.Plan(alice, config.Cluster{Env: "stg"}, "labs", entries, map[string]bool{"checkout-api": true})
+	plan := svc.Plan(alice, config.Cluster{Env: "stg"}, "labs", entries, map[string]bool{"checkout-api": true}, "")
 
 	if !slices.Equal(plan.ToStart, []string{"checkout-api"}) || len(plan.ToStop) != 0 {
 		t.Errorf("ToStart = %v ToStop = %v", plan.ToStart, plan.ToStop)
@@ -263,7 +263,7 @@ func TestService_ScheduledStopModeRejectsChatStops(t *testing.T) {
 	}
 
 	entries := GroupEntries([]*model.Workload{wl("up", 1), wl("down", 0)})
-	plan := svc.Plan(alice, config.Cluster{Env: "stg"}, "labs", entries, map[string]bool{"down": true})
+	plan := svc.Plan(alice, config.Cluster{Env: "stg"}, "labs", entries, map[string]bool{"down": true}, "")
 	if !slices.Equal(plan.ToStart, []string{"down"}) || len(plan.ToStop) != 0 {
 		t.Errorf("ToStart = %v ToStop = %v", plan.ToStart, plan.ToStop)
 	}

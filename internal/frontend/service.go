@@ -2,10 +2,12 @@ package frontend
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"time"
 
+	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/metrics"
@@ -112,8 +114,10 @@ type ApplyRequest struct {
 	User string
 	// Subject is checked against the policy again at apply time; never trust the submitted lists.
 	Subject authz.Subject
-	ToStart []string
-	ToStop  []string
+	// RequestID ties the audit events to the preview of this operation; generated when empty.
+	RequestID string
+	ToStart   []string
+	ToStop    []string
 }
 
 // Applied is the outcome of one workload operation.
@@ -140,6 +144,7 @@ type Service struct {
 	reconcileTimeout time.Duration
 	authz            authz.Authorizer
 	mode             mode.Mode
+	audit            audit.Recorder
 }
 
 // Option customizes a Service.
@@ -151,9 +156,12 @@ func WithAuthorizer(a authz.Authorizer) Option { return func(s *Service) { s.aut
 // WithMode sets the operation mode; scheduled-stop forbids stopping from chat.
 func WithMode(m mode.Mode) Option { return func(s *Service) { s.mode = m } }
 
+// WithRecorder replaces the audit event recorder (default: the slog default logger).
+func WithRecorder(r audit.Recorder) Option { return func(s *Service) { s.audit = r } }
+
 // NewService builds a Service. reconcileTimeout bounds each on-demand Reconcile.
 func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
-	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout}
+	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout, audit: audit.NewSlog()}
 	for _, o := range opts {
 		o(s)
 	}
@@ -218,10 +226,40 @@ func (s *Service) List(sub authz.Subject, env, namespace string, limits Limits) 
 func (s *Service) ChatStopAllowed() bool { return s.mode.AllowChatStop() }
 
 // Plan is BuildPlan for sub: changes the policy or mode refuses move to Plan.Rejected.
-func (s *Service) Plan(sub authz.Subject, cl config.Cluster, namespace string, entries []Entry, selected map[string]bool) Plan {
-	return buildPlan(cl, namespace, entries, selected, func(a Action, name string) Reason {
+// requestID ties the audit events of the refusals to the later Apply.
+func (s *Service) Plan(sub authz.Subject, cl config.Cluster, namespace string, entries []Entry, selected map[string]bool, requestID string) Plan {
+	plan := buildPlan(cl, namespace, entries, selected, func(a Action, name string) Reason {
 		return s.check(sub, cl.Env, namespace, a, name)
 	})
+	for _, r := range plan.Rejected {
+		for _, name := range r.Names {
+			s.record(sub, cl, namespace, name, r.Action, audit.Denied, requestID, nil)
+		}
+	}
+	return plan
+}
+
+var errNotFound = errors.New("workload not found")
+
+// record emits the audit event of one workload operation requested by sub.
+func (s *Service) record(sub authz.Subject, cl config.Cluster, namespace, name string, a Action, outcome audit.Outcome, requestID string, err error) {
+	source := audit.Source(sub.Platform)
+	event := audit.WorkloadStart
+	if a == ActionStop {
+		event = audit.WorkloadStop
+	}
+	rec := audit.Record{
+		Event: event, Outcome: outcome, Source: source, RequestID: requestID,
+		EndUser: audit.EndUser(source, sub.User),
+		Cluster: cl.Name, Namespace: namespace, WorkloadName: name, Err: err,
+	}
+	for _, w := range s.store.WorkloadsByNamespace(cl.Env, namespace) {
+		if w.Name == name {
+			rec.WorkloadKind = w.Kind
+			break
+		}
+	}
+	s.audit.Record(context.Background(), rec)
 }
 
 // BuildPlan diffs the selection (checked = wants running) against the current state, without authorization.
@@ -288,6 +326,9 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 	cl := req.Cluster
 	var res ApplyResult
 	started := 0
+	if req.RequestID == "" {
+		req.RequestID = audit.NewRequestID()
+	}
 
 	for _, name := range req.ToStart {
 		if name == "" {
@@ -301,7 +342,7 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStart), resultLabel(ok), time.Since(begin))
 		res.Applied = append(res.Applied, Applied{Action: ActionStart, Name: name, Found: ok})
 		started++
-		slog.Info("workload started", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", req.Namespace), slog.String("user.name", req.User))
+		s.recordApplied(req, ActionStart, name, ok)
 	}
 
 	for _, name := range req.ToStop {
@@ -315,7 +356,7 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 		ok := s.store.Stop(cl.Env, req.Namespace, name)
 		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStop), resultLabel(ok), time.Since(begin))
 		res.Applied = append(res.Applied, Applied{Action: ActionStop, Name: name, Found: ok})
-		slog.Info("workload stopped", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", req.Namespace), slog.String("user.name", req.User))
+		s.recordApplied(req, ActionStop, name, ok)
 	}
 
 	res.AutoStop = started > 0
@@ -329,8 +370,16 @@ func (s *Service) rejectApply(res *ApplyResult, req ApplyRequest, a Action, name
 		return false
 	}
 	res.Rejected = append(res.Rejected, Rejection{Action: a, Label: name, Names: []string{name}, Reason: reason})
-	slog.Warn("workload operation rejected", slog.String("action", string(a)), slog.String("reason", string(reason)), slog.String("workload", name), slog.String("cluster.env", req.Cluster.Env), slog.String("namespace", req.Namespace), slog.String("user.name", req.User))
+	s.record(req.Subject, req.Cluster, req.Namespace, name, a, audit.Denied, req.RequestID, nil)
 	return true
+}
+
+func (s *Service) recordApplied(req ApplyRequest, a Action, name string, found bool) {
+	if found {
+		s.record(req.Subject, req.Cluster, req.Namespace, name, a, audit.Success, req.RequestID, nil)
+		return
+	}
+	s.record(req.Subject, req.Cluster, req.Namespace, name, a, audit.Failure, req.RequestID, errNotFound)
 }
 
 // resultLabel maps a store outcome to the metrics result label.

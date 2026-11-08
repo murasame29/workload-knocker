@@ -32,7 +32,9 @@ type flow struct {
 	selected map[string]bool
 	toStart  []string
 	toStop   []string
-	expires  time.Time
+	// requestID ties the preview and the confirm of one operation in the audit log.
+	requestID string
+	expires   time.Time
 }
 
 // flowStore is an in-memory TTL store of flows keyed by a random token. A restart drops all
