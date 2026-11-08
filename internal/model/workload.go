@@ -13,6 +13,8 @@ type Workload struct {
 	Kind      string // Deployment or Rollout
 	Replicas  int
 	StartedBy string
+	// StartedAt is when the current run was started; zero when unknown (for example found already running).
+	StartedAt time.Time
 	// StopAt is when the workload is stopped automatically; zero means no auto-stop.
 	StopAt time.Time
 	// DefaultDuration / MaxDuration are the ScaledObject annotation overrides (nil / 0 = unset).

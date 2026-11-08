@@ -87,7 +87,8 @@ func (b *Bot) edit(i *discordgo.Interaction, v view) {
 	}
 }
 
-// handleCommand handles the configured slash commands: it shows the namespace menu.
+// handleCommand handles the configured slash commands: status lists the workloads, start (or a
+// bare command from a client with a cached command shape) shows the namespace menu.
 func (b *Bot) handleCommand(i *discordgo.Interaction) {
 	data, ok := i.Data.(discordgo.ApplicationCommandInteractionData)
 	if !ok {
@@ -106,7 +107,13 @@ func (b *Bot) handleCommand(i *discordgo.Interaction) {
 		return
 	}
 
-	slog.Info("slash command received", slog.String("user.id", userID), slog.String("user.name", userName), slog.String("command", data.Name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
+	sub := subcommandOf(data)
+	slog.Info("slash command received", slog.String("user.id", userID), slog.String("user.name", userName), slog.String("command", data.Name), slog.String("subcommand", sub), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
+
+	if sub == subcommandStatus {
+		b.handleStatus(i, cl)
+		return
+	}
 
 	// Ack first: the on-demand Reconcile can take longer than the 3s response window.
 	if !b.deferEphemeral(i) {
@@ -154,6 +161,8 @@ func (b *Bot) handleComponent(i *discordgo.Interaction) {
 		b.openDurationModal(i, id, userID)
 	case kindExtend:
 		b.handleExtend(i, id)
+	case kindStatusExtend, kindStatusStop:
+		b.handleStatusAction(i, id, userID)
 	case kindNamespacePage, kindNamespaceSelect, kindWorkloadPage, kindWorkloadSelect, kindPlan, kindCancel:
 		b.withFlow(i, id, userID, func(f *flow, cl config.Cluster) view {
 			return b.step(id, data.Values, subject(i), f, cl)

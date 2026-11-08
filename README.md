@@ -20,10 +20,14 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
 
 - The controller loads a cluster registry (YAML), hot reloads it on change, and lists every
   `ScaledObject` whose Prometheus trigger queries `workload_knocker_activation`.
-- The Discord slash command (`frontends.discord.command`) shows ephemeral select menus and a plan
-  preview with Confirm/Cancel; see [Discord](docs/en/configuration.md#discord).
+- The Discord slash command (`frontends.discord.command`) has two subcommands. `/<command> start` shows
+  ephemeral select menus and a plan preview with Confirm/Cancel; see [Discord](docs/en/configuration.md#discord).
+  The bare `/<command>` no longer works (breaking change).
 - The Slack slash command (`frontends.slack.slashCommand`) opens a modal. Workloads that differ only by an `api` / `app` / `worker`
   suffix are shown as one checkbox.
+- `/<command> status` (Discord subcommand, Slack argument) lists the workloads the user may operate with their state,
+  starter and stop time, plus Extend 1h and Stop buttons; `GET /api/v1/workloads` returns the same data as JSON.
+  See [Status](docs/en/configuration.md#status).
 - A `workload-knocker.io/ready-message` annotation on a ScaledObject adds a hint to the started
   line, and an optional `notifyChannel` posts start, ready and stop messages publicly; see
   [Ready message and notify channel](docs/en/configuration.md#ready-message-and-notify-channel).

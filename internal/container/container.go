@@ -99,14 +99,17 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 			return api.NewStartHandler(ws, m, az, d, api.WithNotifier(n), api.WithTracker(rt))
 		},
 		api.NewExtendHandler,
+		// GET /api/v1/workloads
+		api.NewWorkloadsHandler,
 
 		// HTTP Server (server.Lifecycle)
-		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler, extend *api.ExtendHandler) *httpserver.Server {
+		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler, extend *api.ExtendHandler, workloads *api.WorkloadsHandler) *httpserver.Server {
 			rec := audit.NewSlog()
 			return httpserver.New(cfg.HTTPPort, m.Handler(),
 				api.Authenticate(cfg.APIToken, rec, api.RequireStop(cfg.OperationMode, rec, stopAll)),
 				api.Authenticate(cfg.APIToken, rec, start),
-				api.Authenticate(cfg.APIToken, rec, extend))
+				api.Authenticate(cfg.APIToken, rec, extend),
+				api.Authenticate(cfg.APIToken, rec, workloads))
 		},
 		// Rollout progress after Confirm: per-cluster readers and the tracker
 		func(mux *k8sauth.Multiplexer, live *config.Holder) *rollout.Readers {

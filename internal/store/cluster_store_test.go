@@ -492,3 +492,57 @@ func readStateRaw(t *testing.T, kc *fake.Clientset) map[string]map[string]any {
 	}
 	return out
 }
+
+func TestClusterStore_StartedAt_PersistsAndClears(t *testing.T) {
+	t.Parallel()
+
+	kc := fake.NewClientset()
+	kk := kedafake.NewSimpleClientset(makeScaledObject("ns-a", "wl-1"))
+	startedAt := time.Date(2026, 11, 8, 9, 0, 0, 0, time.UTC)
+
+	first := newTestStore(t, testCluster("stg"), kc, kk, &fakeMetrics{})
+	first.now = func() time.Time { return startedAt }
+	if err := first.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	first.Start("ns-a", "wl-1", "alice", time.Time{})
+
+	second := newTestStore(t, testCluster("stg"), kc, kk, &fakeMetrics{})
+	if err := second.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := second.WorkloadsByNamespace("ns-a")[0].StartedAt; !got.Equal(startedAt) {
+		t.Fatalf("StartedAt after restart = %v, want %v", got, startedAt)
+	}
+
+	second.SetStopAt("ns-a", "wl-1", startedAt.Add(time.Hour))
+	if got := second.WorkloadsByNamespace("ns-a")[0].StartedAt; !got.Equal(startedAt) {
+		t.Errorf("SetStopAt must keep StartedAt, got %v", got)
+	}
+
+	second.Stop("ns-a", "wl-1")
+	if !second.WorkloadsByNamespace("ns-a")[0].StartedAt.IsZero() {
+		t.Error("Stop must clear StartedAt")
+	}
+	if _, ok := readStateRaw(t, kc)["ns-a/wl-1"]["startedAt"]; ok {
+		t.Error("startedAt must be omitted from the state of a stopped workload")
+	}
+}
+
+func TestClusterStore_Bootstrap_LegacyStateWithoutStartedAt(t *testing.T) {
+	t.Parallel()
+
+	existing := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: testStateConfigMap, Namespace: testControllerNs},
+		Data:       map[string]string{testStateConfigMapKey: `{"ns-a/wl-1":{"replicas":1,"startedBy":"carol"}}`},
+	}
+	kk := kedafake.NewSimpleClientset(makeScaledObject("ns-a", "wl-1"))
+	s := newTestStore(t, testCluster("stg"), fake.NewClientset(existing), kk, &fakeMetrics{})
+	if err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w := s.WorkloadsByNamespace("ns-a")[0]
+	if w.StartedBy != "carol" || !w.StartedAt.IsZero() {
+		t.Errorf("legacy state: StartedBy=%q StartedAt=%v, want carol and zero", w.StartedBy, w.StartedAt)
+	}
+}

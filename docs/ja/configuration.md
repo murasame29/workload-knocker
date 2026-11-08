@@ -125,6 +125,7 @@ rules:
 |---|---|
 | Slack の namespace / workload 一覧 | ユーザーが start または stop できるものだけ表示。1 件もなければ明確なメッセージを返す |
 | Slack の Plan / Apply | start/stop を Plan 時と Apply 時に再判定。モーダルが送った値に関わらず、許可されない項目は理由付きで拒否 |
+| ステータス (`/<command> status`、`GET /api/v1/workloads`) | subject が start または stop できる workload だけ表示。Extend / Stop ボタンは、その操作が許可され動作モードも許す場合だけ表示し、ボタン押下時にも再判定する |
 | `POST /api/v1/start` | subject `api` として workload ごとに判定。拒否分は `forbidden` に入り、1 件も start できず拒否があれば `403`。拒否は workload の存在を明かさない |
 | `POST /api/v1/stop-all` | `api` が stop できる workload だけ停止。停止しなかった起動中 workload は cluster ごとの `skipped` と `total_skipped` に出る |
 
@@ -197,9 +198,11 @@ clusters:
 
 起動時に、対象スコープ (guild またはグローバル) の application command を設定済みコマンドで一括上書きします。同スコープの他のコマンドは削除されるため、専用の Application を使ってください。登録に失敗すると (多くは `applications.commands` scope の不足) エラーで起動に失敗します。
 
-フロー (すべて ephemeral メッセージで、コンポーネントは実行したユーザーのみ操作できます):
+コマンドには `start` と `status` の 2 つのサブコマンドがあります ([ステータス](#ステータス)参照)。Discord はサブコマンドを持つコマンドをサブコマンドなしで実行することを許可しないため ([Discord ドキュメント](https://discord.com/developers/docs/interactions/application-commands#subcommands-and-subcommand-groups))、**`/<command>` 単体は使えなくなり、`/<command> start` を使います**。Discord ユーザーにとっては破壊的変更ですが、起動時の登録で自動的に反映されるため手動作業は不要です。古いコマンド形状 (クライアントのキャッシュ) のまま送られた単体コマンドは `start` として扱います。
 
-1. slash command で namespace のセレクトメニューを表示します (1 ページ 25 件、前へ/次へボタン)。
+`/<command> start` のフロー (すべて ephemeral メッセージで、コンポーネントは実行したユーザーのみ操作できます):
+
+1. サブコマンドで namespace のセレクトメニューを表示します (1 ページ 25 件、前へ/次へボタン)。
 2. namespace を選ぶと workload の複数選択を表示します (1 ページ 25 件)。起動中のエントリは選択済みで、ページをまたいで選択が保持されます。`-api` / `-app` / `-worker` の merge と 🟢 / 🟡 / 🔴 は Slack と同じです。
 3. **Apply** で Plan のプレビューと **Confirm** / **Cancel** を表示します。
 4. **Confirm** で適用し、メッセージを結果に置き換えます。操作ユーザーは Discord のユーザー ID です。続けて[rollout の進捗](#rollout-の進捗)を表示します。
@@ -293,18 +296,42 @@ metadata:
 
 ## Slack の workload モーダル
 
+引数なしの `/<command>` でこのモーダルを開きます。`/<command> status` は代わりに workload 一覧を表示します ([ステータス](#ステータス)参照)。その他の引数には短い使い方を返します。
+
 - namespace と workload は a→z 順です。
 - `foo-api` / `foo-app` / `foo-worker` のうち 2 件以上あれば 1 つの `foo` チェックボックスに
   merge されます。一部だけ起動中なら 🟡 でチェック ON になります。
 - Slack の制限 (checkbox 10 件 / モーダル 100 block) により merge 後 90 エントリまで表示します。
   非表示分は Plan から除外されるため、意図せず停止されることはありません。
 
+## ステータス
+
+`/<command> status` (Discord ではサブコマンド、Slack では引数) は、ユーザーが操作できる workload を namespace ごと (a→z) に ephemeral で一覧します。各エントリに状態 (🟢 起動中、🟡 一部起動中、🔴 停止中)、起動した人、起動時刻、停止時刻 (`stops <時刻>`、なければ `no auto-stop`) を表示します。時刻は閲覧者のタイムゾーンで表示されます (Discord は相対時刻、Slack は日付形式)。`-api` / `-app` / `-worker` は start のフローと同じく 1 つにまとめます。
+
+一覧は controller のメモリ上の状態だけから作ります。クラスタ呼び出しも reconcile もしないため、Discord の 3 秒以内に応答できます。状態はバックグラウンドの reconcile (`RECONCILE_INTERVAL`) で更新されます。
+
+起動中のエントリにはボタンが付きます (ラベルにエントリ名が入ります):
+
+- **Extend 1h**: `POST /api/v1/extend` と同様に停止時刻を 1 時間延ばします。自動停止があるエントリにだけ表示します。
+- **Stop**: 確認なしで直接停止します。通常の停止と同じ経路 (ポリシー判定、動作モード判定、source が `discord` / `slack` の `workload.stop` 監査イベント、通知チャンネル) を通ります。`scheduled-stop` モードでは表示しません。
+
+押下後は、その場で一覧を結果と最新の状態に置き換えます。判定は押下時にも再実行するため、古い一覧で権限を広げることはできません。
+
+制限と注意:
+
+- Discord は 1 メッセージ 25 ボタン・本文 2000 文字、Slack は 50 block までです。超えたエントリも一覧には出ますが (本文が切れる場合は末尾に `… and N more`)、ボタンは付かず、その旨を表示します。その場合は `/<command> start` を使ってください。
+- 起動した人と起動時刻は start 適用時に記録し、`workload-state` ConfigMap (`startedBy`、`startedAt`) に保存します。controller が最初から起動中として検出した workload や、古いバージョンが書いた state では、起動した人と起動時刻は表示されません。起動した人は Discord ではユーザー ID (メンション表示)、Slack ではユーザー名、API では呼び出しの `user` です。
+- [認可ポリシー](#認可)で見えるエントリだけを表示します。
+- Discord はボタンのペイロードを 24 時間メモリに保持します。それを過ぎた後や再起動後に古いボタンを押すと、失効した旨を返します。Slack のボタンはペイロードを持つため引き続き動作します。
+
+REST では [`GET /api/v1/workloads`](#get-apiv1workloads) が同じ情報を返します。
+
 ## 実行時間
 
 start には実行時間を付けられます。コントローラは workload ごとの `stopAt` を `workload-state` ConfigMap に保存し、
 バックグラウンドループ (`RECONCILE_INTERVAL`。停止の精度は約 1 interval) が期限切れの workload を停止します。
 再起動後も有効です。停止すると `stopAt` は消えます。夜間停止も従来どおり動き、先に来た方が workload を止めます。
-古いバージョンが書いた state には `stopAt` が無く「自動停止なし」として扱われます。`RECONCILE_INTERVAL=0` では
+古いバージョンが書いた state には `stopAt` が無く「自動停止なし」として扱われます。同じ state は[ステータス](#ステータス)用に `startedBy` と `startedAt` も記録します。`RECONCILE_INTERVAL=0` では
 自動停止は動きません。
 
 既定値は ScaledObject の annotation で workload ごとに指定でき、無ければ環境変数を使います。
@@ -390,6 +417,25 @@ curl -X POST "http://workload-knocker.workload-knocker.svc:8080/api/v1/start" \
 | `403` | 現在の `OPERATION_MODE` では許可されない操作 |
 | `503` | `API_TOKEN` 未設定のため API は無効 |
 
+
+### `GET /api/v1/workloads`
+
+`api` subject が start または stop できる workload を、`env`、`namespace`、`name` 順に、controller のメモリ上の状態から返します
+(クラスタ呼び出しなし)。どの動作モードでも利用できます。常に `200` で JSON オブジェクトを返し、見えるものがなければ空配列です。
+
+```json
+{"workloads": [
+  {"env": "stg", "namespace": "my-namespace", "name": "a", "kind": "Deployment", "state": "running",
+   "startedBy": "ci-bot", "startedAt": "2026-11-08T09:00:00Z", "stopAt": "2026-11-08T12:00:00Z"},
+  {"env": "stg", "namespace": "my-namespace", "name": "b", "kind": "Deployment", "state": "stopped",
+   "startedBy": "", "startedAt": null, "stopAt": null}
+]}
+```
+
+`state` は `running` または `stopped` です。`startedBy`、`startedAt`、`stopAt` は現在の実行を表します。停止中の workload は
+`startedBy` が空で時刻は `null`、起動時刻が不明なら `startedAt` が `null`、自動停止がなければ `stopAt` が `null` です。
+チャットの表示と違い workload ごとの一覧 (merge なし) のため、一部起動中の状態はありません。
+`401` / `503` で拒否されたリクエストは、監査イベントが workload の操作を表すものなので監査ログには出力しません。
 
 ### `POST /api/v1/start`
 

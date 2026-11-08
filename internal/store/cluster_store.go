@@ -41,6 +41,7 @@ type ClusterStore struct {
 	state     k8s.StateRepository
 	targets   k8s.ScaleTargetReader // nil: newly discovered workloads start as stopped
 	metrics   metrics.MetricsManager
+	now       func() time.Time
 	workloads map[string]*model.Workload // key: "namespace/name"
 }
 
@@ -59,6 +60,7 @@ func NewClusterStore(c config.Cluster, scaledObj k8s.ScaledObjectLister, state k
 		scaledObj: scaledObj,
 		state:     state,
 		metrics:   m,
+		now:       time.Now,
 		workloads: make(map[string]*model.Workload),
 	}
 	for _, o := range opts {
@@ -109,6 +111,7 @@ func (s *ClusterStore) Start(ns, name, user string, stopAt time.Time) bool {
 	}
 	w.Replicas = 1
 	w.StartedBy = user
+	w.StartedAt = s.now()
 	w.StopAt = stopAt
 	entries := s.snapshotEntriesLocked()
 	s.mu.Unlock()
@@ -145,6 +148,7 @@ func (s *ClusterStore) Stop(ns, name string) bool {
 	}
 	w.Replicas = 0
 	w.StartedBy = ""
+	w.StartedAt = time.Time{}
 	w.StopAt = time.Time{}
 	entries := s.snapshotEntriesLocked()
 	s.mu.Unlock()
@@ -175,6 +179,7 @@ func (s *ClusterStore) StopAll(_ context.Context, allow func(namespace, workload
 		}
 		w.Replicas = 0
 		w.StartedBy = ""
+		w.StartedAt = time.Time{}
 		w.StopAt = time.Time{}
 		changed = append(changed, meta{ns: w.Namespace, name: w.Name})
 	}
@@ -424,6 +429,7 @@ func (s *ClusterStore) restoreLocked(entries map[string]k8s.StateEntry) {
 		}
 		w.Replicas = entry.Replicas
 		w.StartedBy = entry.StartedBy
+		w.StartedAt = entry.StartedAt
 		w.StopAt = entry.StopAt
 	}
 
@@ -446,6 +452,7 @@ func (s *ClusterStore) snapshotEntriesLocked() map[string]k8s.StateEntry {
 		entries[key] = k8s.StateEntry{
 			Replicas:  w.Replicas,
 			StartedBy: w.StartedBy,
+			StartedAt: w.StartedAt,
 			StopAt:    w.StopAt,
 		}
 	}

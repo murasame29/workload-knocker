@@ -22,6 +22,8 @@ const (
 	kindDurationRetry   = "dr"  // Try again button after an invalid duration: reopens the modal
 	kindDurationModal   = "dm"  // duration modal submission
 	kindExtend          = "ex"  // Extend button of a stop reminder (Token keys the button payload)
+	kindStatusExtend    = "sx"  // Extend 1h button of a status entry (Token keys the button payload)
+	kindStatusStop      = "ss"  // Stop button of a status entry (Token keys the button payload)
 )
 
 // customID is the decoded component identifier: wk1:<kind>:<token>:<arg>.
