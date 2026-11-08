@@ -1,0 +1,16 @@
+apiVersion: v2
+name: workload-knocker
+description: Slack-driven on/off controller for KEDA-scaled Kubernetes workloads
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/murasame29/workload-knocker
+sources:
+  - https://github.com/murasame29/workload-knocker
+annotations:
+  artifacthub.io/license: Apache-2.0
+keywords:
+  - keda
+  - slack
+  - on-demand
+  - kubernetes

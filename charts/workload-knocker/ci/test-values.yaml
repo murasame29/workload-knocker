@@ -1,0 +1,20 @@
+config:
+  inline:
+    controller:
+      namespace: workload-control
+    clusters:
+      - env: stg
+        name: example-staging
+        provider:
+          type: eks
+          eks:
+            region: ap-northeast-1
+        slack:
+          slashCommand: /workload-knocker-stg
+
+slack:
+  secretName: workload-knocker-slack
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/workload-knocker

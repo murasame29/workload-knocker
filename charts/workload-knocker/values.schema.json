@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "required": ["config", "slack"],
+  "properties": {
+    "replicaCount": {"type": "integer", "minimum": 0, "maximum": 1},
+    "image": {
+      "type": "object",
+      "properties": {
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "existingConfigMap": {"type": "string", "maxLength": 253},
+        "key": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[-._a-zA-Z0-9]+$"},
+        "inline": {"type": "object"}
+      }
+    },
+    "slack": {
+      "type": "object",
+      "required": ["secretName", "appTokenKey", "botTokenKey"],
+      "properties": {
+        "secretName": {"type": "string", "minLength": 1, "maxLength": 253},
+        "appTokenKey": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"},
+        "botTokenKey": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"}
+      }
+    }
+  }
+}

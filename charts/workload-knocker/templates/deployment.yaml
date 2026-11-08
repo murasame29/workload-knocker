@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workload-knocker.fullname" . | quote }}
+  labels:
+    {{- include "workload-knocker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "workload-knocker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "workload-knocker.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "workload-knocker.serviceAccountName" . | quote }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: workload-knocker
+          image: {{ include "workload-knocker.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+            - name: CLUSTER_CONFIG_PATH
+              value: /etc/workload-knocker/config.yaml
+            - name: CONTROLLER_NAMESPACE
+              value: {{ .Values.settings.controllerNamespace | quote }}
+            - name: CLUSTER_RECONCILE_TIMEOUT
+              value: {{ .Values.settings.clusterReconcileTimeout | quote }}
+            - name: STOP_ALL_TIMEOUT
+              value: {{ .Values.settings.stopAllTimeout | quote }}
+            - name: SHUTDOWN_TIMEOUT
+              value: {{ .Values.settings.shutdownTimeout | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.settings.logLevel | quote }}
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "slack.secretName is required" .Values.slack.secretName | quote }}
+                  key: {{ .Values.slack.appTokenKey | quote }}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.slack.secretName | quote }}
+                  key: {{ .Values.slack.botTokenKey | quote }}
+            - name: NEW_RELIC_APP_NAME
+              value: {{ .Values.newRelic.appName | quote }}
+            {{- if .Values.newRelic.secretName }}
+            - name: NEW_RELIC_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.newRelic.secretName | quote }}
+                  key: {{ .Values.newRelic.licenseKeyKey | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/workload-knocker/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "workload-knocker.configMapName" . | quote }}
+            defaultMode: 0444
+            items:
+              - key: {{ .Values.config.key | quote }}
+                path: config.yaml
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

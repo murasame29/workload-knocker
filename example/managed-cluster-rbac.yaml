@@ -1,0 +1,48 @@
+# Apply to every managed cluster. Map the controller identity (for EKS, the Access Entry
+# kubernetes_groups) to the group "workload-knocker".
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workload-knocker
+rules:
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: workload-knocker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: workload-knocker
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: workload-knocker
+---
+# State ConfigMap (workload-state) lives in controller.namespace of each managed cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workload-knocker-state
+  namespace: workload-control
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workload-knocker-state
+  namespace: workload-control
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workload-knocker-state
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: workload-knocker

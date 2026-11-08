@@ -1,0 +1,10 @@
+workload-knocker has been installed in namespace {{ .Release.Namespace }}.
+
+Check the controller:
+  kubectl --namespace {{ .Release.Namespace }} get pods -l 'app.kubernetes.io/name={{ include "workload-knocker.name" . }},app.kubernetes.io/instance={{ .Release.Name }}'
+
+The cluster registry is read at startup. Restart the Deployment after changing
+an externally managed ConfigMap:
+  kubectl --namespace {{ .Release.Namespace }} rollout restart deployment/{{ include "workload-knocker.fullname" . }}
+
+/api/v1/* has no authentication. Restrict network access to the Service.

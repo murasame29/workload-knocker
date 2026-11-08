@@ -1,0 +1,117 @@
+name: Helm
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'charts/**'
+      - 'example/values.example.yaml'
+      - 'hack/check_chart_package.sh'
+      - '.github/workflows/helm.yml'
+      - '.github/workflows/chart-release.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'charts/**'
+      - 'example/values.example.yaml'
+      - 'hack/check_chart_package.sh'
+      - '.github/workflows/helm.yml'
+      - '.github/workflows/chart-release.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        helm-version: [v3.21.4, v4.2.4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ matrix.helm-version }}
+
+      - name: Lint chart
+        run: helm lint charts/workload-knocker --strict --values charts/workload-knocker/ci/test-values.yaml
+
+      - name: Render default values
+        run: >-
+          helm template workload-knocker charts/workload-knocker
+          --namespace workload-knocker
+          --values charts/workload-knocker/ci/test-values.yaml
+          > "${RUNNER_TEMP}/default.yaml"
+
+      - name: Render explicit image tag and digest
+        run: |
+          helm template workload-knocker charts/workload-knocker \
+            --values charts/workload-knocker/ci/test-values.yaml \
+            --set-string image.tag=9.9.9-test \
+            > "${RUNNER_TEMP}/tag.yaml"
+          helm template workload-knocker charts/workload-knocker \
+            --values charts/workload-knocker/ci/test-values.yaml \
+            --set-string image.tag=ignored \
+            --set-string image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            > "${RUNNER_TEMP}/digest.yaml"
+
+      - name: Validate documented values
+        run: |
+          helm lint charts/workload-knocker --strict --values example/values.example.yaml
+          helm template workload-knocker charts/workload-knocker \
+            --values example/values.example.yaml > "${RUNNER_TEMP}/example.yaml"
+
+      - name: Assert rendered contract
+        run: |
+          grep --fixed-strings --quiet \
+            'image: "ghcr.io/murasame29/workload-knocker:0.1.0"' "${RUNNER_TEMP}/default.yaml"
+          grep --fixed-strings --quiet \
+            'image: "ghcr.io/murasame29/workload-knocker:9.9.9-test"' "${RUNNER_TEMP}/tag.yaml"
+          grep --fixed-strings --quiet \
+            'image: "ghcr.io/murasame29/workload-knocker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+            "${RUNNER_TEMP}/digest.yaml"
+          grep --fixed-strings --quiet 'name: SLACK_APP_TOKEN' "${RUNNER_TEMP}/default.yaml"
+          if grep --fixed-strings --quiet 'NEW_RELIC_LICENSE_KEY' "${RUNNER_TEMP}/default.yaml"; then
+            echo 'New Relic license key rendered without newRelic.secretName' >&2
+            exit 1
+          fi
+
+      - name: Reject invalid values
+        run: |
+          values=charts/workload-knocker/ci/test-values.yaml
+          if helm lint charts/workload-knocker --strict --values "${values}" \
+            --set-string image.digest=sha256:not-a-digest; then
+            echo 'invalid image digest was accepted' >&2; exit 1
+          fi
+          if helm lint charts/workload-knocker --strict --values "${values}" \
+            --set-string slack.secretName=; then
+            echo 'empty Slack Secret name was accepted' >&2; exit 1
+          fi
+          if helm lint charts/workload-knocker --strict --values "${values}" \
+            --set replicaCount=2; then
+            echo 'multiple replicas were accepted' >&2; exit 1
+          fi
+          if helm template workload-knocker charts/workload-knocker --values "${values}" \
+            --set serviceAccount.create=false; then
+            echo 'missing ServiceAccount name was accepted' >&2; exit 1
+          fi
+
+      - name: Package chart and verify license material
+        shell: bash
+        run: |
+          helm package charts/workload-knocker --destination "${RUNNER_TEMP}"
+          shopt -s nullglob
+          archives=("${RUNNER_TEMP}"/workload-knocker-*.tgz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "expected exactly one packaged chart, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          bash hack/check_chart_package.sh "${archives[0]}" charts/workload-knocker

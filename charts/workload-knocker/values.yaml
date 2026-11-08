@@ -1,0 +1,89 @@
+# The controller holds a Slack Socket Mode connection; keep a single replica.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/murasame29/workload-knocker
+  pullPolicy: IfNotPresent
+  # Empty tag defaults to Chart.appVersion. Digest takes priority over tag.
+  tag: ""
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+config:
+  # Set exactly one of existingConfigMap or inline.
+  existingConfigMap: ""
+  key: config.yaml
+  # Cluster registry (see docs/en/configuration.md). Serialized without template evaluation.
+  inline: {}
+
+slack:
+  # Secret holding the Slack app-level token (xapp-...) and bot token (xoxb-...).
+  secretName: ""
+  appTokenKey: app-token
+  botTokenKey: bot-token
+
+settings:
+  logLevel: info
+  controllerNamespace: workload-control
+  clusterReconcileTimeout: 2s
+  stopAllTimeout: 10s
+  shutdownTimeout: 5s
+
+newRelic:
+  # Optional APM. Leave secretName empty to disable.
+  appName: workload-knocker
+  secretName: ""
+  licenseKeyKey: license-key
+
+service:
+  type: ClusterIP
+  port: 8080
+
+serviceAccount:
+  create: true
+  # Use this for IRSA, e.g. eks.amazonaws.com/role-arn.
+  annotations: {}
+  # Required when create is false.
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+terminationGracePeriodSeconds: 30
+revisionHistoryLimit: 3
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Mount kubeconfig files here when a cluster uses provider.type=kubeconfig.
+extraVolumes: []
+extraVolumeMounts: []
+
+# Prefer valueFrom/secretRef entries instead of literal secrets.
+extraEnv: []
+extraEnvFrom: []

@@ -1,0 +1,13 @@
+# Local development against a kubeconfig context (e.g. kind).
+controller:
+  namespace: workload-control
+clusters:
+  - env: local
+    name: kind-local
+    provider:
+      type: kubeconfig
+      kubeconfig:
+        path: ~/.kube/config
+        context: kind-local
+    slack:
+      slashCommand: /workload-knocker-local
