@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/server"
 )
 
@@ -105,5 +106,32 @@ func TestNewAuthzHolder_UnsetAndNoDefaultFileDisablesAuthorization(t *testing.T)
 	}
 	if h.Policy() != nil {
 		t.Error("policy must be nil (authorization disabled)")
+	}
+}
+
+func TestBuildServer_DiscordFrontendResolves(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfig := writeFile(t, dir, "kubeconfig", testKubeconfig)
+	registry := writeFile(t, dir, "config.yaml", `
+controller: {namespace: workload-control}
+clusters:
+  - env: local
+    name: kind-local
+    provider: {type: kubeconfig, kubeconfig: {path: `+kubeconfig+`}}
+    frontends: {discord: {command: wk-local}}
+`)
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+
+	cfg := &config.Env{HTTPPort: 8080, ClusterConfigPath: registry, AuthzConfigPath: writeFile(t, dir, "authz.yaml", "version: 1\ndefault: allow\n"), APIToken: "t", DiscordBotToken: "test-token"}
+	c, err := BuildServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Invoke(func(fs []frontend.Frontend) {
+		if len(fs) != 1 || fs[0].Name() != "discord" {
+			t.Errorf("frontends = %v, want only discord", fs)
+		}
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

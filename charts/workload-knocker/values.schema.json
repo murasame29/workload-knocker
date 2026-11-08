@@ -68,6 +68,14 @@
         "inline": {"type": "object"}
       }
     },
+    "discord": {
+      "type": "object",
+      "properties": {
+        "secretName": {"type": "string", "maxLength": 253},
+        "botTokenKey": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"},
+        "guildId": {"type": "string", "pattern": "^[0-9]*$"}
+      }
+    },
     "slack": {
       "type": "object",
       "required": ["secretName", "appTokenKey", "botTokenKey"],

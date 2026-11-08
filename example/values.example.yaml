@@ -26,6 +26,11 @@ config:
 slack:
   secretName: workload-knocker-slack
 
+# Optional Discord frontend (also add frontends.discord.command to the registry above).
+# discord:
+#   secretName: workload-knocker-discord
+#   guildId: "123456789012345678"
+
 serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/workload-knocker

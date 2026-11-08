@@ -15,6 +15,8 @@
 | `API_TOKEN` | 空 | `/api/v1/*` の Bearer トークン。空の場合 `/api/v1/*` は `503` (fail closed) |
 | `SLACK_APP_TOKEN` | Slack 利用時のみ必須 | Slack App-level token (`xapp-...`)。いずれかの cluster が `frontends.slack` を設定したときだけ必要 |
 | `SLACK_BOT_TOKEN` | Slack 利用時のみ必須 | Slack Bot token (`xoxb-...`)。いずれかの cluster が `frontends.slack` を設定したときだけ必要 |
+| `DISCORD_BOT_TOKEN` | Discord 利用時のみ必須 | Discord Bot token。いずれかの cluster が `frontends.discord` を設定したときだけ必要 |
+| `DISCORD_GUILD_ID` | 空 | Guild (サーバー) ID。設定するとその guild にコマンドを登録し即時反映されます。空ならグローバル登録 (反映に時間がかかることがあります) |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。
@@ -60,6 +62,7 @@ clusters:
 | `clusters[].provider.kubeconfig.path` | kubeconfig | kubeconfig のパス |
 | `clusters[].provider.kubeconfig.context` | | context。省略時は current-context |
 | `clusters[].frontends.slack.slashCommand` | frontend ごと | Slack App に登録する一意の slash command |
+| `clusters[].frontends.discord.command` | frontend ごと | 一意の Discord slash command 名。1〜32 文字の `a-z` `0-9` `-` `_`、先頭の `/` なし |
 
 各 cluster は `frontends` 配下に少なくとも 1 つの frontend を設定する必要があります。いずれかの cluster が設定した
 frontend だけが有効になり、起動されます。
@@ -122,7 +125,7 @@ rules:
 |---|---|
 | Slack | ユーザー ID と所属ユーザーグループ。ポリシーが参照するグループだけを `usergroups.users.list` で取得し 60 秒キャッシュ。メンバー変更の反映に最大 1 分かかる |
 | REST API | 固定の subject `api` |
-| Discord | スキーマは `users` / `roles` を受け付け、subject 型も user + roles を持つ。Discord アダプタが追加された時点で供給される |
+| Discord | ユーザー ID と、interaction の member データに含まれるロール ID (追加の API 呼び出しなし)。操作のたびに作り直すため、ロール変更は次のクリックから反映。DM にはロールがないため role ルールは適用されない |
 
 グループの取得には bot スコープ `usergroups:read` が必要です (`slack-manifest.yaml` に記載。このスコープ追加前に作成した App は再インストールが必要)。
 `slack.groups` を使うルールがあるときだけ使われます。取得に失敗した場合は warning を出し、そのグループについてはユーザー ID だけで照合します。
@@ -140,6 +143,7 @@ Kubernetes の ConfigMap 更新 (`..data` シンボリックリンクの差し�
   変更した cluster の bootstrap に失敗した場合は旧接続を維持して warning を出します。追加した cluster の bootstrap に失敗した場合は、
   起動時と同様に `cluster_reachable=0` のまま保持します。削除した cluster は slash command の解決から外れ、
   `workload_knocker_activation` と `workload_knocker_cluster_reachable` の系列も削除します。slash command は常に最新の Registry で解決します。
+  Discord: Registry のコマンド集合と登録済みの集合を 15 秒ごとに比較し、変わっていれば application command を再度一括上書きします (失敗はログに出して再試行)。グローバルコマンドはクライアントへの反映が遅れることがあり、guild ID を指定すると即時です。Discord を初めて有効にする変更は再起動が必要です。
 - 認可: 起動後に現れたポリシーファイルは認可を有効にします。ファイルを削除しても直前のポリシーを維持します。
 - 再起動が必要な Registry 変更は明確なエラーで拒否し、旧設定を維持します。`controller.namespace` の変更、
   起動時に有効でなかった frontend の有効化、トークンなしでの有効化が該当します。
@@ -149,6 +153,42 @@ Kubernetes では ConfigMap の変更は kubelet の同期後、通常 1 分程�
 `/etc/workload-knocker` に 1 つの projected volume としてマウントし (`subPath` では更新されません)、どちらの ConfigMap にも
 Pod テンプレートの checksum annotation を付けないため、変更で Pod は再起動しません。`kubectl rollout restart` が必要なのは上記の再起動必須ケースだけです。
 このディレクトリは読み取り専用で chart が管理するため、kubeconfig など追加ファイルは別のパスにマウントしてください。
+
+## Discord
+
+Discord は Gateway (WebSocket) で接続するため、公開 HTTP エンドポイントは不要です。
+
+```yaml
+clusters:
+  - env: stg
+    name: example-staging
+    provider: {type: eks, eks: {region: ap-northeast-1}}
+    frontends:
+      discord:
+        command: workload-knocker-stg
+```
+
+セットアップ:
+
+1. [Discord Developer Portal](https://discord.com/developers/applications) で Application と Bot を作成し、Bot token を Secret (`bot-token`) に保存します。
+2. Privileged Gateway Intent は不要です (`Guilds` intent のみ使用)。
+3. OAuth2 scope `applications.commands` と `bot` で Bot を招待します。`bot` scope に追加の権限は不要です (応答は ephemeral な interaction response のため、メッセージの読み取り・送信権限は使いません)。
+4. `DISCORD_BOT_TOKEN` (chart: `discord.secretName`、任意で `discord.guildId`) を設定します。試用中は guild ID の指定を推奨します (guild コマンドは即時反映、グローバルは遅延)。
+
+起動時に、対象スコープ (guild またはグローバル) の application command を設定済みコマンドで一括上書きします。同スコープの他のコマンドは削除されるため、専用の Application を使ってください。登録に失敗すると (多くは `applications.commands` scope の不足) エラーで起動に失敗します。
+
+フロー (すべて ephemeral メッセージで、コンポーネントは実行したユーザーのみ操作できます):
+
+1. slash command で namespace のセレクトメニューを表示します (1 ページ 25 件、前へ/次へボタン)。
+2. namespace を選ぶと workload の複数選択を表示します (1 ページ 25 件)。起動中のエントリは選択済みで、ページをまたいで選択が保持されます。`-api` / `-app` / `-worker` の merge と 🟢 / 🟡 / 🔴 は Slack と同じです。
+3. **Apply** で Plan のプレビューと **Confirm** / **Cancel** を表示します。
+4. **Confirm** で適用し、メッセージを結果に置き換えます。操作ユーザーは Discord のユーザー ID です。
+
+操作ごとの状態 (選択・ページ・Plan) はメモリ上に保持し、各コンポーネントの `custom_id` (`wk1:<kind>:<token>:<arg>`、100 文字制限内) のランダムなトークンで引きます。15 分操作がないと失効し、再起動でも失われるため、その場合は再度コマンドの実行を促します。このため controller は 1 レプリカで運用してください。3 秒以内の応答は、時間のかかる手順 (コマンド開始と Confirm) を defer して満たします。
+
+認可と動作モードは Slack と同じです。ユーザー ID またはロールで操作できない namespace / workload は一覧に出ず、Plan と Confirm でポリシーを再判定するため、古いメニュー・ロール変更・偽造したコンポーネントでアクセスを広げることはできません。`scheduled-stop` では停止不可の注記を表示し、stop は Slack と同じメッセージで拒否します。ルールは `subjects.discord.users` (ユーザー ID) と `subjects.discord.roles` (ロール ID) で書きます。ID のコピーには Discord の開発者モードを有効にします。
+
+chart は `discord.secretName` を設定したときだけ `DISCORD_BOT_TOKEN` と `DISCORD_GUILD_ID` を出力します。`slack.secretName` は引き続き必須です。
 
 ## managed cluster へのアクセス
 

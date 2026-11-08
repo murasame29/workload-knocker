@@ -281,6 +281,17 @@ func TestRestartRequired(t *testing.T) {
 	if err := RestartRequired(cur, cur, &config.Env{}); err == nil || !strings.Contains(err.Error(), "SLACK_APP_TOKEN") {
 		t.Errorf("missing tokens: err = %v", err)
 	}
+	// Discord is a known frontend too: enabling it live needs a restart, changing its commands does not.
+	discord := func(cmd string) *config.Config {
+		return load("controller: {namespace: workload-control}\nclusters:\n  - env: stg\n    name: stg-cluster\n    provider: {type: eks, eks: {region: ap-northeast-1}}\n    frontends: {slack: {slashCommand: /wk-stg}, discord: {command: " + cmd + "}}\n")
+	}
+	if err := RestartRequired(cur, discord("knock"), env); err == nil || !strings.Contains(err.Error(), "discord") {
+		t.Errorf("enabling Discord live: err = %v", err)
+	}
+	denv := &config.Env{SlackAppToken: "a", SlackBotToken: "b", DiscordBotToken: "d"}
+	if err := RestartRequired(discord("knock"), discord("knock2"), denv); err != nil {
+		t.Errorf("changing a Discord command must not need a restart: %v", err)
+	}
 }
 
 func TestAuthzReload(t *testing.T) {

@@ -15,6 +15,8 @@
 | `API_TOKEN` | empty | Bearer token for `/api/v1/*`. When empty, `/api/v1/*` responds `503` (fail closed) |
 | `SLACK_APP_TOKEN` | required with Slack | Slack app-level token (`xapp-...`); required only when a cluster configures `frontends.slack` |
 | `SLACK_BOT_TOKEN` | required with Slack | Slack bot token (`xoxb-...`); required only when a cluster configures `frontends.slack` |
+| `DISCORD_BOT_TOKEN` | required with Discord | Discord bot token; required only when a cluster configures `frontends.discord` |
+| `DISCORD_GUILD_ID` | empty | Guild (server) ID. Set: commands are registered for that guild and appear instantly. Empty: commands are registered globally (can take a while to propagate) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
 `WORKLOAD_ENV` is deprecated and ignored (a warning is logged).
@@ -60,6 +62,7 @@ clusters:
 | `clusters[].provider.kubeconfig.path` | kubeconfig | Kubeconfig file path |
 | `clusters[].provider.kubeconfig.context` | no | Context; defaults to current-context |
 | `clusters[].frontends.slack.slashCommand` | one frontend | Unique slash command registered in the Slack app |
+| `clusters[].frontends.discord.command` | one frontend | Unique Discord slash command name: 1-32 characters of `a-z`, `0-9`, `-`, `_`, without a leading slash |
 
 Each cluster must configure at least one entry under `frontends`. A frontend is enabled when at least
 one cluster configures it, and only enabled frontends are started.
@@ -124,7 +127,7 @@ The mode applies on top of the policy. The API side is described in [Operation m
 |---|---|
 | Slack | The user ID plus the usergroups the user belongs to. Only usergroups named in the policy are looked up (`usergroups.users.list`) and cached for 60 seconds, so a membership change can take up to a minute to apply. |
 | REST API | The fixed subject `api`. |
-| Discord | The schema accepts `users` and `roles` and the subject type carries user plus roles; the Discord adapter supplies them when it lands. |
+| Discord | The user ID plus the role IDs Discord sends with the interaction's member data (no extra API call). Built again on every interaction, so a role change applies on the next click. Role rules do not apply in DMs, which carry no roles. |
 
 Usergroup lookups need the `usergroups:read` bot scope (listed in `slack-manifest.yaml`; reinstall the app
 if you created it before this scope was added). It is only used when a rule lists `slack.groups`. If a lookup fails the controller logs a warning and matches the user ID only for that
@@ -144,6 +147,7 @@ Events are debounced for 500 ms. `workload_knocker_config_reload_total{target,re
   and a warning is logged. An added cluster that fails to bootstrap is kept with `cluster_reachable=0`, like at
   startup. Removed clusters disappear from slash command resolution and their `workload_knocker_activation`
   and `workload_knocker_cluster_reachable` series are deleted. Slash commands are resolved against the live registry.
+  Discord: the controller compares the registry's command set with the registered one every 15 seconds and, when it changed, bulk-overwrites the application commands again (a failure is logged and retried). Global commands can take longer to appear in clients; a guild ID makes this instant. Enabling Discord for the first time still needs a restart.
 - Authorization: a policy file that appears after startup enables authorization. Deleting the file keeps the last policy.
 - A registry change that needs a restart is rejected with a clear error and the old config stays: changing
   `controller.namespace`, enabling a frontend that was not enabled at startup, or enabling one without its tokens.
@@ -154,6 +158,42 @@ therefore mounts the registry and the policy as one projected volume at `/etc/wo
 mount would never update) and does not put a checksum annotation on the Pod template for either ConfigMap, so a
 change does not restart the Pod. Run `kubectl rollout restart` only for the restart-required cases above.
 Because that directory is read-only and managed, mount extra files such as kubeconfigs elsewhere.
+
+## Discord
+
+Discord runs over the gateway websocket, so no public HTTP endpoint is needed.
+
+```yaml
+clusters:
+  - env: stg
+    name: example-staging
+    provider: {type: eks, eks: {region: ap-northeast-1}}
+    frontends:
+      discord:
+        command: workload-knocker-stg
+```
+
+Setup:
+
+1. In the [Discord Developer Portal](https://discord.com/developers/applications) create an application and a bot, and copy the bot token into a Secret (`bot-token`).
+2. No privileged gateway intents are needed. The bot uses the `Guilds` intent only.
+3. Invite the bot with the OAuth2 scopes `applications.commands` and `bot`. The `bot` scope needs no extra permissions: replies are ephemeral interaction responses, so the bot does not need to read or send messages.
+4. Set `DISCORD_BOT_TOKEN` (chart: `discord.secretName`, optional `discord.guildId`). Prefer a guild ID while testing: guild commands are available immediately, global commands are not.
+
+On startup the controller bulk-overwrites the application commands of the chosen scope (guild or global) with the configured commands. Other commands of the same application in that scope are removed, so use a dedicated application. Startup fails with a clear error when registration fails (usually a missing `applications.commands` scope).
+
+Flow (every message is ephemeral and only the invoking user can use its components):
+
+1. The slash command shows a namespace select menu (25 per page, Previous/Next buttons).
+2. Choosing a namespace shows the workloads in a multi-select (25 per page). Running entries are pre-selected; selections are kept across pages. Merging of `-api` / `-app` / `-worker` and the 🟢 / 🟡 / 🔴 markers match Slack.
+3. **Apply** shows the plan preview with **Confirm** and **Cancel**.
+4. **Confirm** applies the plan and replaces the message with the result. The operation user is the Discord user ID.
+
+Per-interaction state (selection, page, plan) is kept in memory, keyed by a random token in each component's `custom_id` (`wk1:<kind>:<token>:<arg>`, well under Discord's 100-character limit). Flows expire after 15 minutes without use and are lost on restart; the message then asks the user to run the command again. This is why the controller must keep a single replica. The controller answers each interaction within Discord's 3-second window by deferring the slow steps (command start and Confirm).
+
+Authorization and operation mode apply as for Slack. Namespaces and workloads the user's ID or roles may not operate are not listed, and plan and Confirm check the policy again, so a stale menu, a changed role or a forged component cannot widen access. In `scheduled-stop` mode the menu says stopping is disabled and a stop is rejected with the same message as Slack. Rules use `subjects.discord.users` (user IDs) and `subjects.discord.roles` (role IDs); enable Discord Developer Mode to copy IDs.
+
+The chart renders `DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID` only when `discord.secretName` is set. The chart still requires `slack.secretName`.
 
 ## Managed cluster access
 

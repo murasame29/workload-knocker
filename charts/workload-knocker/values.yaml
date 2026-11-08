@@ -1,4 +1,4 @@
-# The controller holds a Slack Socket Mode connection; keep a single replica.
+# The controller holds chat gateway connections (Slack Socket Mode, Discord); keep a single replica.
 replicaCount: 1
 
 image:
@@ -34,6 +34,14 @@ slack:
   secretName: ""
   appTokenKey: app-token
   botTokenKey: bot-token
+
+# Discord frontend. Rendered only when secretName is set; configure frontends.discord in the registry too.
+discord:
+  # Secret holding the Discord bot token.
+  secretName: ""
+  botTokenKey: bot-token
+  # Guild (server) ID for instant guild-scoped commands. Empty registers global commands.
+  guildId: ""
 
 # Operation mode (OPERATION_MODE env of the controller).
 #   full           API can start, stop and stop-all. nightlyStop is optional.
