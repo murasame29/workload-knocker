@@ -16,6 +16,7 @@
 | `internal/model/` | 共有の workload 型 |
 | `internal/reconcile/` | バックグラウンド reconcile ループ (tick ごとのフック付き) |
 | `internal/reload/` | Registry とポリシーのホットリロード |
+| `internal/rollout/` | Confirm 後の rollout 進捗追跡 (ポーリング、状態遷移、cluster ごとの reader) |
 | `internal/server/` | Lifecycle マネージャ、HTTP サーバー、Slack / Discord bot |
 | `internal/store/` | cluster ごと・複数 cluster の workload 状態 |
 | `internal/version/` | ビルド情報 (`Version` `Commit` `BuildDate`) |

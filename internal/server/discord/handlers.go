@@ -13,6 +13,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
+	"github.com/murasame29/workload-knocker/internal/rollout"
 )
 
 const (
@@ -332,5 +333,22 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 		return
 	}
 	res := b.svc.Apply(req)
-	b.edit(i, text(resultText(userID, cl, req.Namespace, res)))
+	targets := b.svc.RolloutTargets(req, res)
+	if !b.svc.RolloutEnabled() || len(targets) == 0 {
+		b.edit(i, text(resultText(userID, cl, req.Namespace, res)))
+		return
+	}
+	b.watchers.Add(1)
+	go func() {
+		defer b.watchers.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in discord rollout watch", slog.Any("recover", r))
+			}
+		}()
+		timeout := b.svc.RolloutTimeout()
+		b.svc.Track(b.watchCtx, targets, func(snap rollout.Snapshot) {
+			b.edit(i, text(progressText(userID, cl, req.Namespace, res, snap, timeout)))
+		})
+	}()
 }

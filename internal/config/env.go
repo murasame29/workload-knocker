@@ -41,6 +41,13 @@ type Env struct {
 	// ShutdownTimeout is the timeout server.Manager gives each Lifecycle.Shutdown.
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"5s"`
 
+	// RolloutPollInterval is how often a scale target is polled after Confirm.
+	RolloutPollInterval time.Duration `env:"ROLLOUT_POLL_INTERVAL" envDefault:"5s"`
+
+	// RolloutWatchTimeout is when rollout progress gives up. It must stay below
+	// MaxRolloutWatchTimeout, the lifetime of a Discord interaction token.
+	RolloutWatchTimeout time.Duration `env:"ROLLOUT_WATCH_TIMEOUT" envDefault:"10m"`
+
 	// OperationMode is full | scheduled-stop | off; see internal/mode.
 	OperationMode mode.Mode `env:"OPERATION_MODE" envDefault:"full"`
 
@@ -57,6 +64,20 @@ type Env struct {
 	DiscordGuildID  string `env:"DISCORD_GUILD_ID"`
 
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
+}
+
+// MaxRolloutWatchTimeout is the exclusive upper bound of ROLLOUT_WATCH_TIMEOUT.
+const MaxRolloutWatchTimeout = 15 * time.Minute
+
+// ValidateRollout checks the rollout progress settings.
+func (e *Env) ValidateRollout() error {
+	if e.RolloutPollInterval < time.Second {
+		return fmt.Errorf("ROLLOUT_POLL_INTERVAL must be at least 1s, got %s", e.RolloutPollInterval)
+	}
+	if e.RolloutWatchTimeout <= e.RolloutPollInterval || e.RolloutWatchTimeout >= MaxRolloutWatchTimeout {
+		return fmt.Errorf("ROLLOUT_WATCH_TIMEOUT must be greater than ROLLOUT_POLL_INTERVAL and below %s (Discord interaction token lifetime), got %s", MaxRolloutWatchTimeout, e.RolloutWatchTimeout)
+	}
+	return nil
 }
 
 // ValidateFrontends checks the env required by the frontends enabled in the registry.
@@ -77,6 +98,10 @@ func LoadEnv() (*Env, error) {
 
 	cfg := &Env{}
 	if err := env.Parse(cfg); err != nil {
+		return nil, fmt.Errorf("config.LoadEnv: %w", err)
+	}
+
+	if err := cfg.ValidateRollout(); err != nil {
 		return nil, fmt.Errorf("config.LoadEnv: %w", err)
 	}
 

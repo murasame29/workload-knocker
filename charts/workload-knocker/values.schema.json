@@ -42,7 +42,9 @@
     "settings": {
       "type": "object",
       "properties": {
-        "reconcileInterval": {"type": "string", "pattern": "^(0|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"}
+        "reconcileInterval": {"type": "string", "pattern": "^(0|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"},
+        "rolloutPollInterval": {"type": "string", "pattern": "^([0-9]+(ns|us|ms|s|m|h))+$"},
+        "rolloutWatchTimeout": {"type": "string", "pattern": "^([0-9]+(ns|us|ms|s|m|h))+$"}
       }
     },
     "replicaCount": {"type": "integer", "minimum": 0, "maximum": 1},

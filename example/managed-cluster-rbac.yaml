@@ -8,10 +8,14 @@ rules:
   - apiGroups: ["keda.sh"]
     resources: ["scaledobjects"]
     verbs: ["get", "list", "watch"]
-  # Scale targets are read once when a ScaledObject is first discovered.
+  # Scale targets are read once when a ScaledObject is first discovered, and polled for rollout
+  # progress after Confirm (replica status and the pods behind them).
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "deployments/scale", "statefulsets/scale"]
-    verbs: ["get"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

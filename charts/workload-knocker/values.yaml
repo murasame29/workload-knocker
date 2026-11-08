@@ -102,6 +102,9 @@ settings:
   clusterReconcileTimeout: 2s
   reconcileInterval: 1m
   stopAllTimeout: 10s
+  # Rollout progress shown after Confirm. The timeout must stay below 15m (Discord interaction token lifetime).
+  rolloutPollInterval: 5s
+  rolloutWatchTimeout: 10m
   shutdownTimeout: 5s
 
 service:

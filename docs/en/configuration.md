@@ -10,6 +10,8 @@
 | `CLUSTER_RECONCILE_TIMEOUT` | `2s` | Reconcile timeout when a chat (Slack or Discord) command arrives |
 | `RECONCILE_INTERVAL` | `1m` | Period of the background ScaledObject reconcile of every cluster, bounded per cluster by `CLUSTER_RECONCILE_TIMEOUT`. `0` disables it; a negative value fails at startup. Chart: `settings.reconcileInterval` |
 | `STOP_ALL_TIMEOUT` | `10s` | Per-cluster timeout for `/api/v1/stop-all` |
+| `ROLLOUT_POLL_INTERVAL` | `5s` | How often the scale targets are polled after Confirm (at least `1s`) |
+| `ROLLOUT_WATCH_TIMEOUT` | `10m` | When rollout progress gives up and shows the last observed reason. Must be above the poll interval and below `15m` (Discord interaction token lifetime); other values fail at startup |
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
 | `AUTHZ_CONFIG_PATH` | unset | Authorization policy file. Unset and no file at `/etc/workload-knocker/authz.yaml`: authorization is disabled and everyone may start and stop everything (one info log at startup). Set, or the default file exists: it must parse or startup fails (see [Authorization](#authorization)) |
@@ -200,7 +202,7 @@ Flow (every message is ephemeral and only the invoking user can use its componen
 1. The slash command shows a namespace select menu (25 per page, Previous/Next buttons).
 2. Choosing a namespace shows the workloads in a multi-select (25 per page). Running entries are pre-selected; selections are kept across pages. Merging of `-api` / `-app` / `-worker` and the 🟢 / 🟡 / 🔴 markers match Slack.
 3. **Apply** shows the plan preview with **Confirm** and **Cancel**.
-4. **Confirm** applies the plan and replaces the message with the result. The operation user is the Discord user ID.
+4. **Confirm** applies the plan and replaces the message with the result. The operation user is the Discord user ID. The message then follows the [rollout](#rollout-progress).
 
 Per-interaction state (selection, page, plan) is kept in memory, keyed by a random token in each component's `custom_id` (`wk1:<kind>:<token>:<arg>`, well under Discord's 100-character limit). Flows expire after 15 minutes without use and are lost on restart; the message then asks the user to run the command again. This is why the controller must keep a single replica. The controller answers each interaction within Discord's 3-second window by deferring the slow steps (command start and Confirm).
 
@@ -213,8 +215,9 @@ The chart renders `DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID` only when `discord.
 For EKS, run the controller with an IAM role (IRSA), register that role in the cluster's
 Access Entry with `kubernetes_groups: ["workload-knocker"]`, and apply
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml). The controller
-needs `get/list/watch` on `scaledobjects`, `get` on `deployments`, `statefulsets` and their `scale`
-subresources, and `get/create/update` on ConfigMaps in `controller.namespace`.
+needs `get/list/watch` on `scaledobjects`, `get/list` on `deployments`, `statefulsets`, their
+`scale` subresources and `pods` (discovery and rollout progress), and `get/create/update` on
+ConfigMaps in `controller.namespace`.
 
 When a ScaledObject is discovered that has no entry in the state ConfigMap, the controller reads
 its scale target (`Deployment` by default, or `StatefulSet`). A target with replicas above 0 is
@@ -224,6 +227,25 @@ registered as stopped. Saved state always wins over the live replicas.
 
 ScaledObjects are re-listed every `RECONCILE_INTERVAL`: a new one gets its series within one
 interval and a deleted one loses it, without a chat command.
+
+## Rollout progress
+
+After Confirm the controller polls the scale target (`Deployment` or `StatefulSet`) of every
+applied workload in its cluster every `ROLLOUT_POLL_INTERVAL` and reports one line per workload:
+
+| Line | Meaning |
+|---|---|
+| `⏳ name starting...` | Started; `readyReplicas` has not reached `spec.replicas` yet. This also covers the delay until KEDA changes the replica count (its polling interval). |
+| `✅ name started` | `readyReplicas >= spec.replicas` and above 0. |
+| `⏳ name stopping...` | Stop requested; replicas or ready pods remain. |
+| `⏹ name stopped` | `spec.replicas` is 0 and no pod is ready. |
+| `⚠ name not ready after 10m (0/1 ready, ImagePullBackOff)` | Not started within `ROLLOUT_WATCH_TIMEOUT`. The reason is the last `ready/desired` plus a waiting or scheduling reason of the pods (for example `ImagePullBackOff`, `Unschedulable`). A stop that did not finish reads `still running after 10m`. |
+| `ℹ name applied (progress is not tracked for kind ...)` | The scale target kind is not a Deployment or StatefulSet. |
+
+- Discord edits the interaction response, at most once per poll interval and only when a line changed. Interaction tokens last 15 minutes, hence the `ROLLOUT_WATCH_TIMEOUT` limit.
+- Slack posts the result message with `⏳` lines right away, then one more ephemeral message with the final state once every workload is final. Slack cannot edit a `chat.postEphemeral` message, and the modal submission has no `response_url`, so there are no intermediate updates.
+- Progress is in memory: a controller restart ends it, and the last message stays as it was.
+- The controller keeps polling when a read fails (for example missing RBAC) and shows the error as the reason on timeout.
 
 ## Slack workload modal
 

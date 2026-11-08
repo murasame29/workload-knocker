@@ -166,3 +166,34 @@ func TestLoadEnv_ReconcileInterval(t *testing.T) {
 		t.Fatal("negative interval: want error")
 	}
 }
+
+func TestLoadEnv_RolloutDefaults(t *testing.T) {
+	e, err := LoadEnv()
+	if err != nil || e.RolloutPollInterval != 5*time.Second || e.RolloutWatchTimeout != 10*time.Minute {
+		t.Fatalf("got %+v, %v; want 5s / 10m", e, err)
+	}
+}
+
+func TestLoadEnv_RolloutValidation(t *testing.T) {
+	cases := []struct{ name, interval, timeout string }{
+		{"timeout at the Discord token lifetime", "5s", "15m"},
+		{"timeout above the Discord token lifetime", "5s", "20m"},
+		{"interval below 1s", "100ms", "10m"},
+		{"timeout not above interval", "30s", "30s"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("ROLLOUT_POLL_INTERVAL", c.interval)
+			t.Setenv("ROLLOUT_WATCH_TIMEOUT", c.timeout)
+			if _, err := LoadEnv(); err == nil || !strings.Contains(err.Error(), "ROLLOUT_") {
+				t.Fatalf("got %v, want a ROLLOUT_* error", err)
+			}
+		})
+	}
+
+	t.Setenv("ROLLOUT_POLL_INTERVAL", "2s")
+	t.Setenv("ROLLOUT_WATCH_TIMEOUT", "14m")
+	if _, err := LoadEnv(); err != nil {
+		t.Fatalf("valid values rejected: %v", err)
+	}
+}

@@ -84,6 +84,11 @@ type Bot struct {
 	registered []string
 	flows      *flowStore
 
+	// watchCtx ends rollout watches on shutdown; watchers lets Shutdown wait for them.
+	watchCtx    context.Context
+	watchCancel context.CancelFunc
+	watchers    sync.WaitGroup
+
 	sem       chan struct{}
 	inflight  sync.WaitGroup
 	done      chan struct{}
@@ -93,7 +98,7 @@ type Bot struct {
 
 // New creates a Bot. cfg.DiscordGuildID empty registers commands globally.
 // registry is read on every request so hot reload applies; az is the live authorization policy.
-func New(cfg *config.Env, store model.WorkloadStore, registry registry, az *authz.Holder, m metrics.MetricsManager) (*Bot, error) {
+func New(cfg *config.Env, store model.WorkloadStore, registry registry, az *authz.Holder, m metrics.MetricsManager, opts ...frontend.Option) (*Bot, error) {
 	if cfg.DiscordBotToken == "" {
 		return nil, errors.New("discordbot.New: DISCORD_BOT_TOKEN is required")
 	}
@@ -103,11 +108,12 @@ func New(cfg *config.Env, store model.WorkloadStore, registry registry, az *auth
 	}
 	s.Identify.Intents = discordgo.IntentsGuilds
 	svc := frontend.NewService(store, m, cfg.ClusterReconcileTimeout,
-		frontend.WithAuthorizer(az), frontend.WithMode(cfg.OperationMode))
+		append([]frontend.Option{frontend.WithAuthorizer(az), frontend.WithMode(cfg.OperationMode)}, opts...)...)
 	return newBot(liveSession{s}, svc, registry, cfg.DiscordGuildID), nil
 }
 
 func newBot(sess session, svc *frontend.Service, registry registry, guildID string) *Bot {
+	watchCtx, watchCancel := context.WithCancel(context.Background())
 	return &Bot{
 		sess:     sess,
 		svc:      svc,
@@ -116,6 +122,9 @@ func newBot(sess session, svc *frontend.Service, registry registry, guildID stri
 		flows:    newFlowStore(flowTTL),
 		sem:      make(chan struct{}, maxConcurrentEvents),
 		done:     make(chan struct{}),
+
+		watchCtx:    watchCtx,
+		watchCancel: watchCancel,
 	}
 }
 
@@ -198,6 +207,7 @@ func (b *Bot) commands(names []string) []*discordgo.ApplicationCommand {
 
 // Shutdown waits for in-flight handlers, then closes the gateway connection (idempotent).
 func (b *Bot) Shutdown(ctx context.Context) error {
+	b.watchCancel()
 	select {
 	case <-b.done:
 	case <-ctx.Done():
@@ -206,6 +216,7 @@ func (b *Bot) Shutdown(ctx context.Context) error {
 	waited := make(chan struct{})
 	go func() {
 		b.inflight.Wait()
+		b.watchers.Wait()
 		close(waited)
 	}()
 	select {

@@ -40,6 +40,10 @@ type Bot struct {
 	sem chan struct{}
 	// inflight is a WaitGroup that lets Shutdown wait for in-flight handlers.
 	inflight sync.WaitGroup
+	// watchCtx ends rollout watches on shutdown; watchers lets Shutdown wait for them.
+	watchCtx    context.Context
+	watchCancel context.CancelFunc
+	watchers    sync.WaitGroup
 	// done lets Shutdown wait for the receive loop started by Start to stop.
 	done chan struct{}
 }
@@ -47,7 +51,7 @@ type Bot struct {
 // New creates a Bot.
 // registry resolves clusters from Slack slash commands on every request, so hot reload applies.
 // az is the live authorization policy.
-func New(cfg *config.Env, store model.WorkloadStore, registry config.Resolver, az *authz.Holder, m metrics.MetricsManager) (*Bot, error) {
+func New(cfg *config.Env, store model.WorkloadStore, registry config.Resolver, az *authz.Holder, m metrics.MetricsManager, opts ...frontend.Option) (*Bot, error) {
 	if cfg.SlackAppToken == "" || cfg.SlackBotToken == "" {
 		return nil, fmt.Errorf("slackbot.New: SLACK_APP_TOKEN and SLACK_BOT_TOKEN are required")
 	}
@@ -58,11 +62,14 @@ func New(cfg *config.Env, store model.WorkloadStore, registry config.Resolver, a
 	)
 	socket := socketmode.New(client)
 
+	watchCtx, watchCancel := context.WithCancel(context.Background())
 	return &Bot{
-		client: client,
-		socket: socket,
+		watchCtx:    watchCtx,
+		watchCancel: watchCancel,
+		client:      client,
+		socket:      socket,
 		svc: frontend.NewService(store, m, cfg.ClusterReconcileTimeout,
-			frontend.WithAuthorizer(az), frontend.WithMode(cfg.OperationMode)),
+			append([]frontend.Option{frontend.WithAuthorizer(az), frontend.WithMode(cfg.OperationMode)}, opts...)...),
 		registry: registry,
 		authz:    az,
 		groups:   newGroupCache(client, groupCacheTTL),
@@ -96,6 +103,7 @@ func (b *Bot) Start(ctx context.Context) error {
 // Shutdown waits for the receive loop to stop and in-flight handlers to finish.
 // Disconnecting Socket Mode is handled by socketmode.Client when the ctx passed to Start is canceled.
 func (b *Bot) Shutdown(ctx context.Context) error {
+	b.watchCancel()
 	// Wait for the receive loop to stop
 	select {
 	case <-b.done:
@@ -106,6 +114,7 @@ func (b *Bot) Shutdown(ctx context.Context) error {
 	doneCh := make(chan struct{})
 	go func() {
 		b.inflight.Wait()
+		b.watchers.Wait()
 		close(doneCh)
 	}()
 	select {

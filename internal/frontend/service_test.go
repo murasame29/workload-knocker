@@ -12,6 +12,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/mode"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/rollout"
 )
 
 // authzFunc adapts a function to authz.Authorizer.
@@ -299,5 +300,38 @@ func TestService_ScheduledStopHidesStopOnlyWorkloads(t *testing.T) {
 		WithAuthorizer(onlyWorkloads([]authz.Action{authz.ActionStop}, "stop-only")), WithMode(mode.ScheduledStop))
 	if l := svc.List(alice, "stg", "labs", Limits{}); len(l.Entries) != 0 {
 		t.Errorf("entries = %+v, want none: chat cannot stop in scheduled-stop", l.Entries)
+	}
+}
+
+func TestService_RolloutTargets(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{workloads: []*model.Workload{
+		{Name: "web", Namespace: "labs", Kind: "Deployment"},
+		{Name: "db", Namespace: "labs", Kind: "StatefulSet", Replicas: 1},
+	}}
+	svc := NewService(store, metrics.New(), 0, WithAuthorizer(allowAll))
+	res := ApplyResult{Applied: []Applied{
+		{Action: ActionStart, Name: "web", Found: true},
+		{Action: ActionStop, Name: "db", Found: true},
+		{Action: ActionStart, Name: "missing", Found: false},
+	}}
+
+	got := svc.RolloutTargets(ApplyRequest{Cluster: config.Cluster{Env: "stg"}, Namespace: "labs"}, res)
+
+	if len(got) != 2 || got[0].Kind != "Deployment" || got[0].Direction != rollout.Start || got[1].Kind != "StatefulSet" || got[1].Direction != rollout.Stop || got[1].Env != "stg" {
+		t.Errorf("targets = %+v", got)
+	}
+}
+
+func TestService_TrackIsNoopWithoutTracker(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(&fakeStore{}, metrics.New(), 0)
+	called := false
+	svc.Track(context.Background(), []rollout.Target{{Name: "a"}}, func(rollout.Snapshot) { called = true })
+
+	if called || svc.RolloutEnabled() || svc.RolloutTimeout() != 0 {
+		t.Errorf("called=%v enabled=%v timeout=%v, want a no-op", called, svc.RolloutEnabled(), svc.RolloutTimeout())
 	}
 }

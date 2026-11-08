@@ -10,6 +10,8 @@
 | `CLUSTER_RECONCILE_TIMEOUT` | `2s` | チャット (Slack / Discord) コマンド受信時の Reconcile タイムアウト |
 | `RECONCILE_INTERVAL` | `1m` | 全 cluster の ScaledObject をバックグラウンドで再同期する間隔。cluster ごとに `CLUSTER_RECONCILE_TIMEOUT` で打ち切ります。`0` で無効、負の値は起動時エラー。Chart: `settings.reconcileInterval` |
 | `STOP_ALL_TIMEOUT` | `10s` | `/api/v1/stop-all` の cluster ごとのタイムアウト |
+| `ROLLOUT_POLL_INTERVAL` | `5s` | Confirm 後に scale target をポーリングする間隔 (`1s` 以上) |
+| `ROLLOUT_WATCH_TIMEOUT` | `10m` | rollout の進捗表示を打ち切り、最後に観測した理由を表示するまでの時間。ポーリング間隔より大きく `15m` 未満 (Discord の interaction token の寿命) である必要があり、範囲外は起動時にエラーになります |
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
 | `OPERATION_MODE` | `full` | `full` / `scheduled-stop` / `off`。それ以外は起動時エラー ([動作モード](#動作モードと夜間停止)) |
 | `AUTHZ_CONFIG_PATH` | 未設定 | 認可ポリシーファイル。未設定かつ `/etc/workload-knocker/authz.yaml` も無い場合は認可無効 (全員が全 workload を start/stop 可。起動時に info ログ 1 件)。設定時、または既定ファイルが存在する場合はパースできないと起動失敗 ([認可](#認可)) |
@@ -194,7 +196,7 @@ clusters:
 1. slash command で namespace のセレクトメニューを表示します (1 ページ 25 件、前へ/次へボタン)。
 2. namespace を選ぶと workload の複数選択を表示します (1 ページ 25 件)。起動中のエントリは選択済みで、ページをまたいで選択が保持されます。`-api` / `-app` / `-worker` の merge と 🟢 / 🟡 / 🔴 は Slack と同じです。
 3. **Apply** で Plan のプレビューと **Confirm** / **Cancel** を表示します。
-4. **Confirm** で適用し、メッセージを結果に置き換えます。操作ユーザーは Discord のユーザー ID です。
+4. **Confirm** で適用し、メッセージを結果に置き換えます。操作ユーザーは Discord のユーザー ID です。続けて[rollout の進捗](#rollout-の進捗)を表示します。
 
 操作ごとの状態 (選択・ページ・Plan) はメモリ上に保持し、各コンポーネントの `custom_id` (`wk1:<kind>:<token>:<arg>`、100 文字制限内) のランダムなトークンで引きます。15 分操作がないと失効し、再起動でも失われるため、その場合は再度コマンドの実行を促します。このため controller は 1 レプリカで運用してください。3 秒以内の応答は、時間のかかる手順 (コマンド開始と Confirm) を defer して満たします。
 
@@ -208,7 +210,8 @@ EKS では controller に IAM Role (IRSA) を付与し、その Role を Access 
 `kubernetes_groups: ["workload-knocker"]` で登録して、
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml) を適用します。
 必要な権限は `scaledobjects` の `get/list/watch`、`deployments` / `statefulsets` とその `scale`
-サブリソースの `get`、`controller.namespace` の ConfigMap の `get/create/update` です。
+サブリソースおよび `pods` の `get/list` (検出と rollout の進捗表示)、`controller.namespace` の
+ConfigMap の `get/create/update` です。
 
 state ConfigMap にエントリが無い ScaledObject を新たに検出すると、scale target
 (既定は `Deployment`、または `StatefulSet`) の replicas を読みます。replicas が 0 より大きければ
@@ -218,6 +221,25 @@ scale down させません。0 の場合や読み取りに失敗した場合 (wa
 
 ScaledObject は `RECONCILE_INTERVAL` ごとに再取得します。新規作成された ScaledObject は 1 interval 以内に
 series が作られ、削除されたものは series が消えます (チャットコマンド不要)。
+
+## rollout の進捗
+
+Confirm の後、適用した各 workload の scale target (`Deployment` または `StatefulSet`) を
+`ROLLOUT_POLL_INTERVAL` ごとに managed cluster でポーリングし、workload ごとに 1 行で表示します。
+
+| 表示 | 意味 |
+|---|---|
+| `⏳ name starting...` | start 済みで `readyReplicas` が `spec.replicas` に達していない状態。KEDA が replica 数を変えるまでの待ち (KEDA の polling interval) も含みます。 |
+| `✅ name started` | `readyReplicas >= spec.replicas` かつ 0 より大きい。 |
+| `⏳ name stopping...` | stop 済みで replica または ready な Pod が残っている。 |
+| `⏹ name stopped` | `spec.replicas` が 0 で ready な Pod がない。 |
+| `⚠ name not ready after 10m (0/1 ready, ImagePullBackOff)` | `ROLLOUT_WATCH_TIMEOUT` 内に起動しなかった。理由は最後の `ready/desired` と Pod の waiting / スケジューリング理由 (`ImagePullBackOff`、`Unschedulable` など)。停止が終わらなかった場合は `still running after 10m` になります。 |
+| `ℹ name applied (progress is not tracked for kind ...)` | scale target の kind が Deployment / StatefulSet ではない。 |
+
+- Discord は interaction response を編集します。編集は poll 間隔につき最大 1 回で、行が変わったときだけです。interaction token は 15 分有効なので `ROLLOUT_WATCH_TIMEOUT` に上限があります。
+- Slack は `⏳` 行入りの結果メッセージをすぐ投稿し、全 workload が確定した時点で最終状態を ephemeral メッセージでもう 1 件投稿します。`chat.postEphemeral` のメッセージは編集できず、モーダル送信には `response_url` もないため、途中経過の更新はありません。
+- 進捗はメモリ上で追跡します。controller が再起動すると追跡は終わり、最後のメッセージはそのまま残ります。
+- 読み取りに失敗しても (RBAC 不足など) ポーリングを続け、タイムアウト時にそのエラーを理由として表示します。
 
 ## Slack の workload モーダル
 
