@@ -9,5 +9,6 @@ clusters:
       kubeconfig:
         path: ~/.kube/config
         context: kind-local
-    slack:
-      slashCommand: /workload-knocker-local
+    frontends:
+      slack:
+        slashCommand: /workload-knocker-local

@@ -12,8 +12,8 @@
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
 | `OPERATION_MODE` | `full` | `full` / `scheduled-stop` / `off`。それ以外は起動時エラー ([動作モード](#動作モードと夜間停止)) |
 | `API_TOKEN` | 空 | `/api/v1/*` の Bearer トークン。空の場合 `/api/v1/*` は `503` (fail closed) |
-| `SLACK_APP_TOKEN` | 必須 | Slack App-level token (`xapp-...`) |
-| `SLACK_BOT_TOKEN` | 必須 | Slack Bot token (`xoxb-...`) |
+| `SLACK_APP_TOKEN` | Slack 利用時のみ必須 | Slack App-level token (`xapp-...`)。いずれかの cluster が `frontends.slack` を設定したときだけ必要 |
+| `SLACK_BOT_TOKEN` | Slack 利用時のみ必須 | Slack Bot token (`xoxb-...`)。いずれかの cluster が `frontends.slack` を設定したときだけ必要 |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。
@@ -33,8 +33,9 @@ clusters:
       eks:
         region: ap-northeast-1
         assumeRoleArn: arn:aws:iam::123456789012:role/cross-account   # 任意
-    slack:
-      slashCommand: /workload-knocker-stg
+    frontends:
+      slack:
+        slashCommand: /workload-knocker-stg
   - env: local
     name: kind-local
     provider:
@@ -42,8 +43,9 @@ clusters:
       kubeconfig:
         path: /etc/workload-knocker/kubeconfig
         context: kind-local                                             # 任意
-    slack:
-      slashCommand: /workload-knocker-local
+    frontends:
+      slack:
+        slashCommand: /workload-knocker-local
 ```
 
 | フィールド | 必須 | 説明 |
@@ -56,7 +58,13 @@ clusters:
 | `clusters[].provider.eks.assumeRoleArn` | | cross-account 時に AssumeRole する Role |
 | `clusters[].provider.kubeconfig.path` | kubeconfig | kubeconfig のパス |
 | `clusters[].provider.kubeconfig.context` | | context。省略時は current-context |
-| `clusters[].slack.slashCommand` | ◯ | Slack App に登録する一意の slash command |
+| `clusters[].frontends.slack.slashCommand` | frontend ごと | Slack App に登録する一意の slash command |
+
+各 cluster は `frontends` 配下に少なくとも 1 つの frontend を設定する必要があります。いずれかの cluster が設定した
+frontend だけが有効になり、起動されます。
+
+> **破壊的変更:** 従来の `clusters[].slack.slashCommand` は `clusters[].frontends.slack.slashCommand` に移動しました。
+> 旧 `slack` キーは起動時にエラーになります。
 
 ## managed cluster へのアクセス
 

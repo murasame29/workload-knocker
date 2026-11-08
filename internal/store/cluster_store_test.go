@@ -83,10 +83,10 @@ func (f *fakeMetrics) Handler() http.Handler { return http.NotFoundHandler() }
 // testCluster returns a test Cluster fixture keyed by env. Cluster.Name is "<env>-cluster".
 func testCluster(env string) config.Cluster {
 	return config.Cluster{
-		Env:      env,
-		Name:     env + "-cluster",
-		Provider: config.ClusterProvider{Type: config.ProviderTypeEKS, EKS: &config.ProviderEKS{Region: "ap-northeast-1"}},
-		Slack:    config.ClusterSlack{SlashCommand: "/workload-knocker-" + env},
+		Env:       env,
+		Name:      env + "-cluster",
+		Provider:  config.ClusterProvider{Type: config.ProviderTypeEKS, EKS: &config.ProviderEKS{Region: "ap-northeast-1"}},
+		Frontends: config.ClusterFrontends{Slack: &config.SlackFrontend{SlashCommand: "/workload-knocker-" + env}},
 	}
 }
 

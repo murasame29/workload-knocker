@@ -11,6 +11,7 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/api"
 	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/frontend"
 	k8sauth "github.com/murasame29/workload-knocker/internal/k8s/auth"
 	"github.com/murasame29/workload-knocker/internal/k8s/auth/eks"
 	"github.com/murasame29/workload-knocker/internal/k8s/auth/kubeconfig"
@@ -51,7 +52,14 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 
 		// Cluster Registry: loads and validates the read-only mounted YAML at startup
 		func(cfg *config.Env) (*config.Config, error) {
-			return config.Load(cfg.ClusterConfigPath)
+			reg, err := config.Load(cfg.ClusterConfigPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := cfg.ValidateFrontends(reg); err != nil {
+				return nil, err
+			}
+			return reg, nil
 		},
 
 		// MultiStore, consuming k8sauth.Multiplexer as RestConfigSource
@@ -70,12 +78,16 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 				api.Authenticate(cfg.APIToken, api.RequireStop(cfg.OperationMode, stopAll)),
 				api.Authenticate(cfg.APIToken, start))
 		},
-		// Slack Bot (server.Lifecycle)
-		slackbot.New,
+		// Chat frontends: only those configured by at least one cluster are enabled
+		newFrontends,
 
 		// Lifecycle Manager: single entry point to start and stop from main
-		func(cfg *config.Env, h *httpserver.Server, b *slackbot.Bot) *server.Manager {
-			return server.NewManager(cfg.ShutdownTimeout, h, b)
+		func(cfg *config.Env, h *httpserver.Server, fs []frontend.Frontend) *server.Manager {
+			components := []server.Lifecycle{h}
+			for _, f := range fs {
+				components = append(components, f)
+			}
+			return server.NewManager(cfg.ShutdownTimeout, components...)
 		},
 	}
 
@@ -86,6 +98,18 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	}
 
 	return c, nil
+}
+
+func newFrontends(cfg *config.Env, reg *config.Config, ws model.WorkloadStore, m metrics.MetricsManager) ([]frontend.Frontend, error) {
+	var fs []frontend.Frontend
+	if reg.FrontendEnabled(config.FrontendSlack) {
+		b, err := slackbot.New(cfg, ws, reg, m)
+		if err != nil {
+			return nil, err
+		}
+		fs = append(fs, b)
+	}
+	return fs, nil
 }
 
 func newAWSConfig() (aws.Config, error) {

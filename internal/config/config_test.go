@@ -31,8 +31,9 @@ clusters:
       type: eks
       eks:
         region: ap-northeast-1
-    slack:
-      slashCommand: /workload-knocker-stg
+    frontends:
+      slack:
+        slashCommand: /workload-knocker-stg
   - env: dev
     name: example-development
     provider:
@@ -40,8 +41,9 @@ clusters:
       eks:
         region: ap-northeast-1
         assumeRoleArn: arn:aws:iam::123456789012:role/x
-    slack:
-      slashCommand: /workload-knocker-dev
+    frontends:
+      slack:
+        slashCommand: /workload-knocker-dev
 `
 	path := writeYAML(t, "config.yaml", yamlBody)
 	cfg, err := Load(path)
@@ -117,8 +119,9 @@ clusters:
       type: eks
       eks:
         region: ap-northeast-1
-    slack:
-      slashCommand: /cmd
+    frontends:
+      slack:
+        slashCommand: /cmd
 `
 	cfg, err := Parse([]byte(yamlBody))
 	if err != nil {

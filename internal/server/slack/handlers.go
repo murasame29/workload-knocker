@@ -1,19 +1,17 @@
 package slackbot
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/frontend"
 )
 
 const (
@@ -66,26 +64,16 @@ func modalTitle(cl config.Cluster) string {
 	return string(runes[:slackModalTitleMaxLen])
 }
 
-// sortedWorkloads returns a copy of workloads sorted by name.
-// The store returns map iteration order, which would make checkbox split boundaries and the
-// truncation target differ between render and submit; fixing the order keeps them identical.
-//
-// groupWorkloads fixes the order of whole entries by Key; this function orders members
-// inside a merged entry (the suffix display order).
-func sortedWorkloads(ws []*model.Workload) []*model.Workload {
-	out := slices.Clone(ws)
-	slices.SortFunc(out, func(a, b *model.Workload) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-	return out
-}
+// listLimits are the Slack Modal limits handed to the frontend service.
+var listLimits = frontend.Limits{PageSize: checkboxMaxOptions, MaxEntries: maxWorkloadOptions}
 
-// workloadLabel returns the label of a standalone workload checkbox.
-func workloadLabel(w *model.Workload) string {
-	if w.Replicas > 0 {
-		return fmt.Sprintf("🟢 %s (%d pod)", w.Name, w.Replicas)
+// truncateOptionText fits Slack option text within the character limit.
+func truncateOptionText(s string) string {
+	runes := []rune(s)
+	if len(runes) <= slackOptionTextMaxLen {
+		return s
 	}
-	return fmt.Sprintf("🔴 %s", w.Name)
+	return string(runes[:slackOptionTextMaxLen])
 }
 
 // namespaceInputBlock builds the namespace static_select block.
@@ -129,28 +117,29 @@ func namespaceInputBlock(namespaces []string, selected string) *slack.InputBlock
 	return block
 }
 
-// workloadCheckboxBlocks splits display entries into input blocks of checkboxMaxOptions each.
+// workloadCheckboxBlocks renders one input block per page of entries.
 // block_id / action_id are blockSelectWorkloads / actionSelectWorkloads plus a sequence number
 // (e.g. "block_workloads_0"); submit collects them by prefix. The option value is only the
 // representative workload name (option values are capped at 75 chars, so no full tuple).
-func workloadCheckboxBlocks(namespace string, groups []workloadGroup) []slack.Block {
-	blocks := make([]slack.Block, 0, (len(groups)+checkboxMaxOptions-1)/checkboxMaxOptions)
+func workloadCheckboxBlocks(namespace string, listing frontend.Listing) []slack.Block {
+	pages := listing.Pages()
+	blocks := make([]slack.Block, 0, len(pages))
+	total := len(listing.Entries)
 
-	for start := 0; start < len(groups); start += checkboxMaxOptions {
-		end := min(start+checkboxMaxOptions, len(groups))
-		chunk := groups[start:end]
-		idx := start / checkboxMaxOptions
+	start := 0
+	for idx, chunk := range pages {
+		end := start + len(chunk)
 
 		options := make([]*slack.OptionBlockObject, 0, len(chunk))
 		var initialOptions []*slack.OptionBlockObject
 		for _, g := range chunk {
 			opt := slack.NewOptionBlockObject(
 				g.Value(),
-				slack.NewTextBlockObject("plain_text", g.label(), false, false),
+				slack.NewTextBlockObject("plain_text", truncateOptionText(g.Label()), false, false),
 				nil,
 			)
 			options = append(options, opt)
-			if g.anyRunning() {
+			if g.AnyRunning() {
 				initialOptions = append(initialOptions, opt)
 			}
 		}
@@ -165,7 +154,7 @@ func workloadCheckboxBlocks(namespace string, groups []workloadGroup) []slack.Bl
 
 		// When split, number the label so the block range is clear.
 		label := fmt.Sprintf("Workloads (%s)", namespace)
-		if len(groups) > checkboxMaxOptions {
+		if total > checkboxMaxOptions {
 			label = fmt.Sprintf("Workloads (%s) %d-%d", namespace, start+1, end)
 		}
 
@@ -183,6 +172,7 @@ func workloadCheckboxBlocks(namespace string, groups []workloadGroup) []slack.Bl
 		)
 		block.Optional = true
 		blocks = append(blocks, block)
+		start = end
 	}
 
 	return blocks
@@ -274,14 +264,9 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 	slog.Info("slash command received", slog.String("user.name", cmd.UserName), slog.String("command", cmd.Command), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
 
 	// Reflect the latest ScaledObject state on demand.
-	// On failure, continue with the cached registry.
-	reconcileCtx, cancel := context.WithTimeout(context.Background(), b.cfg.ClusterReconcileTimeout)
-	defer cancel()
-	if err := b.store.Reconcile(reconcileCtx, cl.Env); err != nil {
-		slog.Warn("ScaledObject reconcile failed, continuing with cache", slog.String("error.message", err.Error()))
-	}
+	b.svc.Reconcile(cl.Env)
 
-	namespaces := b.store.Namespaces(cl.Env)
+	namespaces := b.svc.Namespaces(cl.Env)
 
 	// If no namespace is registered, return an error without opening the Modal
 	if len(namespaces) == 0 {
@@ -370,35 +355,30 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 
 	slog.Info("namespace selected", slog.String("user.name", callback.User.Name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", namespace))
 
-	// Merge workloads sharing a base name that differ only by suffix (api/app/worker) into one entry.
-	// Splitting, display limit and diff all operate on these entries.
-	groups := groupWorkloads(b.store.WorkloadsByNamespace(cl.Env, namespace))
-
-	// Entries beyond the Modal block limit cannot be shown, so cut them off and warn.
-	truncated := 0
-	if len(groups) > maxWorkloadOptions {
-		truncated = len(groups) - maxWorkloadOptions
-		groups = groups[:maxWorkloadOptions]
+	// Entries beyond the Modal block limit cannot be shown, so the service cuts them off; warn.
+	listing := b.svc.List(cl.Env, namespace, listLimits)
+	truncated := listing.Truncated
+	if truncated > 0 {
 		slog.Warn("display entries exceed the Modal limit; some are hidden",
 			slog.String("cluster.env", cl.Env), slog.String("namespace", namespace),
 			slog.Int("limit", maxWorkloadOptions), slog.Int("truncated", truncated))
 	}
 
 	// namespace select (keep the selected state; sorted a-z)
-	nsBlock := namespaceInputBlock(b.store.Namespaces(cl.Env), namespace)
+	nsBlock := namespaceInputBlock(b.svc.Namespaces(cl.Env), namespace)
 
 	// workload checkboxes (running ones are initially selected; sorted a-z)
 	// Slack checkboxes allow 10 options max, so split across multiple blocks.
 	blocks := make([]slack.Block, 0, 2+maxWorkloadCheckboxBlocks)
 	blocks = append(blocks, nsBlock)
-	blocks = append(blocks, workloadCheckboxBlocks(namespace, groups)...)
+	blocks = append(blocks, workloadCheckboxBlocks(namespace, listing)...)
 
 	if truncated > 0 {
 		blocks = append(blocks, slack.NewSectionBlock(
 			slack.NewTextBlockObject("mrkdwn", fmt.Sprintf(
 				":warning: There are %d targets, exceeding the Slack Modal display limit (%d). "+
 					"The remaining %d cannot be changed on this screen.",
-				len(groups)+truncated, maxWorkloadOptions, truncated,
+				listing.Total(), maxWorkloadOptions, truncated,
 			), false, false),
 			nil, nil,
 		))
@@ -406,7 +386,7 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 
 	// Add namespace and rendered count (post-merge entries) to private_metadata (keep cluster)
 	meta.Namespace = namespace
-	meta.Rendered = len(groups)
+	meta.Rendered = len(listing.Entries)
 	metaBytes, _ := json.Marshal(meta)
 
 	modal := slack.ModalViewRequest{
@@ -455,43 +435,16 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 	// Compare with the current state; rebuild with the same order and merge unit as render.
 	// Entries not rendered in the Modal are excluded from the diff; otherwise
 	// "not shown = unchecked = stop" would stop running workloads that are off screen.
-	groups := renderedGroups(
-		groupWorkloads(b.store.WorkloadsByNamespace(cl.Env, meta.Namespace)),
-		meta.Rendered,
-	)
+	listing := b.svc.List(cl.Env, meta.Namespace, frontend.Limits{PageSize: checkboxMaxOptions})
+	plan := frontend.BuildPlan(cl, meta.Namespace, frontend.Rendered(listing.Entries, meta.Rendered), selectedSet)
+	toStart, toStop := plan.ToStart, plan.ToStop
 
-	var toStart, toStop []string
-	var previewLines []string
-
-	for _, g := range groups {
-		// A merged entry is represented by one member name; treat it as ON if any member name is
-		// selected, so it still works when the representative disappears on reconcile.
-		wantRunning := false
-		for _, name := range g.Names() {
-			if selectedSet[name] {
-				wantRunning = true
-				break
-			}
-		}
-
-		var startNames, stopNames []string
-		for _, w := range g.Members {
-			isRunning := w.Replicas > 0
-			switch {
-			case wantRunning && !isRunning:
-				toStart = append(toStart, w.Name)
-				startNames = append(startNames, w.Name)
-			case !wantRunning && isRunning:
-				toStop = append(toStop, w.Name)
-				stopNames = append(stopNames, w.Name)
-			}
-		}
-
-		if len(startNames) > 0 {
-			previewLines = append(previewLines, fmt.Sprintf("🟢 %s: stopped → *start*", g.changeLabel(startNames)))
-		}
-		if len(stopNames) > 0 {
-			previewLines = append(previewLines, fmt.Sprintf("🔴 %s: running → *stop*", g.changeLabel(stopNames)))
+	previewLines := make([]string, 0, len(plan.Changes))
+	for _, c := range plan.Changes {
+		if c.Action == frontend.ActionStart {
+			previewLines = append(previewLines, fmt.Sprintf("🟢 %s: stopped → *start*", c.Label))
+		} else {
+			previewLines = append(previewLines, fmt.Sprintf("🔴 %s: running → *stop*", c.Label))
 		}
 	}
 
@@ -588,37 +541,27 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 
 	envUpper := strings.ToUpper(cl.Env)
 	user := callback.User.Name
+
+	res := b.svc.Apply(frontend.ApplyRequest{
+		Cluster:   cl,
+		Namespace: meta.Namespace,
+		User:      user,
+		ToStart:   meta.ToStart,
+		ToStop:    meta.ToStop,
+	})
 	var resultLines []string
-
-	// ToStart / ToStop are workload names only; cluster / namespace come from meta.
-	ns := meta.Namespace
-
-	for _, name := range meta.ToStart {
-		if name == "" {
-			continue
+	for _, a := range res.Applied {
+		if a.Action == frontend.ActionStart {
+			resultLines = append(resultLines, fmt.Sprintf("🟢 %s → start", a.Name))
+		} else {
+			resultLines = append(resultLines, fmt.Sprintf("🔴 %s → stop", a.Name))
 		}
-		begin := time.Now()
-		ok := b.store.Start(meta.Cluster, ns, name, user)
-		b.metrics.ObserveOperation(cl.Env, cl.Name, "start", resultLabel(ok), time.Since(begin))
-		resultLines = append(resultLines, fmt.Sprintf("🟢 %s → start", name))
-		slog.Info("workload started", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", ns), slog.String("user.name", user))
-	}
-
-	for _, name := range meta.ToStop {
-		if name == "" {
-			continue
-		}
-		begin := time.Now()
-		ok := b.store.Stop(meta.Cluster, ns, name)
-		b.metrics.ObserveOperation(cl.Env, cl.Name, "stop", resultLabel(ok), time.Since(begin))
-		resultLines = append(resultLines, fmt.Sprintf("🔴 %s → stop", name))
-		slog.Info("workload stopped", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", ns), slog.String("user.name", user))
 	}
 
 	resultHeader := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)",
 		callback.User.ID, envUpper, cl.Name, meta.Namespace,
 	)
-	if len(meta.ToStart) > 0 {
+	if res.AutoStop {
 		resultLines = append(resultLines, "⏰ Auto-stop: today 22:00 JST")
 	}
 
@@ -627,12 +570,4 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 	); err != nil {
 		slog.Error("failed to send result message", slog.String("error.message", err.Error()))
 	}
-}
-
-// resultLabel maps a store Start/Stop outcome to the metrics result label.
-func resultLabel(ok bool) string {
-	if ok {
-		return "success"
-	}
-	return "not_found"
 }

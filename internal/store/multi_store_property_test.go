@@ -28,9 +28,9 @@ func buildMultiStoreFromFixture(t *rapid.T, clusterCount int) (*MultiStore, []co
 				Type: config.ProviderTypeEKS,
 				EKS:  &config.ProviderEKS{Region: "ap-northeast-1"},
 			},
-			Slack: config.ClusterSlack{
+			Frontends: config.ClusterFrontends{Slack: &config.SlackFrontend{
 				SlashCommand: "/workload-knocker-" + env,
-			},
+			}},
 		})
 	}
 	// ensure env / slashCommand uniqueness
@@ -38,20 +38,20 @@ func buildMultiStoreFromFixture(t *rapid.T, clusterCount int) (*MultiStore, []co
 	seenSC := map[string]bool{}
 	uniq := make([]config.Cluster, 0, len(clusters))
 	for _, c := range clusters {
-		if seenEnv[c.Env] || seenSC[c.Slack.SlashCommand] {
+		if seenEnv[c.Env] || seenSC[c.Frontends.Slack.SlashCommand] {
 			continue
 		}
 		seenEnv[c.Env] = true
-		seenSC[c.Slack.SlashCommand] = true
+		seenSC[c.Frontends.Slack.SlashCommand] = true
 		uniq = append(uniq, c)
 	}
 	if len(uniq) == 0 {
 		uniq = []config.Cluster{
 			{
-				Env:      "fixture",
-				Name:     "fixture-cluster",
-				Provider: config.ClusterProvider{Type: config.ProviderTypeEKS, EKS: &config.ProviderEKS{Region: "ap-northeast-1"}},
-				Slack:    config.ClusterSlack{SlashCommand: "/fixture"},
+				Env:       "fixture",
+				Name:      "fixture-cluster",
+				Provider:  config.ClusterProvider{Type: config.ProviderTypeEKS, EKS: &config.ProviderEKS{Region: "ap-northeast-1"}},
+				Frontends: config.ClusterFrontends{Slack: &config.SlackFrontend{SlashCommand: "/fixture"}},
 			},
 		}
 	}

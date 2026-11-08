@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -39,9 +40,18 @@ type Env struct {
 	// APIToken is the bearer token for /api/v1/*; empty disables the API (fail closed).
 	APIToken string `env:"API_TOKEN"`
 
-	SlackAppToken string `env:"SLACK_APP_TOKEN,required"`
-	SlackBotToken string `env:"SLACK_BOT_TOKEN,required"`
-	LogLevel      string `env:"LOG_LEVEL"              envDefault:"info"`
+	// SlackAppToken / SlackBotToken are required only when the Slack frontend is enabled.
+	SlackAppToken string `env:"SLACK_APP_TOKEN"`
+	SlackBotToken string `env:"SLACK_BOT_TOKEN"`
+	LogLevel      string `env:"LOG_LEVEL"       envDefault:"info"`
+}
+
+// ValidateFrontends checks the env required by the frontends enabled in the registry.
+func (e *Env) ValidateFrontends(reg *Config) error {
+	if reg.FrontendEnabled(FrontendSlack) && (e.SlackAppToken == "" || e.SlackBotToken == "") {
+		return errors.New("SLACK_APP_TOKEN and SLACK_BOT_TOKEN are required when a cluster configures frontends.slack")
+	}
+	return nil
 }
 
 // LoadEnv builds Env from environment variables (reading a .env file if present).
