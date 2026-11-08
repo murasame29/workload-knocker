@@ -4,11 +4,13 @@
 |---|---|
 | `cmd/server/` | Entry point (`main.go`), including the `--version` flag |
 | `internal/api/` | REST handlers (`/api/v1/start`, `/api/v1/stop-all`) and bearer auth middleware |
+| `internal/audit/` | Audit event schema and recorder (see [audit-log.md](audit-log.md)) |
 | `internal/authz/` | Authorization policy parsing and evaluation |
 | `internal/config/` | Environment variables and the cluster registry |
 | `internal/container/` | Dependency wiring |
 | `internal/frontend/` | Chat-independent start/stop flow shared by Slack and Discord |
 | `internal/k8s/` | Cluster clients, EKS and kubeconfig auth, `ScaledObject` access, state ConfigMap |
+| `internal/logging/` | slog setup: `timestamp` / `message` keys, `service.*` attributes |
 | `internal/metrics/` | Prometheus metrics, including `workload_knocker_activation` |
 | `internal/mode/` | `OPERATION_MODE` |
 | `internal/model/` | Shared workload types |

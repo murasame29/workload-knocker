@@ -111,7 +111,6 @@ func (s *ClusterStore) Start(ns, name, user string) bool {
 	s.persist(entries)
 	s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, 1)
 
-	slog.Info("workload started", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns), slog.String("action", "start"), slog.String("user.name", user))
 	return true
 }
 
@@ -131,7 +130,6 @@ func (s *ClusterStore) Stop(ns, name string) bool {
 	s.persist(entries)
 	s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, 0)
 
-	slog.Info("workload stopped", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns), slog.String("action", "stop"))
 	return true
 }
 
@@ -159,7 +157,6 @@ func (s *ClusterStore) StopAll(_ context.Context, allow func(namespace, workload
 	}
 	slices.Sort(skipped)
 	entries := s.snapshotEntriesLocked()
-	count := len(s.workloads)
 	s.mu.Unlock()
 
 	s.persist(entries)
@@ -167,7 +164,6 @@ func (s *ClusterStore) StopAll(_ context.Context, allow func(namespace, workload
 		s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, mw.ns, mw.name, 0)
 	}
 
-	slog.Info("all workloads stopped", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("action", "stop-all"), slog.Int("count", count), slog.Int("stopped", stopped), slog.Int("skipped", len(skipped)))
 	return stopped, skipped, nil
 }
 

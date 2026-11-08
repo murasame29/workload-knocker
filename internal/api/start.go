@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
@@ -23,11 +25,12 @@ type StartHandler struct {
 	store   model.WorkloadStore
 	metrics metrics.MetricsManager
 	authz   authz.Authorizer
+	audit   audit.Recorder
 }
 
 // NewStartHandler constructs a StartHandler; az is checked per workload for the api subject.
 func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer) *StartHandler {
-	return &StartHandler{store: store, metrics: m, authz: az}
+	return &StartHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog()}
 }
 
 // startRequest is the JSON schema of the POST body.
@@ -107,6 +110,14 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cluster := h.clusterName(req.Env)
+	requestID := audit.NewRequestID()
+	record := func(name string, outcome audit.Outcome, err error) {
+		h.audit.Record(r.Context(), audit.Record{
+			Event: audit.WorkloadStart, Outcome: outcome, Source: audit.SourceAPI,
+			RequestID: requestID, EndUser: audit.EndUserAPI,
+			Cluster: cluster, Namespace: req.Namespace, WorkloadName: name, WorkloadKind: h.kind(req.Env, req.Namespace, name), Err: err,
+		})
+	}
 	started := make([]string, 0, len(req.Workloads))
 	notFound := make([]string, 0)
 	forbidden := make([]string, 0)
@@ -114,8 +125,7 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Authorize before touching the store so a refusal never reveals whether the workload exists.
 		if !h.authz.Allowed(authz.APISubject, req.Env, req.Namespace, name, authz.ActionStart) {
 			forbidden = append(forbidden, name)
-			slog.WarnContext(r.Context(), "start refused by authorization policy",
-				slog.String("cluster.env", req.Env), slog.String("namespace", req.Namespace), slog.String("workload", name))
+			record(name, audit.Denied, nil)
 			continue
 		}
 		begin := time.Now()
@@ -123,12 +133,11 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if ok {
 			h.metrics.ObserveOperation(req.Env, cluster, "start", "success", time.Since(begin))
 			started = append(started, name)
-			slog.InfoContext(r.Context(), "workload started via REST API",
-				slog.String("cluster.env", req.Env), slog.String("namespace", req.Namespace),
-				slog.String("workload", name), slog.String("user.name", user))
+			record(name, audit.Success, nil)
 		} else {
 			h.metrics.ObserveOperation(req.Env, cluster, "start", "not_found", time.Since(begin))
 			notFound = append(notFound, name)
+			record(name, audit.Failure, errWorkloadNotFound)
 		}
 	}
 
@@ -146,10 +155,6 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		message = "some workloads were started; others were not found or not authorized"
 	}
 
-	slog.InfoContext(r.Context(), "start request completed",
-		slog.String("cluster.env", req.Env), slog.String("namespace", req.Namespace),
-		slog.Int("total_started", len(started)), slog.Int("not_found", len(notFound)), slog.Int("forbidden", len(forbidden)))
-
 	resp := startResponse{
 		Env:          req.Env,
 		Namespace:    req.Namespace,
@@ -166,6 +171,18 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "failed to encode response",
 			slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
 	}
+}
+
+var errWorkloadNotFound = errors.New("workload not found")
+
+// kind returns the workload kind, or "" when the store does not know the workload.
+func (h *StartHandler) kind(env, ns, name string) string {
+	for _, w := range h.store.WorkloadsByNamespace(env, ns) {
+		if w.Name == name {
+			return w.Kind
+		}
+	}
+	return ""
 }
 
 // clusterName returns the cluster name of env, or "" when unknown.

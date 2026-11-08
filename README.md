@@ -29,6 +29,7 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
   managed cluster, so it survives restarts.
 - `POST /api/v1/start` and `POST /api/v1/stop-all` provide the same operations over HTTP.
   See [HTTP API](docs/en/configuration.md#http-api).
+- Every start and stop writes a structured audit event to stdout; see [Audit log](docs/en/audit-log.md).
 
 Your `ScaledObject` needs a Prometheus trigger such as:
 

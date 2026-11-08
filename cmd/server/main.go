@@ -13,6 +13,7 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/container"
+	"github.com/murasame29/workload-knocker/internal/logging"
 	"github.com/murasame29/workload-knocker/internal/server"
 	httpserver "github.com/murasame29/workload-knocker/internal/server/http"
 	"github.com/murasame29/workload-knocker/internal/store"
@@ -31,8 +32,9 @@ func run() int {
 		return 0
 	}
 
-	logOpts := &slog.HandlerOptions{}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, logOpts)))
+	vi := version.Get()
+	level := new(slog.LevelVar)
+	slog.SetDefault(logging.New(os.Stdout, level, vi.Version))
 
 	cfg, err := config.LoadEnv()
 	if err != nil {
@@ -43,20 +45,17 @@ func run() int {
 	// Set log level from LOG_LEVEL.
 	switch strings.ToLower(cfg.LogLevel) {
 	case "debug":
-		logOpts.Level = slog.LevelDebug
+		level.Set(slog.LevelDebug)
 	case "warn":
-		logOpts.Level = slog.LevelWarn
+		level.Set(slog.LevelWarn)
 	case "error":
-		logOpts.Level = slog.LevelError
+		level.Set(slog.LevelError)
 	default:
-		logOpts.Level = slog.LevelInfo
+		level.Set(slog.LevelInfo)
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, logOpts)))
 
-	vi := version.Get()
 	slog.Info("starting workload-knocker",
 		slog.String("log.level", cfg.LogLevel),
-		slog.String("service.version", vi.Version),
 		slog.String("vcs.revision", vi.Commit),
 		slog.String("build.date", vi.BuildDate),
 	)

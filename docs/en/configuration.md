@@ -18,7 +18,7 @@
 | `SLACK_BOT_TOKEN` | required with Slack | Slack bot token (`xoxb-...`); required only when a cluster configures `frontends.slack` |
 | `DISCORD_BOT_TOKEN` | required with Discord | Discord bot token; required only when a cluster configures `frontends.discord` |
 | `DISCORD_GUILD_ID` | empty | Guild (server) ID. Set: commands are registered for that guild and appear instantly. Empty: commands are registered globally (can take a while to propagate) |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs are JSON with `timestamp` / `message` keys; see [Audit log](audit-log.md) |
 
 `WORKLOAD_ENV` is deprecated and ignored (a warning is logged).
 
@@ -253,7 +253,7 @@ kubectl create secret generic workload-knocker-api \
 ```
 
 `nightlyStop` renders a CronJob that sends `POST /api/v1/stop-all` to the in-cluster Service with
-`Authorization: Bearer <token>` and fails on any non-2xx response.
+`Authorization: Bearer <token>` and `X-Workload-Knocker-Source: nightly-stop` (the audit log source), and fails on any non-2xx response.
 
 | Value | Default |
 | --- | --- |

@@ -18,7 +18,7 @@
 | `SLACK_BOT_TOKEN` | Slack 利用時のみ必須 | Slack Bot token (`xoxb-...`)。いずれかの cluster が `frontends.slack` を設定したときだけ必要 |
 | `DISCORD_BOT_TOKEN` | Discord 利用時のみ必須 | Discord Bot token。いずれかの cluster が `frontends.discord` を設定したときだけ必要 |
 | `DISCORD_GUILD_ID` | 空 | Guild (サーバー) ID。設定するとその guild にコマンドを登録し即時反映されます。空ならグローバル登録 (反映に時間がかかることがあります) |
-| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`。ログは `timestamp` / `message` キーの JSON です ([監査ログ](audit-log.md)) |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。
 
@@ -247,7 +247,7 @@ kubectl create secret generic workload-knocker-api \
 ```
 
 `nightlyStop` は、クラスタ内 Service へ `Authorization: Bearer <token>` 付きで
-`POST /api/v1/stop-all` を送る CronJob を作成し、2xx 以外は失敗として扱います。
+`POST /api/v1/stop-all` を送る CronJob を作成し (監査ログの source 用に `X-Workload-Knocker-Source: nightly-stop` ヘッダー付き)、2xx 以外は失敗として扱います。
 
 | 値 | 既定 |
 | --- | --- |

@@ -11,6 +11,7 @@ import (
 	"go.uber.org/dig"
 
 	"github.com/murasame29/workload-knocker/internal/api"
+	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
@@ -88,9 +89,10 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 
 		// HTTP Server (server.Lifecycle)
 		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler) *httpserver.Server {
+			rec := audit.NewSlog()
 			return httpserver.New(cfg.HTTPPort, m.Handler(),
-				api.Authenticate(cfg.APIToken, api.RequireStop(cfg.OperationMode, stopAll)),
-				api.Authenticate(cfg.APIToken, start))
+				api.Authenticate(cfg.APIToken, rec, api.RequireStop(cfg.OperationMode, rec, stopAll)),
+				api.Authenticate(cfg.APIToken, rec, start))
 		},
 		// Chat frontends: only those configured by at least one cluster are enabled
 		newFrontends,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
+	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
@@ -276,10 +277,11 @@ func (b *Bot) buildPlan(sub authz.Subject, cl config.Cluster, f *flow) frontend.
 			entries = append(entries, e)
 		}
 	}
-	return b.svc.Plan(sub, cl, f.namespace, entries, f.selected)
+	return b.svc.Plan(sub, cl, f.namespace, entries, f.selected, f.requestID)
 }
 
 func (b *Bot) previewPlan(token string, sub authz.Subject, f *flow, cl config.Cluster) view {
+	f.requestID = audit.NewRequestID()
 	plan := b.buildPlan(sub, cl, f)
 	if plan.Empty() {
 		f.expires = time.Time{}
@@ -309,7 +311,7 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 			problem = msgUnrecognized
 		default:
 			cl = c
-			req = frontend.ApplyRequest{Cluster: c, Namespace: f.namespace, User: userID, Subject: sub, ToStart: f.toStart, ToStop: f.toStop}
+			req = frontend.ApplyRequest{Cluster: c, Namespace: f.namespace, User: userID, Subject: sub, RequestID: f.requestID, ToStart: f.toStart, ToStop: f.toStop}
 			f.expires = time.Time{}
 		}
 	})
@@ -330,6 +332,5 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 		return
 	}
 	res := b.svc.Apply(req)
-	slog.Info("discord plan applied", slog.String("user.id", userID), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", req.Namespace), slog.Int("to_start", len(req.ToStart)), slog.Int("to_stop", len(req.ToStop)), slog.Int("rejected", len(res.Rejected)))
 	b.edit(i, text(resultText(userID, cl, req.Namespace, res)))
 }
