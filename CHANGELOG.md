@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/murasame29/workload-knocker/compare/v0.1.1...v0.1.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **chart:** bump appVersion together with the chart version ([#50](https://github.com/murasame29/workload-knocker/issues/50)) ([6affa9f](https://github.com/murasame29/workload-knocker/commit/6affa9f2c5eb2a4dd3b45372a3ebbe35166a4c2f))
+
 ## [0.1.1](https://github.com/murasame29/workload-knocker/compare/v0.1.0...v0.1.1) (2026-11-08)
 
 
