@@ -10,6 +10,8 @@
 | `CLUSTER_RECONCILE_TIMEOUT` | `2s` | Slack コマンド受信時の Reconcile タイムアウト |
 | `STOP_ALL_TIMEOUT` | `10s` | `/api/v1/stop-all` の cluster ごとのタイムアウト |
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
+| `OPERATION_MODE` | `full` | `full` / `scheduled-stop` / `off`。それ以外は起動時エラー ([動作モード](#動作モードと夜間停止)) |
+| `API_TOKEN` | 空 | `/api/v1/*` の Bearer トークン。空の場合 `/api/v1/*` は `503` (fail closed) |
 | `SLACK_APP_TOKEN` | 必須 | Slack App-level token (`xapp-...`) |
 | `SLACK_BOT_TOKEN` | 必須 | Slack Bot token (`xoxb-...`) |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
@@ -75,13 +77,11 @@ EKS では controller に IAM Role (IRSA) を付与し、その Role を Access 
 ## 動作モードと夜間停止
 
 Helm chart は controller の環境変数 `OPERATION_MODE` と `API_TOKEN` を設定します。
-これらは対応する controller がリリース・デプロイされた時点で有効になります。現行バイナリは
-未知の環境変数を無視するため、chart を先に更新しても問題ありません。
 
 | `mode` | API start | API stop / stop-all | `nightlyStop` |
 | --- | --- | --- | --- |
 | `full` (既定) | 可 | 可 | 任意 |
-| `scheduled-stop` | 可 | 不可 (`403`) | 必須 (`enabled: true`) |
+| `scheduled-stop` | 可 | 不可 (`403`。夜間 CronJob が停止) | 必須 (`enabled: true`) |
 | `off` | 可 | 不可 | 有効化不可 |
 
 `/api/v1/*` を無認証にしないため、どのモードでも `api.tokenSecret.name` は必須です。
@@ -113,7 +113,26 @@ kubectl create secret generic workload-knocker-api \
 
 ## HTTP API
 
-現行リリースは認証がないため、ネットワークで到達範囲を制限してください。`API_TOKEN` に対応した controller では `/api/v1/*` に `Authorization: Bearer <token>` が必要です。
+### 認証
+
+`/api/v1/*` には `Authorization: Bearer <token>` が必要です (token は controller の `API_TOKEN`)。
+`/metrics`、`/livez`、`/healthz`、`/readyz` は認証不要です。
+
+```sh
+curl -X POST "http://workload-knocker.workload-knocker.svc:8080/api/v1/start" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"env":"stg","namespace":"my-namespace","workloads":["a"]}'
+```
+
+チェック順は 認証 → 動作モード → 入力検証 です。
+
+| ステータス | 意味 |
+|---|---|
+| `401` | token がない、または不正 (`WWW-Authenticate: Bearer`) |
+| `403` | 現在の `OPERATION_MODE` では許可されない操作 |
+| `503` | `API_TOKEN` 未設定のため API は無効 |
+
 
 ### `POST /api/v1/start`
 
@@ -126,7 +145,7 @@ kubectl create secret generic workload-knocker-api \
 
 ### `POST /api/v1/stop-all`
 
-全 managed cluster の workload を停止します (best effort)。一部の cluster が失敗しても `200` で
+`full` モードのみ可 (それ以外は `403`)。全 managed cluster の workload を停止します (best effort)。一部の cluster が失敗しても `200` で
 cluster ごとの内訳を返します。
 
 ### プローブ

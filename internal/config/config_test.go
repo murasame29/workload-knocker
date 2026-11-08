@@ -131,3 +131,17 @@ clusters:
 		t.Errorf("Clusters: got %+v", cfg.Clusters)
 	}
 }
+
+func TestLoadEnv_OperationMode(t *testing.T) {
+	t.Setenv("SLACK_APP_TOKEN", "x")
+	t.Setenv("SLACK_BOT_TOKEN", "x")
+	t.Setenv("OPERATION_MODE", "bogus")
+	if _, err := LoadEnv(); err == nil || !strings.Contains(err.Error(), "full, scheduled-stop, off") {
+		t.Fatalf("expected allowed values in error, got %v", err)
+	}
+	t.Setenv("OPERATION_MODE", "off")
+	e, err := LoadEnv()
+	if err != nil || e.OperationMode != "off" {
+		t.Fatalf("got %v, %v", e, err)
+	}
+}

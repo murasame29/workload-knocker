@@ -12,6 +12,6 @@ of this repository.
 
 ## Known limitations
 
-`/api/v1` has no authentication in versions before the one that adds auth. Restrict network
-access to the Service with a NetworkPolicy or an authenticating proxy, and do not expose it
-publicly.
+`/api/v1` is protected by a single shared bearer token (`API_TOKEN`) with no per-user identity
+or rotation support. Restrict network access to the Service with a NetworkPolicy and do not
+expose it publicly.

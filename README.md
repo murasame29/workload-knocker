@@ -56,8 +56,9 @@ See [docs/en/configuration.md](docs/en/configuration.md) for every option, the H
 
 ## Security
 
-`/api/v1/*` is unauthenticated. Restrict who can reach the Service with a NetworkPolicy or
-an authenticating proxy.
+`/api/v1/*` requires `Authorization: Bearer <API_TOKEN>`. If `API_TOKEN` is unset the API
+responds `503` (fail closed). `OPERATION_MODE` limits which operations the API accepts. Still
+restrict network access to the Service, and do not expose it publicly.
 
 ## Development
 
