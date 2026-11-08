@@ -159,9 +159,6 @@ func TestService_Apply_CallsStoreInOrder(t *testing.T) {
 	if len(res.Applied) != 3 || res.Applied[1].Found || !res.Applied[2].Found || res.Applied[2].Action != ActionStop {
 		t.Errorf("Applied = %+v", res.Applied)
 	}
-	if !res.AutoStop {
-		t.Error("AutoStop = false with starts")
-	}
 }
 
 // onlyWorkloads allows alice exactly the listed actions on the listed workload names.

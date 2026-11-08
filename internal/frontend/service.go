@@ -149,8 +149,6 @@ type ApplyResult struct {
 	Applied []Applied
 	// Rejected are the requested operations refused at apply time.
 	Rejected []Rejection
-	// AutoStop is true when started workloads are stopped again by the nightly auto-stop.
-	AutoStop bool
 }
 
 // Service is the frontend-independent workload operation logic.
@@ -374,7 +372,6 @@ func (p *Plan) reject(e Entry, a Action, names []string, decide func(Action, str
 func (s *Service) Apply(req ApplyRequest) ApplyResult {
 	cl := req.Cluster
 	var res ApplyResult
-	started := 0
 	if req.RequestID == "" {
 		req.RequestID = audit.NewRequestID()
 	}
@@ -396,7 +393,6 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 		ok := s.store.Start(cl.Env, req.Namespace, name, req.User, sch.StopAt)
 		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStart), resultLabel(ok), time.Since(begin))
 		res.Applied = append(res.Applied, Applied{Action: ActionStart, Name: name, Found: ok, StopAt: sch.StopAt})
-		started++
 		s.recordApplied(req, ActionStart, name, ok, withSchedule(sch))
 	}
 
@@ -414,7 +410,6 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 		s.recordApplied(req, ActionStop, name, ok)
 	}
 
-	res.AutoStop = started > 0
 	s.notifyApplied(req, res)
 	return res
 }

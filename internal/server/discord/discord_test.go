@@ -454,7 +454,7 @@ func TestFlow_CommandToApply(t *testing.T) {
 		t.Error("confirm must defer before applying")
 	}
 	got := *sess.edits[len(sess.edits)-1].Content
-	if !strings.Contains(got, "<@u1> changed workloads") || !strings.Contains(got, "Auto-stop") {
+	if !strings.Contains(got, "<@u1> changed workloads") || strings.Contains(got, "22:00 JST") {
 		t.Errorf("result = %q", got)
 	}
 	slices.Sort(store.calls)
