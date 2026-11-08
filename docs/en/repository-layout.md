@@ -16,6 +16,7 @@
 | `internal/model/` | Shared workload types |
 | `internal/reconcile/` | Background reconcile loop with per-tick hooks |
 | `internal/reload/` | Hot reload of the registry and the policy |
+| `internal/rollout/` | Rollout progress tracking after Confirm (polling, state machine, per-cluster readers) |
 | `internal/server/` | Lifecycle manager, HTTP server, Slack and Discord bots |
 | `internal/store/` | Per-cluster and multi-cluster workload state |
 | `internal/version/` | Build identity (`Version`, `Commit`, `BuildDate`) |

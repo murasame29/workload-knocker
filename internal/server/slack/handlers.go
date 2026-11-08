@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -14,6 +16,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
+	"github.com/murasame29/workload-knocker/internal/rollout"
 )
 
 const (
@@ -274,9 +277,20 @@ func rejectionLines(rejected []frontend.Rejection) []string {
 }
 
 // applyLines renders the outcome of an apply, including entries refused at apply time.
-func applyLines(res frontend.ApplyResult) []string {
+func applyLines(res frontend.ApplyResult) []string { return progressLines(res, nil, 0) }
+
+// progressLines is applyLines with the rollout progress of the applied workloads.
+func progressLines(res frontend.ApplyResult, snap rollout.Snapshot, timeout time.Duration) []string {
+	progress := make(map[string]rollout.Item, len(snap))
+	for _, it := range snap {
+		progress[it.Target.Name] = it
+	}
 	var lines []string
 	for _, a := range res.Applied {
+		if it, ok := progress[a.Name]; ok && a.Found {
+			lines = append(lines, rollout.Line(it, timeout))
+			continue
+		}
 		if a.Action == frontend.ActionStart {
 			lines = append(lines, fmt.Sprintf("🟢 %s → start", a.Name))
 		} else {
@@ -597,7 +611,7 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 	envUpper := strings.ToUpper(cl.Env)
 	user := callback.User.Name
 
-	res := b.svc.Apply(frontend.ApplyRequest{
+	req := frontend.ApplyRequest{
 		Cluster:   cl,
 		Namespace: meta.Namespace,
 		User:      user,
@@ -605,12 +619,20 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		RequestID: meta.RequestID,
 		ToStart:   meta.ToStart,
 		ToStop:    meta.ToStop,
-	})
-	resultLines := applyLines(res)
+	}
+	res := b.svc.Apply(req)
+	targets := b.svc.RolloutTargets(req, res)
+	tracked := b.svc.RolloutEnabled() && len(targets) > 0
+	timeout := b.svc.RolloutTimeout()
+	var initial rollout.Snapshot
+	if tracked {
+		initial = rollout.InitialSnapshot(targets)
+	}
 
 	resultHeader := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)",
 		callback.User.ID, envUpper, cl.Name, meta.Namespace,
 	)
+	resultLines := progressLines(res, initial, timeout)
 	if res.AutoStop {
 		resultLines = append(resultLines, "⏰ Auto-stop: today 22:00 JST")
 	}
@@ -620,4 +642,32 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 	); err != nil {
 		slog.Error("failed to send result message", slog.String("error.message", err.Error()))
 	}
+	if tracked {
+		b.watchRollout(meta, res, targets, timeout)
+	}
+}
+
+// watchRollout follows the rollout in the background. Slack cannot edit an ephemeral message
+// posted with chat.postEphemeral, so only the final state is posted as a second message.
+func (b *Bot) watchRollout(meta previewMetadata, res frontend.ApplyResult, targets []rollout.Target, timeout time.Duration) {
+	b.watchers.Add(1)
+	go func() {
+		defer b.watchers.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in slack rollout watch", slog.Any("recover", r), slog.String("stack", string(debug.Stack())))
+			}
+		}()
+		b.svc.Track(b.watchCtx, targets, func(snap rollout.Snapshot) {
+			if !snap.Done() {
+				return
+			}
+			header := fmt.Sprintf("📡 Rollout result (%s / %s)", strings.ToUpper(targets[0].Env), meta.Namespace)
+			if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
+				slack.MsgOptionBlocks(mrkdwnSections(header, progressLines(res, snap, timeout))...),
+			); err != nil {
+				slog.Error("failed to send rollout result message", slog.String("error.message", err.Error()))
+			}
+		})
+	}()
 }

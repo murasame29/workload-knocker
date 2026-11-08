@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
+	"github.com/murasame29/workload-knocker/internal/rollout"
 )
 
 const (
@@ -183,11 +185,24 @@ func previewView(token string, cl config.Cluster, namespace string, changes []fr
 
 // resultText renders the outcome of an applied plan.
 func resultText(userID string, cl config.Cluster, namespace string, res frontend.ApplyResult) string {
+	return progressText(userID, cl, namespace, res, nil, 0)
+}
+
+// progressText is resultText with the rollout progress of the applied workloads; applied
+// workloads missing from snap keep the plain "→ start" line.
+func progressText(userID string, cl config.Cluster, namespace string, res frontend.ApplyResult, snap rollout.Snapshot, timeout time.Duration) string {
+	progress := make(map[string]rollout.Item, len(snap))
+	for _, it := range snap {
+		progress[it.Target.Name] = it
+	}
 	lines := make([]string, 0, len(res.Applied)+1)
 	for _, a := range res.Applied {
+		it, tracked := progress[a.Name]
 		switch {
 		case !a.Found:
 			lines = append(lines, fmt.Sprintf("⚠ %s → %s (not found)", a.Name, a.Action))
+		case tracked:
+			lines = append(lines, rollout.Line(it, timeout))
 		case a.Action == frontend.ActionStart:
 			lines = append(lines, fmt.Sprintf("🟢 %s → start", a.Name))
 		default:

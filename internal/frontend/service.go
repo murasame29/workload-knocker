@@ -13,6 +13,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/mode"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/rollout"
 )
 
 // Limits are the per-frontend display constraints. Zero means unlimited.
@@ -145,6 +146,7 @@ type Service struct {
 	authz            authz.Authorizer
 	mode             mode.Mode
 	audit            audit.Recorder
+	rollout          *rollout.Tracker
 }
 
 // Option customizes a Service.
@@ -158,6 +160,9 @@ func WithMode(m mode.Mode) Option { return func(s *Service) { s.mode = m } }
 
 // WithRecorder replaces the audit event recorder (default: the slog default logger).
 func WithRecorder(r audit.Recorder) Option { return func(s *Service) { s.audit = r } }
+
+// WithRollout enables per-workload rollout progress after Apply; without it Track reports false.
+func WithRollout(t *rollout.Tracker) Option { return func(s *Service) { s.rollout = t } }
 
 // NewService builds a Service. reconcileTimeout bounds each on-demand Reconcile.
 func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
@@ -388,4 +393,44 @@ func resultLabel(ok bool) string {
 		return "success"
 	}
 	return "not_found"
+}
+
+// RolloutEnabled reports whether rollout progress is tracked after Apply.
+func (s *Service) RolloutEnabled() bool { return s.rollout != nil }
+
+// RolloutTimeout is the watch timeout of the rollout tracker.
+func (s *Service) RolloutTimeout() time.Duration {
+	if s.rollout == nil {
+		return 0
+	}
+	return s.rollout.Timeout()
+}
+
+// RolloutTargets lists the applied workloads that exist and are worth following.
+func (s *Service) RolloutTargets(req ApplyRequest, res ApplyResult) []rollout.Target {
+	kinds := map[string]string{}
+	for _, w := range s.store.WorkloadsByNamespace(req.Cluster.Env, req.Namespace) {
+		kinds[w.Name] = w.Kind
+	}
+	var targets []rollout.Target
+	for _, a := range res.Applied {
+		if !a.Found {
+			continue
+		}
+		dir := rollout.Start
+		if a.Action == ActionStop {
+			dir = rollout.Stop
+		}
+		targets = append(targets, rollout.Target{Env: req.Cluster.Env, Namespace: req.Namespace, Name: a.Name, Kind: kinds[a.Name], Direction: dir})
+	}
+	return targets
+}
+
+// Track follows targets until all are final or ctx ends. onChange gets the initial snapshot,
+// then one snapshot per poll in which something changed. No-op without WithRollout.
+func (s *Service) Track(ctx context.Context, targets []rollout.Target, onChange func(rollout.Snapshot)) {
+	if s.rollout == nil || len(targets) == 0 {
+		return
+	}
+	s.rollout.Watch(ctx, targets, onChange)
 }

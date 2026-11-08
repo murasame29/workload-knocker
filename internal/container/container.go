@@ -22,6 +22,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/model"
 	"github.com/murasame29/workload-knocker/internal/reconcile"
 	"github.com/murasame29/workload-knocker/internal/reload"
+	"github.com/murasame29/workload-knocker/internal/rollout"
 	"github.com/murasame29/workload-knocker/internal/server"
 	discordbot "github.com/murasame29/workload-knocker/internal/server/discord"
 	httpserver "github.com/murasame29/workload-knocker/internal/server/http"
@@ -94,6 +95,13 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 				api.Authenticate(cfg.APIToken, rec, api.RequireStop(cfg.OperationMode, rec, stopAll)),
 				api.Authenticate(cfg.APIToken, rec, start))
 		},
+		// Rollout progress after Confirm: per-cluster readers and the tracker
+		func(mux *k8sauth.Multiplexer, live *config.Holder) *rollout.Readers {
+			return rollout.NewReaders(mux, live)
+		},
+		func(cfg *config.Env, r *rollout.Readers) *rollout.Tracker {
+			return rollout.NewTracker(r, cfg.RolloutPollInterval, cfg.RolloutWatchTimeout)
+		},
 		// Chat frontends: only those configured by at least one cluster are enabled
 		newFrontends,
 
@@ -124,17 +132,17 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	return c, nil
 }
 
-func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *authz.Holder, ws model.WorkloadStore, m metrics.MetricsManager) ([]frontend.Frontend, error) {
+func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *authz.Holder, ws model.WorkloadStore, m metrics.MetricsManager, rt *rollout.Tracker) ([]frontend.Frontend, error) {
 	var fs []frontend.Frontend
 	if reg.FrontendEnabled(config.FrontendSlack) {
-		b, err := slackbot.New(cfg, ws, live, az, m)
+		b, err := slackbot.New(cfg, ws, live, az, m, frontend.WithRollout(rt))
 		if err != nil {
 			return nil, err
 		}
 		fs = append(fs, b)
 	}
 	if reg.FrontendEnabled(config.FrontendDiscord) {
-		b, err := discordbot.New(cfg, ws, live, az, m)
+		b, err := discordbot.New(cfg, ws, live, az, m, frontend.WithRollout(rt))
 		if err != nil {
 			return nil, err
 		}

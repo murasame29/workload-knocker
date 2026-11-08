@@ -30,3 +30,12 @@ func NewScaleTargetReaderForConfig(cfg *rest.Config) (ScaleTargetReader, error) 
 	}
 	return NewScaleTargetReader(kc), nil
 }
+
+// NewClusterRolloutReader builds a RolloutReader from a rest.Config.
+func NewClusterRolloutReader(cfg *rest.Config) (RolloutReader, error) {
+	kc, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes.NewForConfig: %w", err)
+	}
+	return NewRolloutReader(kc), nil
+}
