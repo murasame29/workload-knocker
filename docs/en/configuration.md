@@ -205,7 +205,7 @@ Per-interaction state (selection, page, plan) is kept in memory, keyed by a rand
 
 Authorization and operation mode apply as for Slack. Namespaces and workloads the user's ID or roles may not operate are not listed, and plan and Confirm check the policy again, so a stale menu, a changed role or a forged component cannot widen access. In `scheduled-stop` mode the menu says stopping is disabled and a stop is rejected with the same message as Slack. Rules use `subjects.discord.users` (user IDs) and `subjects.discord.roles` (role IDs); enable Discord Developer Mode to copy IDs.
 
-The chart renders `DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID` only when `discord.secretName` is set. The chart still requires `slack.secretName`.
+The chart renders `DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID` only when `discord.secretName` is set. Likewise `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` are rendered only when `slack.secretName` is set. Set at least one of the two; the chart fails otherwise.
 
 ## Managed cluster access
 

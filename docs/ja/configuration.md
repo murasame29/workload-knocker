@@ -199,7 +199,7 @@ clusters:
 
 認可と動作モードは Slack と同じです。ユーザー ID またはロールで操作できない namespace / workload は一覧に出ず、Plan と Confirm でポリシーを再判定するため、古いメニュー・ロール変更・偽造したコンポーネントでアクセスを広げることはできません。`scheduled-stop` では停止不可の注記を表示し、stop は Slack と同じメッセージで拒否します。ルールは `subjects.discord.users` (ユーザー ID) と `subjects.discord.roles` (ロール ID) で書きます。ID のコピーには Discord の開発者モードを有効にします。
 
-chart は `discord.secretName` を設定したときだけ `DISCORD_BOT_TOKEN` と `DISCORD_GUILD_ID` を出力します。`slack.secretName` は引き続き必須です。
+chart は `discord.secretName` を設定したときだけ `DISCORD_BOT_TOKEN` と `DISCORD_GUILD_ID` を出力します。同様に `SLACK_APP_TOKEN` と `SLACK_BOT_TOKEN` は `slack.secretName` を設定したときだけ出力します。どちらか一方は必須で、両方空だと chart はエラーにします。
 
 ## managed cluster へのアクセス
 
