@@ -22,6 +22,8 @@ type MetricsManager interface {
 	IncConfigReload(target, result string)
 	// IncReconcile counts one background reconcile of a cluster (result: success|error).
 	IncReconcile(cluster, result string)
+	// IncAutoStop counts one automatic stop of an expired workload (result: success|error).
+	IncAutoStop(env, cluster, result string)
 	Handler() http.Handler
 }
 
@@ -33,6 +35,7 @@ type Manager struct {
 	operations   *prometheus.CounterVec
 	configReload *prometheus.CounterVec
 	reconcile    *prometheus.CounterVec
+	autoStops    *prometheus.CounterVec
 	opDuration   *prometheus.HistogramVec
 	registry     *prometheus.Registry
 }
@@ -104,6 +107,14 @@ func New() *Manager {
 		[]string{"cluster", "result"},
 	)
 
+	autoStops := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "workload_knocker_auto_stops_total",
+			Help: "Total number of automatic stops of workloads whose run duration ended, labeled by env, cluster and result (success, error)",
+		},
+		[]string{"env", "cluster", "result"},
+	)
+
 	registry.MustRegister(activation)
 	registry.MustRegister(reachable)
 	registry.MustRegister(tokenRefresh)
@@ -111,6 +122,7 @@ func New() *Manager {
 	registry.MustRegister(opDuration)
 	registry.MustRegister(configReload)
 	registry.MustRegister(reconcile)
+	registry.MustRegister(autoStops)
 
 	return &Manager{
 		activation:   activation,
@@ -119,6 +131,7 @@ func New() *Manager {
 		operations:   operations,
 		configReload: configReload,
 		reconcile:    reconcile,
+		autoStops:    autoStops,
 		opDuration:   opDuration,
 		registry:     registry,
 	}
@@ -148,6 +161,11 @@ func (m *Manager) IncConfigReload(target, result string) {
 // IncReconcile counts one background reconcile of a cluster.
 func (m *Manager) IncReconcile(cluster, result string) {
 	m.reconcile.WithLabelValues(cluster, result).Inc()
+}
+
+// IncAutoStop counts one automatic stop.
+func (m *Manager) IncAutoStop(env, cluster, result string) {
+	m.autoStops.WithLabelValues(env, cluster, result).Inc()
 }
 
 // SetReachable updates the reachability Gauge of the given cluster

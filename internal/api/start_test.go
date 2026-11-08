@@ -7,8 +7,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 // startStore starts only workloads named "ok".
@@ -21,7 +23,7 @@ func (s *startStore) Clusters() []model.ClusterRef {
 	return []model.ClusterRef{{Env: "stg", Name: "stg-cluster"}}
 }
 
-func (s *startStore) Start(_, _, name, _ string) bool {
+func (s *startStore) Start(_, _, name, _ string, _ time.Time) bool {
 	s.started = append(s.started, name)
 	return name == "ok" || name == "ok2"
 }
@@ -30,7 +32,7 @@ func TestStartHandler_ObservesSuccessAndNotFound(t *testing.T) {
 	t.Parallel()
 
 	m := &fakeMetrics{}
-	h := NewStartHandler(&startStore{}, m, allowAll{})
+	h := NewStartHandler(&startStore{}, m, allowAll{}, runlimit.Defaults{})
 	body := `{"env":"stg","namespace":"ns","workloads":["ok","missing"]}`
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/start", strings.NewReader(body)))
@@ -69,7 +71,7 @@ func TestStartHandler_RefusesWorkloadsOutsidePolicy(t *testing.T) {
 	t.Parallel()
 
 	store := &startStore{}
-	h := NewStartHandler(store, &fakeMetrics{}, apiPolicy(t, startTeamOnly))
+	h := NewStartHandler(store, &fakeMetrics{}, apiPolicy(t, startTeamOnly), runlimit.Defaults{})
 
 	rec, resp := postStart(t, h, `{"env":"stg","namespace":"team-a","workloads":["ok","billing"]}`)
 	if rec.Code != http.StatusOK || !slices.Equal(resp.Started, []string{"ok"}) || !slices.Equal(resp.Forbidden, []string{"billing"}) {
@@ -84,7 +86,7 @@ func TestStartHandler_AllForbiddenIs403WithoutTouchingStore(t *testing.T) {
 	t.Parallel()
 
 	store := &startStore{}
-	h := NewStartHandler(store, &fakeMetrics{}, apiPolicy(t, startTeamOnly))
+	h := NewStartHandler(store, &fakeMetrics{}, apiPolicy(t, startTeamOnly), runlimit.Defaults{})
 	rec, resp := postStart(t, h, `{"env":"stg","namespace":"other","workloads":["ok"]}`)
 	if rec.Code != http.StatusForbidden || len(resp.Forbidden) != 1 || len(store.started) != 0 {
 		t.Errorf("status=%d resp=%+v started=%v", rec.Code, resp, store.started)
@@ -94,7 +96,7 @@ func TestStartHandler_AllForbiddenIs403WithoutTouchingStore(t *testing.T) {
 func TestStartHandler_ForbiddenDoesNotRevealExistence(t *testing.T) {
 	t.Parallel()
 
-	h := NewStartHandler(&startStore{}, &fakeMetrics{}, apiPolicy(t, startTeamOnly))
+	h := NewStartHandler(&startStore{}, &fakeMetrics{}, apiPolicy(t, startTeamOnly), runlimit.Defaults{})
 	_, existing := postStart(t, h, `{"env":"stg","namespace":"other","workloads":["ok"]}`)
 	_, missing := postStart(t, h, `{"env":"stg","namespace":"other","workloads":["nonexistent"]}`)
 	if !slices.Equal(existing.Forbidden, []string{"ok"}) || !slices.Equal(missing.Forbidden, []string{"nonexistent"}) {

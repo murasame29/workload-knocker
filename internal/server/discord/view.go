@@ -11,6 +11,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/rollout"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 const (
@@ -169,17 +170,135 @@ func rejectionLines(rejected []frontend.Rejection) []string {
 	return lines
 }
 
-// previewView shows the plan with Confirm and Cancel.
-func previewView(token string, cl config.Cluster, namespace string, changes []frontend.Change, rejected []frontend.Rejection) view {
+// maxDurationInputs is Discord's cap of inputs per modal.
+const maxDurationInputs = 5
+
+// previewView shows the plan with the auto-stop of each start, Confirm, Change duration and Cancel.
+func previewView(token string, cl config.Cluster, namespace string, changes []frontend.Change, rejected []frontend.Rejection, starts []frontend.Schedule) view {
 	head := fmt.Sprintf("%s / %s change preview:", header(cl), namespace)
+	lines := append(planLines(changes), scheduleLines(starts)...)
+	if len(starts) > maxDurationInputs {
+		lines = append(lines, fmt.Sprintf("ℹ Change duration covers the first %d starts; the others use their default.", maxDurationInputs))
+	}
+	buttons := []discordgo.MessageComponent{button("Confirm", discordgo.SuccessButton, customID{kindConfirm, token, 0}, false)}
+	if len(starts) > 0 {
+		buttons = append(buttons, button("Change duration", discordgo.SecondaryButton, customID{kindDuration, token, 0}, false))
+	}
+	buttons = append(buttons, button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false))
 	return view{
-		Content: fitLines(head, append(planLines(changes), rejectionLines(rejected)...), contentMaxLen),
-		Components: []discordgo.MessageComponent{
-			discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-				button("Confirm", discordgo.SuccessButton, customID{kindConfirm, token, 0}, false),
-				button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false),
-			}},
+		Content:    fitLines(head, append(lines, rejectionLines(rejected)...), contentMaxLen),
+		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: buttons}},
+	}
+}
+
+// stopTime renders t in each viewer's local time zone.
+func stopTime(t time.Time) string { return fmt.Sprintf("<t:%d:f>", t.Unix()) }
+
+// scheduleLines groups the starts by run duration; nothing is shown when no start has an auto-stop.
+func scheduleLines(starts []frontend.Schedule) []string {
+	var scheduled bool
+	for _, s := range starts {
+		scheduled = scheduled || s.Duration > 0
+	}
+	if !scheduled {
+		return nil
+	}
+	var lines []string
+	done := map[time.Duration]bool{}
+	for _, s := range starts {
+		if s.Err != nil {
+			lines = append(lines, fmt.Sprintf("⛔ %s: %v", s.Name, s.Err))
+			continue
+		}
+		if done[s.Duration] {
+			continue
+		}
+		done[s.Duration] = true
+		var names []string
+		for _, o := range starts {
+			if o.Err == nil && o.Duration == s.Duration {
+				names = append(names, o.Name)
+			}
+		}
+		if s.Duration == 0 {
+			lines = append(lines, fmt.Sprintf("⏰ %s: no auto-stop", strings.Join(names, ", ")))
+		} else {
+			lines = append(lines, fmt.Sprintf("⏰ %s: auto-stop in %s (%s)", strings.Join(names, ", "), runlimit.FormatHours(s.Duration), stopTime(s.StopAt)))
+		}
+	}
+	return lines
+}
+
+// appliedStopLines groups the started workloads by their stop time.
+func appliedStopLines(applied []frontend.Applied) []string {
+	var lines []string
+	done := map[int64]bool{}
+	for _, a := range applied {
+		if !a.Found || a.StopAt.IsZero() || done[a.StopAt.Unix()] {
+			continue
+		}
+		done[a.StopAt.Unix()] = true
+		var names []string
+		for _, o := range applied {
+			if o.Found && o.StopAt.Unix() == a.StopAt.Unix() {
+				names = append(names, o.Name)
+			}
+		}
+		lines = append(lines, fmt.Sprintf("⏰ %s: auto-stop at %s", strings.Join(names, ", "), stopTime(a.StopAt)))
+	}
+	return lines
+}
+
+// durationModal asks for the run duration in hours of each of the first starts. drafts hold the
+// raw inputs of a rejected submission and win over the current value.
+func durationModal(token string, starts []frontend.Schedule, drafts []string) *discordgo.InteractionResponse {
+	rows := make([]discordgo.MessageComponent, 0, maxDurationInputs)
+	for i, s := range starts[:min(len(starts), maxDurationInputs)] {
+		value := ""
+		switch {
+		case i < len(drafts):
+			value = drafts[i]
+		case s.Duration > 0:
+			value = runlimit.FormatHoursNumber(s.Duration)
+		}
+		rows = append(rows, discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.TextInput{
+			CustomID:    strconv.Itoa(i),
+			Label:       truncateRunes(s.Name, 45),
+			Style:       discordgo.TextInputShort,
+			Placeholder: durationPlaceholder(s),
+			Value:       value,
+			MaxLength:   8,
+		}}})
+	}
+	return &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseModal,
+		Data: &discordgo.InteractionResponseData{
+			CustomID:   customID{kindDurationModal, token, 0}.String(),
+			Title:      "Run duration (hours)",
+			Components: rows,
 		},
+	}
+}
+
+func durationPlaceholder(s frontend.Schedule) string {
+	def := "no auto-stop"
+	if s.Default > 0 {
+		def = runlimit.FormatHours(s.Default)
+	}
+	p := "Hours (min 0.25). Empty = default " + def
+	if s.Max > 0 {
+		p += ", max " + runlimit.FormatHours(s.Max)
+	}
+	return truncateRunes(p, 100)
+}
+
+// retryView explains rejected duration inputs and offers to reopen the modal.
+func retryView(token string, lines []string) view {
+	return view{
+		Content: fitLines("⚠ Invalid run duration:", lines, contentMaxLen),
+		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+			button("Try again", discordgo.PrimaryButton, customID{kindDurationRetry, token, 0}, false),
+		}}},
 	}
 }
 
@@ -209,6 +328,7 @@ func progressText(userID string, cl config.Cluster, namespace string, res fronte
 			lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
 		}
 	}
+	lines = append(lines, appliedStopLines(res.Applied)...)
 	lines = append(lines, rejectionLines(res.Rejected)...)
 	if res.AutoStop {
 		lines = append(lines, "⏰ Auto-stop: today 22:00 JST")

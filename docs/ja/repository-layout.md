@@ -3,8 +3,9 @@
 | パス | 内容 |
 |---|---|
 | `cmd/server/` | エントリポイント (`main.go`)。`--version` フラグを含む |
-| `internal/api/` | REST ハンドラ (`/api/v1/start`、`/api/v1/stop-all`) と Bearer 認証ミドルウェア |
+| `internal/api/` | REST ハンドラ (`/api/v1/start`、`/api/v1/extend`、`/api/v1/stop-all`) と Bearer 認証ミドルウェア |
 | `internal/audit/` | 監査イベントのスキーマと recorder ([audit-log.md](audit-log.md)) |
+| `internal/autostop/` | 期限切れの workload を停止し、停止リマインドを呼ぶ reconcile フック |
 | `internal/authz/` | 認可ポリシーのパースと評価 |
 | `internal/config/` | 環境変数と Cluster Registry |
 | `internal/container/` | 依存の組み立て |
@@ -17,6 +18,7 @@
 | `internal/reconcile/` | バックグラウンド reconcile ループ (tick ごとのフック付き) |
 | `internal/reload/` | Registry とポリシーのホットリロード |
 | `internal/rollout/` | Confirm 後の rollout 進捗追跡 (ポーリング、状態遷移、cluster ごとの reader) |
+| `internal/runlimit/` | 実行時間の既定値・上限・パース・延長ルール |
 | `internal/server/` | Lifecycle マネージャ、HTTP サーバー、Slack / Discord bot |
 | `internal/store/` | cluster ごと・複数 cluster の workload 状態 |
 | `internal/version/` | ビルド情報 (`Version` `Commit` `BuildDate`) |

@@ -1,5 +1,5 @@
 // Package httpserver implements the HTTP server exposing /metrics, the probes and
-// /api/v1/{start,stop-all} as a server.Lifecycle.
+// /api/v1/{start,extend,stop-all} as a server.Lifecycle.
 package httpserver
 
 import (
@@ -24,7 +24,7 @@ type Server struct {
 }
 
 // New returns a Server with metrics, probes and the API handlers registered on the mux.
-func New(port int, metricsHandler http.Handler, stopAllHandler http.Handler, startHandler http.Handler) *Server {
+func New(port int, metricsHandler http.Handler, stopAllHandler, startHandler, extendHandler http.Handler) *Server {
 	s := &Server{}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", metricsHandler)
@@ -33,6 +33,7 @@ func New(port int, metricsHandler http.Handler, stopAllHandler http.Handler, sta
 	mux.HandleFunc("/readyz", s.handleReady)
 	mux.Handle("/api/v1/stop-all", stopAllHandler)
 	mux.Handle("/api/v1/start", startHandler)
+	mux.Handle("/api/v1/extend", extendHandler)
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: mux,

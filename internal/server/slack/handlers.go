@@ -17,6 +17,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/rollout"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 const (
@@ -24,6 +25,8 @@ const (
 	blockSelectNamespace  = "block_namespace"
 	actionSelectWorkloads = "select_workloads"
 	blockSelectWorkloads  = "block_workloads"
+	blockDuration         = "block_duration"
+	actionDuration        = "action_duration"
 	callbackWorkloadModal = "workload_modal"
 	callbackPreviewModal  = "preview_modal"
 
@@ -43,8 +46,8 @@ const (
 	slackModalMaxBlocks = 100
 
 	// reservedModalBlocks is the number of blocks reserved besides workload checkboxes
-	// (namespace select + truncation warning section).
-	reservedModalBlocks = 2
+	// (namespace select + duration input + truncation warning section).
+	reservedModalBlocks = 3
 
 	// maxWorkloadCheckboxBlocks / maxWorkloadOptions cap checkbox blocks and display entries per Modal.
 	// Entries are post-merge units, so the real workload count may be higher.
@@ -183,6 +186,94 @@ func workloadCheckboxBlocks(namespace string, listing frontend.Listing) []slack.
 	return blocks
 }
 
+// durationInputBlock builds the optional run duration input (hours, decimals allowed).
+// Empty means the workload default.
+func durationInputBlock() *slack.InputBlock {
+	el := slack.NewNumberInputBlockElement(
+		slack.NewTextBlockObject("plain_text", "Empty = workload default", false, false),
+		actionDuration, true,
+	).WithMinValue("0.25")
+	block := slack.NewInputBlock(
+		blockDuration,
+		slack.NewTextBlockObject("plain_text", "Run duration (hours)", false, false),
+		slack.NewTextBlockObject("plain_text", "Applies to every workload started now; they stop automatically afterwards. Minimum 0.25.", false, false),
+		el,
+	)
+	block.Optional = true
+	return block
+}
+
+// submittedDuration reads the run duration input; 0 means empty (workload default).
+func submittedDuration(values map[string]map[string]slack.BlockAction) (time.Duration, error) {
+	return runlimit.ParseHours(values[blockDuration][actionDuration].Value)
+}
+
+// slackTime renders t in each viewer's local time zone.
+func slackTime(t time.Time) string {
+	return fmt.Sprintf("<!date^%d^{date_short_pretty} {time}|%s>", t.Unix(), t.UTC().Format("2006-01-02 15:04 UTC"))
+}
+
+// scheduleLines groups the starts by run duration; nothing is shown when no start has an auto-stop.
+func scheduleLines(starts []frontend.Schedule) []string {
+	var scheduled bool
+	for _, s := range starts {
+		scheduled = scheduled || s.Duration > 0
+	}
+	if !scheduled {
+		return nil
+	}
+	var lines []string
+	done := map[time.Duration]bool{}
+	for _, s := range starts {
+		if done[s.Duration] {
+			continue
+		}
+		done[s.Duration] = true
+		var names []string
+		for _, o := range starts {
+			if o.Duration == s.Duration {
+				names = append(names, o.Name)
+			}
+		}
+		if s.Duration == 0 {
+			lines = append(lines, fmt.Sprintf("⏰ %s: no auto-stop", strings.Join(names, ", ")))
+		} else {
+			lines = append(lines, fmt.Sprintf("⏰ %s: auto-stop in %s (%s)", strings.Join(names, ", "), runlimit.FormatHours(s.Duration), slackTime(s.StopAt)))
+		}
+	}
+	return lines
+}
+
+// appliedStopLines groups the started workloads by their stop time.
+func appliedStopLines(applied []frontend.Applied) []string {
+	var lines []string
+	done := map[int64]bool{}
+	for _, a := range applied {
+		if !a.Found || a.StopAt.IsZero() || done[a.StopAt.Unix()] {
+			continue
+		}
+		done[a.StopAt.Unix()] = true
+		var names []string
+		for _, o := range applied {
+			if o.Found && o.StopAt.Unix() == a.StopAt.Unix() {
+				names = append(names, o.Name)
+			}
+		}
+		lines = append(lines, fmt.Sprintf("⏰ %s: auto-stop at %s", strings.Join(names, ", "), slackTime(a.StopAt)))
+	}
+	return lines
+}
+
+// durationErrors maps the duration input block to the first start whose duration is out of range.
+func durationErrors(starts []frontend.Schedule) map[string]string {
+	for _, s := range starts {
+		if s.Err != nil {
+			return map[string]string{blockDuration: fmt.Sprintf("%s: %v", s.Name, s.Err)}
+		}
+	}
+	return nil
+}
+
 // selectedWorkloadNames folds the selection of all split checkbox blocks into one set.
 // It scans by prefix, so submissions from the old single block ("block_workloads") also work.
 func selectedWorkloadNames(values map[string]map[string]slack.BlockAction) map[string]bool {
@@ -252,6 +343,8 @@ type previewMetadata struct {
 	ToStop    []string `json:"to_stop"`  // workload name
 	// RequestID ties the preview and the apply of one operation in the audit log.
 	RequestID string `json:"request_id"`
+	// DurationSec is the requested run duration in seconds; 0 selects each workload's default.
+	DurationSec int64 `json:"duration_sec,omitempty"`
 }
 
 // planLines renders the allowed plan changes for the preview modal.
@@ -297,6 +390,7 @@ func progressLines(res frontend.ApplyResult, snap rollout.Snapshot, timeout time
 			lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
 		}
 	}
+	lines = append(lines, appliedStopLines(res.Applied)...)
 	return append(lines, rejectionLines(res.Rejected)...)
 }
 
@@ -448,6 +542,9 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 	blocks := make([]slack.Block, 0, 2+maxWorkloadCheckboxBlocks)
 	blocks = append(blocks, nsBlock)
 	blocks = append(blocks, workloadCheckboxBlocks(namespace, listing)...)
+	if len(listing.Entries) > 0 {
+		blocks = append(blocks, durationInputBlock())
+	}
 
 	if note := modalNote(listing, b.svc.ChatStopAllowed()); note != "" {
 		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", note, false, false), nil, nil))
@@ -509,6 +606,12 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		return
 	}
 
+	requested, err := submittedDuration(callback.View.State.Values)
+	if err != nil {
+		b.ack(*req, map[string]any{"response_action": "errors", "errors": map[string]string{blockDuration: err.Error()}})
+		return
+	}
+
 	// Selected workloads (checked = wants running), folded across all split checkbox blocks.
 	selectedSet := selectedWorkloadNames(callback.View.State.Values)
 
@@ -521,7 +624,13 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 	plan := b.svc.Plan(sub, cl, meta.Namespace, frontend.Rendered(listing.Entries, meta.Rendered), selectedSet, requestID)
 	toStart, toStop := plan.ToStart, plan.ToStop
 
-	previewLines := planLines(plan)
+	starts := b.svc.Schedules(cl.Env, meta.Namespace, toStart, frontend.Uniform(toStart, requested))
+	if errs := durationErrors(starts); errs != nil {
+		b.ack(*req, map[string]any{"response_action": "errors", "errors": errs})
+		return
+	}
+
+	previewLines := append(planLines(plan), scheduleLines(starts)...)
 	rejectedLines := rejectionLines(plan.Rejected)
 
 	envUpper := strings.ToUpper(cl.Env)
@@ -546,6 +655,8 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		ToStart:   toStart,
 		ToStop:    toStop,
 		RequestID: requestID,
+
+		DurationSec: int64(requested / time.Second),
 	})
 	// private_metadata is capped at 3000 chars. If the diff is too large the preview cannot
 	// open, so abort and ask the user to split the run.
@@ -619,6 +730,7 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		RequestID: meta.RequestID,
 		ToStart:   meta.ToStart,
 		ToStop:    meta.ToStop,
+		Durations: frontend.Uniform(meta.ToStart, time.Duration(meta.DurationSec)*time.Second),
 	}
 	res := b.svc.Apply(req)
 	targets := b.svc.RolloutTargets(req, res)

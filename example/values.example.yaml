@@ -35,6 +35,13 @@ serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/workload-knocker
 
+# Stop workloads 4h after a start unless the user picks another duration (max 12h). Annotations on the
+# ScaledObject (workload-knocker.io/default-duration, /max-duration) override these per workload.
+settings:
+  defaultRunDuration: 4h
+  maxRunDuration: 12h
+  stopReminder: 15m
+
 # full | scheduled-stop | off (see docs/en/configuration.md)
 mode: full
 

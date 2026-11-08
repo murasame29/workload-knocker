@@ -12,6 +12,9 @@
 | `STOP_ALL_TIMEOUT` | `10s` | `/api/v1/stop-all` の cluster ごとのタイムアウト |
 | `ROLLOUT_POLL_INTERVAL` | `5s` | Confirm 後に scale target をポーリングする間隔 (`1s` 以上) |
 | `ROLLOUT_WATCH_TIMEOUT` | `10m` | rollout の進捗表示を打ち切り、最後に観測した理由を表示するまでの時間。ポーリング間隔より大きく `15m` 未満 (Discord の interaction token の寿命) である必要があり、範囲外は起動時にエラーになります |
+| `DEFAULT_RUN_DURATION` | `0` | 時間を指定しない start の自動停止までの時間。`0` は自動停止なし (従来の動作)。`0` か `15m` 以上で、`MAX_RUN_DURATION` を超えられません。Chart: `settings.defaultRunDuration` |
+| `MAX_RUN_DURATION` | `24h` | 実行時間、および延長後の残り時間の上限。`15m` 以上。Chart: `settings.maxRunDuration` |
+| `STOP_REMINDER` | `15m` | 自動停止の何分前にリマインドするか。`0` で無効。配信には通知チャンネルが必要です ([実行時間](#実行時間))。Chart: `settings.stopReminder` |
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
 | `OPERATION_MODE` | `full` | `full` / `scheduled-stop` / `off`。それ以外は起動時エラー ([動作モード](#動作モードと夜間停止)) |
 | `AUTHZ_CONFIG_PATH` | 未設定 | 認可ポリシーファイル。未設定かつ `/etc/workload-knocker/authz.yaml` も無い場合は認可無効 (全員が全 workload を start/stop 可。起動時に info ログ 1 件)。設定時、または既定ファイルが存在する場合はパースできないと起動失敗 ([認可](#認可)) |
@@ -249,6 +252,38 @@ Confirm の後、適用した各 workload の scale target (`Deployment` また�
 - Slack の制限 (checkbox 10 件 / モーダル 100 block) により merge 後 90 エントリまで表示します。
   非表示分は Plan から除外されるため、意図せず停止されることはありません。
 
+## 実行時間
+
+start には実行時間を付けられます。コントローラは workload ごとの `stopAt` を `workload-state` ConfigMap に保存し、
+バックグラウンドループ (`RECONCILE_INTERVAL`。停止の精度は約 1 interval) が期限切れの workload を停止します。
+再起動後も有効です。停止すると `stopAt` は消えます。夜間停止も従来どおり動き、先に来た方が workload を止めます。
+古いバージョンが書いた state には `stopAt` が無く「自動停止なし」として扱われます。`RECONCILE_INTERVAL=0` では
+自動停止は動きません。
+
+既定値は ScaledObject の annotation で workload ごとに指定でき、無ければ環境変数を使います。
+
+| annotation | フォールバック | 意味 |
+|---|---|---|
+| `workload-knocker.io/default-duration` | `DEFAULT_RUN_DURATION` | `4h` のような Go duration。`0` でこの workload の既定を無効化。`0` 超 `15m` 未満は警告して無視 |
+| `workload-knocker.io/max-duration` | `MAX_RUN_DURATION` | `15m` 以上の Go duration。不正な値は警告して無視 |
+
+既定値が上限を超える場合は上限に切り下げます。
+
+- **Discord**: プランのプレビューに各 start の停止時刻 (閲覧者のタイムゾーン) と **Change duration** ボタンが出ます。
+  ボタンは start 対象ごとに 1 つ (最大 5、超える場合は先頭 5 件) の入力欄を持つモーダルを開き、現在値が時間単位で入っています。
+  入力は時間の数値 (`3`、`1.5`、最小 `0.25`)、空は workload の既定です。不正な値には ephemeral で理由と **Try again** ボタンを返し、
+  ボタンで前回の入力を入れたままモーダルを開き直せます。
+- **Slack**: workload モーダルに任意の **Run duration (hours)** 数値入力 (小数可) があり、その送信で start する全 workload に適用されます。
+  空は各 workload の既定です。範囲外の値はインラインエラーで拒否します。
+- **REST**: `POST /api/v1/start` は `duration` (`"3h"` のような Go duration) を受け付けます ([HTTP API](#post-apiv1start))。
+- **延長**: `POST /api/v1/extend` とフロントエンドサービスが、起動中 workload の `stopAt` を後ろにずらします。start と同じ認可で、
+  どの動作モードでも可です。延長後の残り時間が上限を超える場合は拒否します。
+- **リマインド**: `stopAt` の `STOP_REMINDER` 前に、reconcile ループが workload と停止時刻ごとに 1 回 `StopReminder` を呼びます
+  (メモリで記憶するため再起動後は再送されることがあります)。既定の受け手は何もしません。**Extend 1h** ボタン付きの投稿は通知チャンネル機能が接続します。
+
+監査イベント: start は `workload_knocker.duration_seconds` と `workload_knocker.stop_at` を記録し、延長は `workload.extend`、
+期限切れの停止は source `scheduler` の `workload.auto_stop` です。
+
 ## 動作モードと夜間停止
 
 Helm chart は controller の環境変数 `OPERATION_MODE` と `API_TOKEN` を設定します。
@@ -315,9 +350,22 @@ curl -X POST "http://workload-knocker.workload-knocker.svc:8080/api/v1/start" \
 {"env": "stg", "namespace": "my-namespace", "workloads": ["a", "b"], "user": "ci-bot"}
 ```
 
-`user` は省略可 (既定 `rest-api`)。`200` で `started` / `not_found` / `forbidden` を返し、入力不正は `400`、
+`user` は省略可 (既定 `rest-api`)。`duration` も省略可 (`"3h"` や `"90m"` のような Go duration。空は workload の既定) で、
+`15m` から workload の上限までの範囲外なら何も start せず `400` です。`200` で `started` / `not_found` / `forbidden` と
+`stop_at` (自動停止がある start 済み workload ごとの RFC 3339) を返し、入力不正は `400`、
 要求した workload がすべて [認可ポリシー](#認可) に拒否された場合は `403`、
 未登録の `env` または 1 件も見つからない場合は `404` です。
+
+### `POST /api/v1/extend`
+
+```json
+{"env": "stg", "namespace": "my-namespace", "workloads": ["a"], "duration": "1h"}
+```
+
+起動中の各 workload の `stopAt` に `duration` (必須、`15m` 以上) を加えます。`api` subject に対して start と同じ認可を行います。
+`200` で `extended` (workload と新しい停止時刻)、`not_found`、`forbidden`、`failed` (停止中、自動停止なし、上限超過) を返し、
+すべて拒否された場合は `403`、未登録の `env` または該当 workload なしは `404`、workload はあるが延長できなかった場合は `409`、
+入力不正は `400` です。
 
 ### `POST /api/v1/stop-all`
 
@@ -340,6 +388,7 @@ cluster ごとの内訳を返します。
 | `workload_knocker_operation_duration_seconds` | histogram | `env`, `cluster`, `operation` |
 | `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
 | `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
+| `workload_knocker_auto_stops_total` | counter | `env`, `cluster`, `result` (`success`, `error`) |
 
 `operation` は `start`、`stop`、`stop_all` のいずれかです。`result` は `success`、`error`、`not_found` のいずれかです
 (`error` を返すのは `stop_all` のみ)。カーディナリティを抑えるため、ユーザー ID と workload 名はラベルに使いません。

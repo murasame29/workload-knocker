@@ -11,6 +11,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/mode"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 type recorderFake struct {
@@ -47,7 +48,7 @@ func TestStartHandler_AuditEvents(t *testing.T) {
 	t.Parallel()
 
 	rec := &recorderFake{}
-	h := NewStartHandler(&auditStore{}, &fakeMetrics{}, apiPolicy(t, startTeamOnly))
+	h := NewStartHandler(&auditStore{}, &fakeMetrics{}, apiPolicy(t, startTeamOnly), runlimit.Defaults{})
 	h.audit = rec
 	postStart(t, h, `{"env":"stg","namespace":"team-a","workloads":["ok","billing","okmissing"],"user":"someone"}`)
 

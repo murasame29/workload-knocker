@@ -108,3 +108,19 @@ func TestManager_IncReconcile(t *testing.T) {
 		t.Errorf("series = %d, want 2", got)
 	}
 }
+
+func TestManager_IncAutoStop(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m.IncAutoStop("stg", "c1", "success")
+	m.IncAutoStop("stg", "c1", "success")
+	m.IncAutoStop("stg", "c1", "error")
+
+	if got := testutil.ToFloat64(m.autoStops.WithLabelValues("stg", "c1", "success")); got != 2 {
+		t.Errorf("success = %v, want 2", got)
+	}
+	if got := testutil.CollectAndCount(m.autoStops); got != 2 {
+		t.Errorf("series = %d, want 2", got)
+	}
+}

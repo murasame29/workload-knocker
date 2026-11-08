@@ -12,6 +12,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 // defaultStartUser is recorded when the start request omits user.
@@ -26,11 +27,14 @@ type StartHandler struct {
 	metrics metrics.MetricsManager
 	authz   authz.Authorizer
 	audit   audit.Recorder
+	defs    runlimit.Defaults
+	now     func() time.Time
 }
 
 // NewStartHandler constructs a StartHandler; az is checked per workload for the api subject.
-func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer) *StartHandler {
-	return &StartHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog()}
+// defs are the controller-wide run duration settings.
+func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, defs runlimit.Defaults) *StartHandler {
+	return &StartHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog(), defs: defs, now: time.Now}
 }
 
 // startRequest is the JSON schema of the POST body.
@@ -43,6 +47,8 @@ type startRequest struct {
 	Workloads []string `json:"workloads"`
 	// User identifies the operator. Defaults to "rest-api".
 	User string `json:"user,omitempty"`
+	// Duration is the run duration as a Go duration ("3h", "90m"); empty uses the workload default.
+	Duration string `json:"duration,omitempty"`
 }
 
 // startResponse is the JSON schema of the HTTP response.
@@ -54,14 +60,16 @@ type startResponse struct {
 	NotFound     []string `json:"not_found"`
 	// Forbidden lists workloads the authorization policy does not let the API start.
 	Forbidden []string `json:"forbidden"`
-	Message   string   `json:"message"`
+	// StopAt maps each started workload with an auto-stop to its stop time (RFC 3339).
+	StopAt  map[string]time.Time `json:"stop_at,omitempty"`
+	Message string               `json:"message"`
 }
 
 // ServeHTTP implements net/http.Handler.
 //
 // Status codes:
 //   - 405: method other than POST
-//   - 400: JSON parse failure, or missing env / namespace / workloads
+//   - 400: JSON parse failure, missing env / namespace / workloads, or an invalid duration
 //   - 403: every requested workload is refused by the authorization policy
 //   - 404: env not in the Cluster Registry, or none of the workloads found
 //   - 200: at least one started (workloads not found are listed in not_found)
@@ -109,15 +117,35 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.String("cluster.env", req.Env), slog.String("error.message", err.Error()))
 	}
 
+	requested, err := runlimit.ParseGo(req.Duration)
+	if err != nil {
+		http.Error(w, "invalid duration: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Validate every existing workload first so a bad duration starts nothing.
+	for _, name := range req.Workloads {
+		if wl := h.workload(req.Env, req.Namespace, name); wl != nil {
+			if _, err := h.defs.For(wl).Resolve(requested); err != nil {
+				http.Error(w, fmt.Sprintf("invalid duration for %s: %v", name, err), http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
 	cluster := h.clusterName(req.Env)
 	requestID := audit.NewRequestID()
-	record := func(name string, outcome audit.Outcome, err error) {
-		h.audit.Record(r.Context(), audit.Record{
+	record := func(name string, outcome audit.Outcome, err error, opts ...func(*audit.Record)) {
+		rec := audit.Record{
 			Event: audit.WorkloadStart, Outcome: outcome, Source: audit.SourceAPI,
 			RequestID: requestID, EndUser: audit.EndUserAPI,
 			Cluster: cluster, Namespace: req.Namespace, WorkloadName: name, WorkloadKind: h.kind(req.Env, req.Namespace, name), Err: err,
-		})
+		}
+		for _, o := range opts {
+			o(&rec)
+		}
+		h.audit.Record(r.Context(), rec)
 	}
+	stopAts := map[string]time.Time{}
 	started := make([]string, 0, len(req.Workloads))
 	notFound := make([]string, 0)
 	forbidden := make([]string, 0)
@@ -128,12 +156,16 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			record(name, audit.Denied, nil)
 			continue
 		}
+		d, stopAt := h.schedule(req.Env, req.Namespace, name, requested)
 		begin := time.Now()
-		ok := h.store.Start(req.Env, req.Namespace, name, user)
+		ok := h.store.Start(req.Env, req.Namespace, name, user, stopAt)
 		if ok {
 			h.metrics.ObserveOperation(req.Env, cluster, "start", "success", time.Since(begin))
 			started = append(started, name)
-			record(name, audit.Success, nil)
+			if !stopAt.IsZero() {
+				stopAts[name] = stopAt
+			}
+			record(name, audit.Success, nil, func(r *audit.Record) { r.Duration, r.StopAt = d, stopAt })
 		} else {
 			h.metrics.ObserveOperation(req.Env, cluster, "start", "not_found", time.Since(begin))
 			notFound = append(notFound, name)
@@ -162,6 +194,7 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Started:      started,
 		NotFound:     notFound,
 		Forbidden:    forbidden,
+		StopAt:       stopAts,
 		Message:      message,
 	}
 
@@ -174,6 +207,25 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 var errWorkloadNotFound = errors.New("workload not found")
+
+// schedule resolves the run duration and stop time of a validated start.
+func (h *StartHandler) schedule(env, ns, name string, requested time.Duration) (time.Duration, time.Time) {
+	d, _ := h.defs.For(h.workload(env, ns, name)).Resolve(requested)
+	if d == 0 {
+		return 0, time.Time{}
+	}
+	return d, h.now().Add(d)
+}
+
+// workload returns a copy of the store's workload, or nil when unknown.
+func (h *StartHandler) workload(env, ns, name string) *model.Workload {
+	for _, w := range h.store.WorkloadsByNamespace(env, ns) {
+		if w.Name == name {
+			return w
+		}
+	}
+	return nil
+}
 
 // kind returns the workload kind, or "" when the store does not know the workload.
 func (h *StartHandler) kind(env, ns, name string) string {

@@ -32,6 +32,13 @@ type flow struct {
 	selected map[string]bool
 	toStart  []string
 	toStop   []string
+	// changes / rejected are the previewed plan lines, kept to re-render the preview.
+	changes  []frontend.Change
+	rejected []frontend.Rejection
+	// durations are the requested run durations by workload name (absent = workload default).
+	durations map[string]time.Duration
+	// draft holds the raw modal inputs of the last invalid submission, by input index.
+	draft []string
 	// requestID ties the preview and the confirm of one operation in the audit log.
 	requestID string
 	expires   time.Time

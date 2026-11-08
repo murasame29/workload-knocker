@@ -18,6 +18,9 @@ const (
 	kindPlan            = "ap"  // Apply button: show the plan preview
 	kindConfirm         = "ok"  // Confirm button: apply the plan
 	kindCancel          = "no"  // Cancel button
+	kindDuration        = "du"  // Change duration button: opens the duration modal
+	kindDurationRetry   = "dr"  // Try again button after an invalid duration: reopens the modal
+	kindDurationModal   = "dm"  // duration modal submission
 )
 
 // customID is the decoded component identifier: wk1:<kind>:<token>:<arg>.

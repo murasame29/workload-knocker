@@ -34,7 +34,8 @@ type fakeStore struct {
 func (f *fakeStore) Clusters() []model.ClusterRef                          { return nil }
 func (f *fakeStore) Namespaces(string) []string                            { return nil }
 func (f *fakeStore) WorkloadsByNamespace(string, string) []*model.Workload { return nil }
-func (f *fakeStore) Start(string, string, string, string) bool             { return false }
+func (f *fakeStore) Start(string, string, string, string, time.Time) bool  { return false }
+func (f *fakeStore) SetStopAt(string, string, string, time.Time) bool      { return false }
 func (f *fakeStore) Stop(string, string, string) bool                      { return false }
 func (f *fakeStore) Reconcile(context.Context, string) error               { return nil }
 func (f *fakeStore) ReconcileAll(context.Context) error                    { return nil }

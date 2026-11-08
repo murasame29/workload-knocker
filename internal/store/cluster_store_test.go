@@ -16,6 +16,7 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
+	"github.com/murasame29/workload-knocker/internal/model"
 )
 
 const (
@@ -88,7 +89,8 @@ func (f *fakeMetrics) DeleteCluster(env, cluster string) {
 
 func (f *fakeMetrics) IncConfigReload(string, string) {}
 
-func (f *fakeMetrics) IncReconcile(string, string) {}
+func (f *fakeMetrics) IncReconcile(string, string)        {}
+func (f *fakeMetrics) IncAutoStop(string, string, string) {}
 
 func (f *fakeMetrics) Handler() http.Handler { return http.NotFoundHandler() }
 
@@ -217,7 +219,7 @@ func TestClusterStore_Start_UpdatesConfigMap(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	if !store.Start("ns-a", "wl-1", "alice") {
+	if !store.Start("ns-a", "wl-1", "alice", time.Time{}) {
 		t.Fatalf("Start(ns-a, wl-1, alice) = false, want true")
 	}
 
@@ -246,7 +248,7 @@ func TestClusterStore_Stop_ClearsReplicas(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	if !store.Start("ns-a", "wl-1", "alice") {
+	if !store.Start("ns-a", "wl-1", "alice", time.Time{}) {
 		t.Fatalf("Start: false")
 	}
 	if !store.Stop("ns-a", "wl-1") {
@@ -287,10 +289,10 @@ func TestClusterStore_StopAll_ReturnsCount(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	if !store.Start("ns-a", "wl-1", "alice") {
+	if !store.Start("ns-a", "wl-1", "alice", time.Time{}) {
 		t.Fatalf("Start wl-1: false")
 	}
-	if !store.Start("ns-a", "wl-2", "bob") {
+	if !store.Start("ns-a", "wl-2", "bob", time.Time{}) {
 		t.Fatalf("Start wl-2: false")
 	}
 
@@ -351,4 +353,142 @@ func TestClusterStore_Bootstrap_WithExistingConfigMap(t *testing.T) {
 	if wls[0].StartedBy != "carol" {
 		t.Errorf("workload.StartedBy after restore: got %q, want %q", wls[0].StartedBy, "carol")
 	}
+}
+
+func TestClusterStore_StopAt_PersistsAcrossRestartAndClearsOnStop(t *testing.T) {
+	t.Parallel()
+
+	c := testCluster("stg")
+	kc := fake.NewClientset()
+	kk := kedafake.NewSimpleClientset(makeScaledObject("ns-a", "wl-1"))
+	stopAt := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+
+	first := newTestStore(t, c, kc, kk, &fakeMetrics{})
+	if err := first.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	if !first.Start("ns-a", "wl-1", "alice", stopAt) {
+		t.Fatal("Start = false")
+	}
+
+	second := newTestStore(t, c, kc, kk, &fakeMetrics{})
+	if err := second.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap after restart: %v", err)
+	}
+	if got := second.WorkloadsByNamespace("ns-a")[0].StopAt; !got.Equal(stopAt) {
+		t.Fatalf("StopAt after restart = %v, want %v", got, stopAt)
+	}
+
+	later := stopAt.Add(time.Hour)
+	if !second.SetStopAt("ns-a", "wl-1", later) {
+		t.Fatal("SetStopAt on a running workload = false")
+	}
+	if got := second.WorkloadsByNamespace("ns-a")[0].StopAt; !got.Equal(later) {
+		t.Errorf("StopAt after SetStopAt = %v, want %v", got, later)
+	}
+
+	if !second.Stop("ns-a", "wl-1") {
+		t.Fatal("Stop = false")
+	}
+	if !second.WorkloadsByNamespace("ns-a")[0].StopAt.IsZero() {
+		t.Error("Stop must clear StopAt")
+	}
+	if second.SetStopAt("ns-a", "wl-1", later) {
+		t.Error("SetStopAt on a stopped workload = true, want false")
+	}
+	if _, ok := readStateRaw(t, kc)["ns-a/wl-1"]["stopAt"]; ok {
+		t.Error("stopAt must be omitted from the state of a stopped workload")
+	}
+}
+
+func TestClusterStore_StopAll_ClearsStopAt(t *testing.T) {
+	t.Parallel()
+
+	kc := fake.NewClientset()
+	kk := kedafake.NewSimpleClientset(makeScaledObject("ns-a", "wl-1"))
+	s := newTestStore(t, testCluster("stg"), kc, kk, &fakeMetrics{})
+	if err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.Start("ns-a", "wl-1", "alice", time.Now().Add(time.Hour))
+	if _, _, err := s.StopAll(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if !s.WorkloadsByNamespace("ns-a")[0].StopAt.IsZero() {
+		t.Error("StopAll must clear StopAt")
+	}
+}
+
+func TestClusterStore_State_WithoutStopAtStaysBackwardCompatible(t *testing.T) {
+	t.Parallel()
+
+	kc := fake.NewClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: testStateConfigMap, Namespace: testControllerNs},
+		Data:       map[string]string{testStateConfigMapKey: `{"ns-a/wl-1":{"replicas":1,"startedBy":"alice"}}`},
+	})
+	kk := kedafake.NewSimpleClientset(makeScaledObject("ns-a", "wl-1"))
+	s := newTestStore(t, testCluster("stg"), kc, kk, &fakeMetrics{})
+	if err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w := s.WorkloadsByNamespace("ns-a")[0]
+	if w.Replicas != 1 || !w.StopAt.IsZero() {
+		t.Errorf("replicas=%d stopAt=%v, want running without auto-stop", w.Replicas, w.StopAt)
+	}
+}
+
+func TestClusterStore_DurationAnnotations(t *testing.T) {
+	t.Parallel()
+
+	so := makeScaledObject("ns-a", "wl-1")
+	so.Annotations = map[string]string{
+		"workload-knocker.io/default-duration": "4h",
+		"workload-knocker.io/max-duration":     "nonsense",
+	}
+	kk := kedafake.NewSimpleClientset(so, makeScaledObject("ns-a", "wl-2"))
+	s := newTestStore(t, testCluster("stg"), fake.NewClientset(), kk, &fakeMetrics{})
+	if err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]*model.Workload{}
+	for _, w := range s.WorkloadsByNamespace("ns-a") {
+		byName[w.Name] = w
+	}
+	if d := byName["wl-1"].DefaultDuration; d == nil || *d != 4*time.Hour {
+		t.Errorf("wl-1 default = %v, want 4h", d)
+	}
+	if byName["wl-1"].MaxDuration != 0 {
+		t.Errorf("an invalid max annotation must be ignored, got %v", byName["wl-1"].MaxDuration)
+	}
+	if byName["wl-2"].DefaultDuration != nil {
+		t.Errorf("wl-2 default = %v, want unset", byName["wl-2"].DefaultDuration)
+	}
+}
+
+func TestClusterStore_WorkloadsByNamespace_ReturnsCopies(t *testing.T) {
+	t.Parallel()
+
+	kk := kedafake.NewSimpleClientset(makeScaledObject("ns-a", "wl-1"))
+	s := newTestStore(t, testCluster("stg"), fake.NewClientset(), kk, &fakeMetrics{})
+	if err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.WorkloadsByNamespace("ns-a")[0].Replicas = 5
+	if got := s.WorkloadsByNamespace("ns-a")[0].Replicas; got != 0 {
+		t.Errorf("mutating a returned workload changed the store: replicas=%d", got)
+	}
+}
+
+// readStateRaw returns the state ConfigMap as generic maps to inspect omitted keys.
+func readStateRaw(t *testing.T, kc *fake.Clientset) map[string]map[string]any {
+	t.Helper()
+	cm, err := kc.CoreV1().ConfigMaps(testControllerNs).Get(context.Background(), testStateConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]map[string]any
+	if err := json.Unmarshal([]byte(cm.Data[testStateConfigMapKey]), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

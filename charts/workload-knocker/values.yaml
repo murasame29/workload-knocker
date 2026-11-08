@@ -106,6 +106,12 @@ settings:
   rolloutPollInterval: 5s
   rolloutWatchTimeout: 10m
   shutdownTimeout: 5s
+  # Run duration per start. defaultRunDuration "0" means no auto-stop; maxRunDuration caps starts and extensions.
+  # ScaledObject annotations workload-knocker.io/default-duration and /max-duration override both per workload.
+  defaultRunDuration: "0"
+  maxRunDuration: 24h
+  # Reminder before the auto-stop; "0" disables it.
+  stopReminder: 15m
 
 service:
   type: ClusterIP

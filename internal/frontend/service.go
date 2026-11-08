@@ -14,6 +14,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/mode"
 	"github.com/murasame29/workload-knocker/internal/model"
 	"github.com/murasame29/workload-knocker/internal/rollout"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 // Limits are the per-frontend display constraints. Zero means unlimited.
@@ -57,6 +58,8 @@ type Action string
 const (
 	ActionStart Action = "start"
 	ActionStop  Action = "stop"
+	// ActionExtend moves the auto-stop of a running workload; it is authorized like a start.
+	ActionExtend Action = "extend"
 )
 
 // Change is one plan line: Names (of Action) belonging to the entry shown as Label.
@@ -74,6 +77,8 @@ const (
 	ReasonUnauthorized Reason = "unauthorized"
 	// ReasonChatStopDisabled: OPERATION_MODE=scheduled-stop leaves stopping to the nightly job.
 	ReasonChatStopDisabled Reason = "chat-stop-disabled"
+	// ReasonInvalidDuration: the requested run duration is out of range; see Rejection.Detail.
+	ReasonInvalidDuration Reason = "invalid-duration"
 )
 
 // Rejection is a plan or apply line that was refused; Label is the display target.
@@ -82,12 +87,17 @@ type Rejection struct {
 	Label  string
 	Names  []string
 	Reason Reason
+	// Detail explains ReasonInvalidDuration.
+	Detail string
 }
 
 // Message is the user-facing explanation, safe to show in a chat.
 func (r Rejection) Message() string {
-	if r.Reason == ReasonChatStopDisabled {
+	switch r.Reason {
+	case ReasonChatStopDisabled:
 		return "stopping from chat is disabled (OPERATION_MODE=scheduled-stop); workloads are stopped by the nightly job"
+	case ReasonInvalidDuration:
+		return r.Detail
 	}
 	return "you are not authorized to " + string(r.Action) + " this"
 }
@@ -119,6 +129,8 @@ type ApplyRequest struct {
 	RequestID string
 	ToStart   []string
 	ToStop    []string
+	// Durations are the requested run durations by workload name; absent or 0 selects the default.
+	Durations map[string]time.Duration
 }
 
 // Applied is the outcome of one workload operation.
@@ -127,6 +139,8 @@ type Applied struct {
 	Name   string
 	// Found is false when the store did not know the workload.
 	Found bool
+	// StopAt is the scheduled auto-stop of a start; zero when none.
+	StopAt time.Time
 }
 
 // ApplyResult is the data a frontend renders after applying a plan.
@@ -147,6 +161,8 @@ type Service struct {
 	mode             mode.Mode
 	audit            audit.Recorder
 	rollout          *rollout.Tracker
+	runDefaults      runlimit.Defaults
+	now              func() time.Time
 }
 
 // Option customizes a Service.
@@ -164,9 +180,15 @@ func WithRecorder(r audit.Recorder) Option { return func(s *Service) { s.audit =
 // WithRollout enables per-workload rollout progress after Apply; without it Track reports false.
 func WithRollout(t *rollout.Tracker) Option { return func(s *Service) { s.rollout = t } }
 
+// WithRunDefaults sets the controller-wide run duration settings (zero value: no default, no cap).
+func WithRunDefaults(d runlimit.Defaults) Option { return func(s *Service) { s.runDefaults = d } }
+
+// WithClock replaces the clock used to compute stop times (default: time.Now).
+func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
+
 // NewService builds a Service. reconcileTimeout bounds each on-demand Reconcile.
 func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
-	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout, audit: audit.NewSlog()}
+	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout, audit: audit.NewSlog(), now: time.Now}
 	for _, o := range opts {
 		o(s)
 	}
@@ -177,6 +199,9 @@ func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTi
 func (s *Service) check(sub authz.Subject, env, namespace string, a Action, name string) Reason {
 	if a == ActionStop && !s.mode.AllowChatStop() {
 		return ReasonChatStopDisabled
+	}
+	if a == ActionExtend {
+		a = ActionStart
 	}
 	if s.authz == nil || !s.authz.Allowed(sub, env, namespace, name, authz.Action(a)) {
 		return ReasonUnauthorized
@@ -247,16 +272,22 @@ func (s *Service) Plan(sub authz.Subject, cl config.Cluster, namespace string, e
 var errNotFound = errors.New("workload not found")
 
 // record emits the audit event of one workload operation requested by sub.
-func (s *Service) record(sub authz.Subject, cl config.Cluster, namespace, name string, a Action, outcome audit.Outcome, requestID string, err error) {
+func (s *Service) record(sub authz.Subject, cl config.Cluster, namespace, name string, a Action, outcome audit.Outcome, requestID string, err error, opts ...func(*audit.Record)) {
 	source := audit.Source(sub.Platform)
 	event := audit.WorkloadStart
-	if a == ActionStop {
+	switch a {
+	case ActionStop:
 		event = audit.WorkloadStop
+	case ActionExtend:
+		event = audit.WorkloadExtend
 	}
 	rec := audit.Record{
 		Event: event, Outcome: outcome, Source: source, RequestID: requestID,
 		EndUser: audit.EndUser(source, sub.User),
 		Cluster: cl.Name, Namespace: namespace, WorkloadName: name, Err: err,
+	}
+	for _, o := range opts {
+		o(&rec)
 	}
 	for _, w := range s.store.WorkloadsByNamespace(cl.Env, namespace) {
 		if w.Name == name {
@@ -342,12 +373,18 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 		if s.rejectApply(&res, req, ActionStart, name) {
 			continue
 		}
+		sch := s.schedule(cl.Env, req.Namespace, name, req.Durations[name])
+		if sch.Err != nil {
+			res.Rejected = append(res.Rejected, Rejection{Action: ActionStart, Label: name, Names: []string{name}, Reason: ReasonInvalidDuration, Detail: name + ": " + sch.Err.Error()})
+			s.record(req.Subject, cl, req.Namespace, name, ActionStart, audit.Failure, req.RequestID, sch.Err)
+			continue
+		}
 		begin := time.Now()
-		ok := s.store.Start(cl.Env, req.Namespace, name, req.User)
+		ok := s.store.Start(cl.Env, req.Namespace, name, req.User, sch.StopAt)
 		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStart), resultLabel(ok), time.Since(begin))
-		res.Applied = append(res.Applied, Applied{Action: ActionStart, Name: name, Found: ok})
+		res.Applied = append(res.Applied, Applied{Action: ActionStart, Name: name, Found: ok, StopAt: sch.StopAt})
 		started++
-		s.recordApplied(req, ActionStart, name, ok)
+		s.recordApplied(req, ActionStart, name, ok, withSchedule(sch))
 	}
 
 	for _, name := range req.ToStop {
@@ -379,12 +416,16 @@ func (s *Service) rejectApply(res *ApplyResult, req ApplyRequest, a Action, name
 	return true
 }
 
-func (s *Service) recordApplied(req ApplyRequest, a Action, name string, found bool) {
+func (s *Service) recordApplied(req ApplyRequest, a Action, name string, found bool, opts ...func(*audit.Record)) {
 	if found {
-		s.record(req.Subject, req.Cluster, req.Namespace, name, a, audit.Success, req.RequestID, nil)
+		s.record(req.Subject, req.Cluster, req.Namespace, name, a, audit.Success, req.RequestID, nil, opts...)
 		return
 	}
-	s.record(req.Subject, req.Cluster, req.Namespace, name, a, audit.Failure, req.RequestID, errNotFound)
+	s.record(req.Subject, req.Cluster, req.Namespace, name, a, audit.Failure, req.RequestID, errNotFound, opts...)
+}
+
+func withSchedule(sch Schedule) func(*audit.Record) {
+	return func(r *audit.Record) { r.Duration, r.StopAt = sch.Duration, sch.StopAt }
 }
 
 // resultLabel maps a store outcome to the metrics result label.

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
@@ -37,7 +38,7 @@ func (f *fakeStore) Namespaces(string) []string { return []string{"zeta", "alpha
 func (f *fakeStore) WorkloadsByNamespace(string, string) []*model.Workload {
 	return f.workloads
 }
-func (f *fakeStore) Start(env, ns, name, user string) bool {
+func (f *fakeStore) Start(env, ns, name, user string, _ time.Time) bool {
 	f.calls = append(f.calls, "start:"+name+":"+user)
 	return name != "missing"
 }

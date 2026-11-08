@@ -3,6 +3,7 @@ package discordbot
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/rollout"
+	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
 const (
@@ -148,6 +150,8 @@ func (b *Bot) handleComponent(i *discordgo.Interaction) {
 	switch id.Kind {
 	case kindConfirm:
 		b.handleConfirm(i, id, userID)
+	case kindDuration, kindDurationRetry:
+		b.openDurationModal(i, id, userID)
 	case kindNamespacePage, kindNamespaceSelect, kindWorkloadPage, kindWorkloadSelect, kindPlan, kindCancel:
 		b.withFlow(i, id, userID, func(f *flow, cl config.Cluster) view {
 			return b.step(id, data.Values, subject(i), f, cl)
@@ -160,9 +164,21 @@ func (b *Bot) handleComponent(i *discordgo.Interaction) {
 
 // withFlow runs fn on the invoker's live flow and updates the message with its view.
 func (b *Bot) withFlow(i *discordgo.Interaction, id customID, userID string, fn func(*flow, config.Cluster) view) {
-	var v view
+	b.flowResponse(i, id.Token, userID, true, func(f *flow, cl config.Cluster) *discordgo.InteractionResponse {
+		v := fn(f, cl)
+		return &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{Content: v.Content, Components: v.Components, AllowedMentions: noMentions()},
+		}
+	})
+}
+
+// flowResponse runs fn on the invoker's live flow and sends its response. An unknown or expired
+// flow updates the message in place when updateOnExpire, else replies ephemerally.
+func (b *Bot) flowResponse(i *discordgo.Interaction, token, userID string, updateOnExpire bool, fn func(*flow, config.Cluster) *discordgo.InteractionResponse) {
+	var resp *discordgo.InteractionResponse
 	denied := false
-	ok := b.flows.with(id.Token, func(f *flow) {
+	ok := b.flows.with(token, func(f *flow) {
 		if f.userID != userID {
 			denied = true
 			return
@@ -170,18 +186,24 @@ func (b *Bot) withFlow(i *discordgo.Interaction, id customID, userID string, fn 
 		cl, found := b.registry.ByEnv(f.env)
 		if !found {
 			f.expires = time.Time{}
-			v = text(msgClusterGone)
+			v := text(msgClusterGone)
+			resp = &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseUpdateMessage,
+				Data: &discordgo.InteractionResponseData{Content: v.Content, Components: v.Components, AllowedMentions: noMentions()},
+			}
 			return
 		}
-		v = fn(f, cl)
+		resp = fn(f, cl)
 	})
 	switch {
 	case denied:
 		b.replyEphemeral(i, msgForeign)
-	case !ok:
+	case !ok && updateOnExpire:
 		b.update(i, text(msgExpired))
+	case !ok:
+		b.replyEphemeral(i, msgExpired)
 	default:
-		b.update(i, v)
+		b.respond(i, resp)
 	}
 }
 
@@ -290,7 +312,114 @@ func (b *Bot) previewPlan(token string, sub authz.Subject, f *flow, cl config.Cl
 		return text(fitLines(head, rejectionLines(plan.Rejected), contentMaxLen))
 	}
 	f.toStart, f.toStop = plan.ToStart, plan.ToStop
-	return previewView(token, cl, f.namespace, plan.Changes, plan.Rejected)
+	f.changes, f.rejected = plan.Changes, plan.Rejected
+	return b.preview(token, cl, f)
+}
+
+// preview renders the stored plan with the auto-stop of each start.
+func (b *Bot) preview(token string, cl config.Cluster, f *flow) view {
+	starts := b.svc.Schedules(cl.Env, f.namespace, f.toStart, f.durations)
+	return previewView(token, cl, f.namespace, f.changes, f.rejected, starts)
+}
+
+// openDurationModal shows the duration modal of the previewed starts.
+func (b *Bot) openDurationModal(i *discordgo.Interaction, id customID, userID string) {
+	b.flowResponse(i, id.Token, userID, false, func(f *flow, cl config.Cluster) *discordgo.InteractionResponse {
+		if len(f.toStart) == 0 {
+			return &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{Content: msgUnrecognized, Flags: discordgo.MessageFlagsEphemeral},
+			}
+		}
+		starts := b.svc.Schedules(cl.Env, f.namespace, f.toStart, f.durations)
+		var drafts []string
+		if id.Kind == kindDurationRetry {
+			drafts = f.draft
+		}
+		return durationModal(id.Token, starts, drafts)
+	})
+}
+
+// handleModal applies a duration modal submission: valid inputs refresh the preview, invalid
+// ones get an ephemeral reason with a Try again button.
+func (b *Bot) handleModal(i *discordgo.Interaction) {
+	data, ok := i.Data.(discordgo.ModalSubmitInteractionData)
+	if !ok {
+		slog.Warn("discord modal data type assertion failed")
+		return
+	}
+	id, err := parseCustomID(data.CustomID)
+	userID, _ := interactionUser(i)
+	if err != nil || userID == "" || id.Kind != kindDurationModal {
+		slog.Warn("unrecognized discord modal", slog.String("custom_id", data.CustomID))
+		b.replyEphemeral(i, msgUnrecognized)
+		return
+	}
+	inputs := modalInputs(data.Components)
+
+	b.flowResponse(i, id.Token, userID, false, func(f *flow, cl config.Cluster) *discordgo.InteractionResponse {
+		names := f.toStart[:min(len(f.toStart), maxDurationInputs)]
+		raw := make([]string, len(names))
+		requested := make(map[string]time.Duration, len(names))
+		var problems []string
+		for idx, name := range names {
+			raw[idx] = inputs[strconv.Itoa(idx)]
+			d, err := runlimit.ParseHours(raw[idx])
+			if err != nil {
+				problems = append(problems, fmt.Sprintf("⛔ %s: %v", name, err))
+				continue
+			}
+			requested[name] = d
+		}
+		for _, sch := range b.svc.Schedules(cl.Env, f.namespace, names, requested) {
+			if sch.Err != nil {
+				problems = append(problems, fmt.Sprintf("⛔ %s: %v", sch.Name, sch.Err))
+			}
+		}
+		if len(problems) > 0 {
+			f.draft = raw
+			v := retryView(id.Token, problems)
+			return &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{Content: v.Content, Components: v.Components, Flags: discordgo.MessageFlagsEphemeral, AllowedMentions: noMentions()},
+			}
+		}
+		f.draft = nil
+		f.durations = make(map[string]time.Duration, len(requested))
+		for name, d := range requested {
+			if d > 0 {
+				f.durations[name] = d
+			}
+		}
+		v := b.preview(id.Token, cl, f)
+		return &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{Content: v.Content, Components: v.Components, AllowedMentions: noMentions()},
+		}
+	})
+}
+
+// modalInputs maps each text input custom_id of a modal submission to its value.
+func modalInputs(components []discordgo.MessageComponent) map[string]string {
+	out := map[string]string{}
+	for _, c := range components {
+		var row []discordgo.MessageComponent
+		switch r := c.(type) {
+		case *discordgo.ActionsRow:
+			row = r.Components
+		case discordgo.ActionsRow:
+			row = r.Components
+		}
+		for _, in := range row {
+			switch t := in.(type) {
+			case *discordgo.TextInput:
+				out[t.CustomID] = t.Value
+			case discordgo.TextInput:
+				out[t.CustomID] = t.Value
+			}
+		}
+	}
+	return out
 }
 
 // handleConfirm applies the previewed plan once; the flow is consumed before applying so a
@@ -312,7 +441,7 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 			problem = msgUnrecognized
 		default:
 			cl = c
-			req = frontend.ApplyRequest{Cluster: c, Namespace: f.namespace, User: userID, Subject: sub, RequestID: f.requestID, ToStart: f.toStart, ToStop: f.toStop}
+			req = frontend.ApplyRequest{Cluster: c, Namespace: f.namespace, User: userID, Subject: sub, RequestID: f.requestID, ToStart: f.toStart, ToStop: f.toStop, Durations: maps.Clone(f.durations)}
 			f.expires = time.Time{}
 		}
 	})

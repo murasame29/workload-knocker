@@ -27,8 +27,10 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
 - Starting a workload sets `workload_knocker_activation{env,cluster,namespace,workload} = 1`.
   Stopping sets it to 0. The requested state is stored in a `workload-state` ConfigMap in each
   managed cluster, so it survives restarts.
-- `POST /api/v1/start` and `POST /api/v1/stop-all` provide the same operations over HTTP.
+- `POST /api/v1/start`, `POST /api/v1/extend` and `POST /api/v1/stop-all` provide the same operations over HTTP.
   See [HTTP API](docs/en/configuration.md#http-api).
+- A start can carry a run duration: the workload is stopped automatically (also across restarts) and can be
+  extended. See [Run duration](docs/en/configuration.md#run-duration).
 - Every start and stop writes a structured audit event to stdout; see [Audit log](docs/en/audit-log.md).
 
 Your `ScaledObject` needs a Prometheus trigger such as:
