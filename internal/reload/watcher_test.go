@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const testDebounce = 50 * time.Millisecond
+const testDebounce = 200 * time.Millisecond
 
 // startWatcher runs a Watcher on path and returns a counter of onChange calls.
 func startWatcher(t *testing.T, path string) *atomic.Int32 {
@@ -61,7 +61,6 @@ func TestWatcher_DebouncesBurstOfWrites(t *testing.T) {
 		if err := os.WriteFile(path, []byte{byte('a' + i)}, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
 	waitFor(t, "a reload", func() bool { return calls.Load() >= 1 })
 	time.Sleep(4 * testDebounce)

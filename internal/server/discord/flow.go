@@ -93,12 +93,6 @@ func (s *flowStore) take(token string) (*flow, bool) {
 	return f, true
 }
 
-func (s *flowStore) drop(token string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.flows, token)
-}
-
 func (s *flowStore) sweepLocked() {
 	now := s.now()
 	for k, f := range s.flows {
