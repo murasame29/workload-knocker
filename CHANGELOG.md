@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/murasame29/workload-knocker/compare/v0.1.2...v0.1.3) (2026-11-08)
+
+
+### Bug Fixes
+
+* drop the hard-coded auto-stop line from result messages ([#53](https://github.com/murasame29/workload-knocker/issues/53)) ([a8f5dca](https://github.com/murasame29/workload-knocker/commit/a8f5dcaeb32c7055ff6c16d80d7c6aafc1b956b6))
+
 ## [0.1.2](https://github.com/murasame29/workload-knocker/compare/v0.1.1...v0.1.2) (2026-11-08)
 
 
