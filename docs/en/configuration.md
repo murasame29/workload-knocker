@@ -10,6 +10,8 @@
 | `CLUSTER_RECONCILE_TIMEOUT` | `2s` | Reconcile timeout when a Slack command arrives |
 | `STOP_ALL_TIMEOUT` | `10s` | Per-cluster timeout for `/api/v1/stop-all` |
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
+| `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
+| `API_TOKEN` | empty | Bearer token for `/api/v1/*`. When empty, `/api/v1/*` responds `503` (fail closed) |
 | `SLACK_APP_TOKEN` | required | Slack app-level token (`xapp-...`) |
 | `SLACK_BOT_TOKEN` | required | Slack bot token (`xoxb-...`) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
@@ -75,13 +77,11 @@ needs `get/list/watch` on `scaledobjects` and `get/create/update` on ConfigMaps 
 ## Operation modes and nightly stop
 
 The Helm chart sets the controller's `OPERATION_MODE` and `API_TOKEN` environment variables.
-These take effect once a controller release that supports them is deployed. Current
-binaries ignore unknown environment variables, so the chart can be upgraded first.
 
 | `mode` | API start | API stop / stop-all | `nightlyStop` |
 | --- | --- | --- | --- |
 | `full` (default) | yes | yes | optional |
-| `scheduled-stop` | yes | no (`403`) | required (`enabled: true`) |
+| `scheduled-stop` | yes | no (`403`; the nightly CronJob stops workloads) | required (`enabled: true`) |
 | `off` | yes | no | must not be enabled |
 
 `api.tokenSecret.name` is required in every mode so that `/api/v1/*` is never unauthenticated.
@@ -113,7 +113,26 @@ CronJob, empty `api.tokenSecret.name`) fail at `helm template`/`helm install`.
 
 ## HTTP API
 
-Current releases are unauthenticated: restrict network access. Controllers that support `API_TOKEN` require `Authorization: Bearer <token>` on `/api/v1/*`.
+### Authentication
+
+`/api/v1/*` requires `Authorization: Bearer <token>`, where the token is the controller's `API_TOKEN`.
+`/metrics`, `/livez`, `/healthz` and `/readyz` are unauthenticated.
+
+```sh
+curl -X POST "http://workload-knocker.workload-knocker.svc:8080/api/v1/start" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"env":"stg","namespace":"my-namespace","workloads":["a"]}'
+```
+
+Checks run in this order: authentication, operation mode, request validation.
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing or invalid token (`WWW-Authenticate: Bearer`) |
+| `403` | The operation is not allowed in the current `OPERATION_MODE` |
+| `503` | `API_TOKEN` is not set, so the API is disabled |
+
 
 ### `POST /api/v1/start`
 
@@ -126,7 +145,7 @@ Current releases are unauthenticated: restrict network access. Controllers that 
 
 ### `POST /api/v1/stop-all`
 
-Stops workloads in all managed clusters (best effort). Returns `200` with a per-cluster
+Allowed only in `full` mode (`403` otherwise). Stops workloads in all managed clusters (best effort). Returns `200` with a per-cluster
 breakdown even when some clusters fail.
 
 ### Probes

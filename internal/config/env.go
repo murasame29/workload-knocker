@@ -8,6 +8,8 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
+
+	"github.com/murasame29/workload-knocker/internal/mode"
 )
 
 // Env is the startup configuration of workload-knocker (from environment variables).
@@ -31,6 +33,12 @@ type Env struct {
 	// ShutdownTimeout is the timeout server.Manager gives each Lifecycle.Shutdown.
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"5s"`
 
+	// OperationMode is full | scheduled-stop | off; see internal/mode.
+	OperationMode mode.Mode `env:"OPERATION_MODE" envDefault:"full"`
+
+	// APIToken is the bearer token for /api/v1/*; empty disables the API (fail closed).
+	APIToken string `env:"API_TOKEN"`
+
 	SlackAppToken string `env:"SLACK_APP_TOKEN,required"`
 	SlackBotToken string `env:"SLACK_BOT_TOKEN,required"`
 	LogLevel      string `env:"LOG_LEVEL"              envDefault:"info"`
@@ -48,6 +56,10 @@ func LoadEnv() (*Env, error) {
 
 	if v := os.Getenv("WORKLOAD_ENV"); v != "" {
 		slog.Warn("WORKLOAD_ENV is deprecated. Configure cluster env in cluster registry config file.", slog.String("workload_env", v))
+	}
+
+	if cfg.APIToken == "" {
+		slog.Warn("API_TOKEN is not set: /api/v1/* responds 503 until it is configured")
 	}
 
 	return cfg, nil

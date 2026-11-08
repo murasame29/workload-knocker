@@ -66,7 +66,9 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 
 		// HTTP Server (server.Lifecycle)
 		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler) *httpserver.Server {
-			return httpserver.New(cfg.HTTPPort, m.Handler(), stopAll, start)
+			return httpserver.New(cfg.HTTPPort, m.Handler(),
+				api.Authenticate(cfg.APIToken, api.RequireStop(cfg.OperationMode, stopAll)),
+				api.Authenticate(cfg.APIToken, start))
 		},
 		// Slack Bot (server.Lifecycle)
 		slackbot.New,
