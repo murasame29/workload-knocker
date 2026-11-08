@@ -21,6 +21,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/k8s/auth/kubeconfig"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/notify"
 	"github.com/murasame29/workload-knocker/internal/reconcile"
 	"github.com/murasame29/workload-knocker/internal/reload"
 	"github.com/murasame29/workload-knocker/internal/rollout"
@@ -85,11 +86,18 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		// WorkloadStore interface (for consumers)
 		func(s *store.MultiStore) model.WorkloadStore { return s },
 
+		// Notify channel posts (start, ready, stop); chat adapters register their posters
+		func(live *config.Holder) *notify.Service { return notify.New(live) },
+
 		// /api/v1/stop-all
-		api.New,
+		func(ws model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, n *notify.Service) *api.StopAllHandler {
+			return api.New(ws, m, az, api.WithNotifier(n))
+		},
 		// Run duration settings, /api/v1/start and /api/v1/extend
 		func(cfg *config.Env) runlimit.Defaults { return cfg.RunDefaults() },
-		api.NewStartHandler,
+		func(ws model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, d runlimit.Defaults, n *notify.Service, rt *rollout.Tracker) *api.StartHandler {
+			return api.NewStartHandler(ws, m, az, d, api.WithNotifier(n), api.WithTracker(rt))
+		},
 		api.NewExtendHandler,
 
 		// HTTP Server (server.Lifecycle)
@@ -104,15 +112,16 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		func(mux *k8sauth.Multiplexer, live *config.Holder) *rollout.Readers {
 			return rollout.NewReaders(mux, live)
 		},
-		func(cfg *config.Env, r *rollout.Readers) *rollout.Tracker {
-			return rollout.NewTracker(r, cfg.RolloutPollInterval, cfg.RolloutWatchTimeout)
+		func(cfg *config.Env, r *rollout.Readers, n *notify.Service) *rollout.Tracker {
+			return rollout.NewTracker(r, cfg.RolloutPollInterval, cfg.RolloutWatchTimeout,
+				rollout.WithOnStarted(func(t rollout.Target) { n.Ready(t.Env, t.Namespace, t.Name) }))
 		},
 		// Chat frontends: only those configured by at least one cluster are enabled
 		newFrontends,
 
-		// Auto-stop of expired workloads; the stop reminder receiver is passed via autostop.WithReminder
-		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager) *autostop.Hook {
-			return autostop.New(ws, m, cfg.StopReminder)
+		// Auto-stop of expired workloads; reminders go to the notify channel
+		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager, n *notify.Service) *autostop.Hook {
+			return autostop.New(ws, m, cfg.StopReminder, autostop.WithReminder(n))
 		},
 
 		// Background reconcile (per-tick hooks for other features are passed here)
@@ -142,20 +151,23 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	return c, nil
 }
 
-func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *authz.Holder, ws model.WorkloadStore, m metrics.MetricsManager, rt *rollout.Tracker) ([]frontend.Frontend, error) {
+func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *authz.Holder, ws model.WorkloadStore, m metrics.MetricsManager, rt *rollout.Tracker, n *notify.Service) ([]frontend.Frontend, error) {
 	var fs []frontend.Frontend
+	opts := []frontend.Option{frontend.WithRollout(rt), frontend.WithNotifier(n), frontend.WithRunDefaults(cfg.RunDefaults()), frontend.WithClusters(live)}
 	if reg.FrontendEnabled(config.FrontendSlack) {
-		b, err := slackbot.New(cfg, ws, live, az, m, frontend.WithRollout(rt), frontend.WithRunDefaults(cfg.RunDefaults()))
+		b, err := slackbot.New(cfg, ws, live, az, m, opts...)
 		if err != nil {
 			return nil, err
 		}
+		n.AddPoster(b.Poster())
 		fs = append(fs, b)
 	}
 	if reg.FrontendEnabled(config.FrontendDiscord) {
-		b, err := discordbot.New(cfg, ws, live, az, m, frontend.WithRollout(rt), frontend.WithRunDefaults(cfg.RunDefaults()))
+		b, err := discordbot.New(cfg, ws, live, az, m, opts...)
 		if err != nil {
 			return nil, err
 		}
+		n.AddPoster(b.Poster())
 		fs = append(fs, b)
 	}
 	return fs, nil

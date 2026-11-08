@@ -152,6 +152,8 @@ func (b *Bot) handleComponent(i *discordgo.Interaction) {
 		b.handleConfirm(i, id, userID)
 	case kindDuration, kindDurationRetry:
 		b.openDurationModal(i, id, userID)
+	case kindExtend:
+		b.handleExtend(i, id)
 	case kindNamespacePage, kindNamespaceSelect, kindWorkloadPage, kindWorkloadSelect, kindPlan, kindCancel:
 		b.withFlow(i, id, userID, func(f *flow, cl config.Cluster) view {
 			return b.step(id, data.Values, subject(i), f, cl)
@@ -476,8 +478,9 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 			}
 		}()
 		timeout := b.svc.RolloutTimeout()
+		ready := b.svc.NewReadyRenderer(req)
 		b.svc.Track(b.watchCtx, targets, func(snap rollout.Snapshot) {
-			b.edit(i, text(progressText(userID, cl, req.Namespace, res, snap, timeout)))
+			b.edit(i, text(progressText(userID, cl, req.Namespace, res, ready.Decorate(snap), timeout)))
 		})
 	}()
 }

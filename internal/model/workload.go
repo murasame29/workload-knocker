@@ -18,6 +18,8 @@ type Workload struct {
 	// DefaultDuration / MaxDuration are the ScaledObject annotation overrides (nil / 0 = unset).
 	DefaultDuration *time.Duration
 	MaxDuration     time.Duration
+	// ReadyMessage is the raw workload-knocker.io/ready-message template of the ScaledObject; "" when unset.
+	ReadyMessage string
 }
 
 // ClusterRef is a lightweight DTO for the Bot / API layer to reference a Cluster

@@ -9,11 +9,33 @@ import (
 
 const discordCommandMaxLen = 32
 
-var discordCommandPattern = regexp.MustCompile(`^[-_a-z0-9]+$`)
+var (
+	discordCommandPattern = regexp.MustCompile(`^[-_a-z0-9]+$`)
+	discordChannelPattern = regexp.MustCompile(`^[0-9]{17,20}$`)
+	slackChannelPattern   = regexp.MustCompile(`^[CG][A-Z0-9]{2,}$`)
+)
+
+// validateDiscordChannel accepts an empty value (no notify channel) or a numeric snowflake.
+func validateDiscordChannel(id string) error {
+	if id != "" && !discordChannelPattern.MatchString(id) {
+		return fmt.Errorf("%q must be a numeric channel ID (17-20 digits)", id)
+	}
+	return nil
+}
+
+// validateSlackChannel accepts an empty value (no notify channel) or a channel ID such as C0123ABCD.
+func validateSlackChannel(id string) error {
+	if id != "" && !slackChannelPattern.MatchString(id) {
+		return fmt.Errorf("%q must be a channel ID such as C0123ABCD (a channel name is not accepted)", id)
+	}
+	return nil
+}
 
 // DiscordFrontend holds Discord settings. Command is the slash command name, unique in the registry.
 type DiscordFrontend struct {
 	Command string `yaml:"command"`
+	// NotifyChannel is an optional channel ID (snowflake) that receives public start, ready and stop messages.
+	NotifyChannel string `yaml:"notifyChannel,omitempty"`
 }
 
 // ByDiscordCommand resolves the cluster of a Discord slash command name.

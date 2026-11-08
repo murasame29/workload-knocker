@@ -80,6 +80,8 @@ clusters:
 | `clusters[].provider.kubeconfig.context` | | context。省略時は current-context |
 | `clusters[].frontends.slack.slashCommand` | frontend ごと | Slack App に登録する一意の slash command |
 | `clusters[].frontends.discord.command` | frontend ごと | 一意の Discord slash command 名。1〜32 文字の `a-z` `0-9` `-` `_`、先頭の `/` なし |
+| `clusters[].frontends.slack.notifyChannel` | | start / ready / stop を公開メッセージで投稿する Slack チャンネル ID (例 `C0123ABCD`。チャンネル名は拒否)。[ready メッセージと通知チャンネル](#ready-メッセージと通知チャンネル)を参照 |
+| `clusters[].frontends.discord.notifyChannel` | | 同じメッセージを投稿する Discord チャンネル ID (17〜20 桁の数字) |
 
 各 cluster は `frontends` 配下に少なくとも 1 つの frontend を設定する必要があります。いずれかの cluster が設定した
 frontend だけが有効になり、起動されます。
@@ -160,6 +162,7 @@ Kubernetes の ConfigMap 更新 (`..data` シンボリックリンクの差し�
   変更した cluster の bootstrap に失敗した場合は旧接続を維持して warning を出します。追加した cluster の bootstrap に失敗した場合は、
   起動時と同様に `cluster_reachable=0` のまま保持します。削除した cluster は slash command の解決から外れ、
   `workload_knocker_activation` と `workload_knocker_cluster_reachable` の系列も削除します。slash command は常に最新の Registry で解決します。
+  `notifyChannel` の変更は再起動なしで次のメッセージから反映します。
   Discord: Registry のコマンド集合と登録済みの集合を 15 秒ごとに比較し、変わっていれば application command を再度一括上書きします (失敗はログに出して再試行)。グローバルコマンドはクライアントへの反映が遅れることがあり、guild ID を指定すると即時です。Discord を初めて有効にする変更は再起動が必要です。
 - 認可: 起動後に現れたポリシーファイルは認可を有効にします。ファイルを削除しても直前のポリシーを維持します。
 - 再起動が必要な Registry 変更は明確なエラーで拒否し、旧設定を維持します。`controller.namespace` の変更、
@@ -189,7 +192,7 @@ clusters:
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) で Application と Bot を作成し、Bot token を Secret (`bot-token`) に保存します。
 2. Privileged Gateway Intent は不要です (`Guilds` intent のみ使用)。
-3. OAuth2 scope `applications.commands` と `bot` で Bot を招待します。`bot` scope に追加の権限は不要です (応答は ephemeral な interaction response のため、メッセージの読み取り・送信権限は使いません)。
+3. OAuth2 scope `applications.commands` と `bot` で Bot を招待します。`notifyChannel` を設定しない限り、`bot` scope に追加の権限は不要です (応答は ephemeral な interaction response のため、メッセージの読み取り・送信権限は使いません)。[通知チャンネル](#ready-メッセージと通知チャンネル)を使う場合のみ、そのチャンネルで **View Channel** と **Send Messages** を Bot に付与します (サーバー全体ではなくチャンネル単位で付与)。メッセージ内容の intent は不要です。
 4. `DISCORD_BOT_TOKEN` (chart: `discord.secretName`、任意で `discord.guildId`) を設定します。試用中は guild ID の指定を推奨します (guild コマンドは即時反映、グローバルは遅延)。
 
 起動時に、対象スコープ (guild またはグローバル) の application command を設定済みコマンドで一括上書きします。同スコープの他のコマンドは削除されるため、専用の Application を使ってください。登録に失敗すると (多くは `applications.commands` scope の不足) エラーで起動に失敗します。
@@ -233,7 +236,7 @@ Confirm の後、適用した各 workload の scale target (`Deployment` また�
 | 表示 | 意味 |
 |---|---|
 | `⏳ name starting...` | start 済みで `readyReplicas` が `spec.replicas` に達していない状態。KEDA が replica 数を変えるまでの待ち (KEDA の polling interval) も含みます。 |
-| `✅ name started` | `readyReplicas >= spec.replicas` かつ 0 より大きい。 |
+| `✅ name started` | `readyReplicas >= spec.replicas` かつ 0 より大きい。[ready メッセージ](#ready-メッセージと通知チャンネル)があれば `✅ name started — <メッセージ>` の形で付きます。 |
 | `⏳ name stopping...` | stop 済みで replica または ready な Pod が残っている。 |
 | `⏹ name stopped` | `spec.replicas` が 0 で ready な Pod がない。 |
 | `⚠ name not ready after 10m (0/1 ready, ImagePullBackOff)` | `ROLLOUT_WATCH_TIMEOUT` 内に起動しなかった。理由は最後の `ready/desired` と Pod の waiting / スケジューリング理由 (`ImagePullBackOff`、`Unschedulable` など)。停止が終わらなかった場合は `still running after 10m` になります。 |
@@ -243,6 +246,50 @@ Confirm の後、適用した各 workload の scale target (`Deployment` また�
 - Slack は `⏳` 行入りの結果メッセージをすぐ投稿し、全 workload が確定した時点で最終状態を ephemeral メッセージでもう 1 件投稿します。`chat.postEphemeral` のメッセージは編集できず、モーダル送信には `response_url` もないため、途中経過の更新はありません。
 - 進捗はメモリ上で追跡します。controller が再起動すると追跡は終わり、最後のメッセージはそのまま残ります。
 - 読み取りに失敗しても (RBAC 不足など) ポーリングを続け、タイムアウト時にそのエラーを理由として表示します。
+
+## ready メッセージと通知チャンネル
+
+### ready メッセージ
+
+利用可能になったかどうかは `✅ name started` の行で分かります。ScaledObject のアノテーション `workload-knocker.io/ready-message` (Go の [`text/template`](https://pkg.go.dev/text/template)) で、この行に接続方法などの案内を足せます。
+
+```yaml
+metadata:
+  annotations:
+    workload-knocker.io/ready-message: "Connect to {{.Name}}.example.com:7777{{if .StopAt}} (until {{.StopAt}}){{end}}"
+```
+
+| フィールド | 値 |
+|---|---|
+| `.Name` | workload 名 |
+| `.Namespace` | namespace |
+| `.Cluster` | Registry の `env` |
+| `.StartedBy` | ストアに記録された起動者。Discord はユーザー ID、Slack はユーザー名、API は呼び出しの `user` |
+| `.StopAt` | 停止予定時刻 (`15:04 MST` 形式)。不明なときは空なので `{{if .StopAt}}` で囲みます |
+
+アノテーションに秘密情報を書かないでください (チャットに表示されます)。描画結果は 500 文字までです。
+
+- テンプレートは ScaledObject の検出時とアノテーションの変更時に検証します。不正なテンプレートは変更ごとに 1 回 `WARN` (`invalid ready-message template`) を出します。
+- 描画に失敗した場合は `WARN` を出し、通常の `✅ name started` にフォールバックします。
+- 進捗メッセージの started の行 (Discord はメッセージ編集、Slack は最終メッセージ) と通知チャンネルのメッセージに追記します。
+
+### 通知チャンネル
+
+既定では Bot はコマンドを実行したユーザーにだけ ephemeral メッセージで応答します。cluster の Slack / Discord frontend に `notifyChannel` を設定すると、そのチャンネルにも公開メッセージを投稿し、他のメンバーから何が動いているか見えるようになります。
+
+| イベント | メッセージ |
+|---|---|
+| start 要求 (チャットまたは `POST /api/v1/start`) | `🚀 <実行者> requested start (ENV / cluster / namespace)` と workload ごとの `⏳ name starting...`。各 workload が ready になると同じメッセージを `✅ name started — <ready メッセージ>` に編集するため、1 操作につきメッセージは 1 件です。ready の検出には上記の rollout 追跡を使います。 |
+| stop (チャット) | `⏹ <実行者> stopped workloads (...)` |
+| stop-all (`POST /api/v1/stop-all`) | cluster ごとに 1 件。実行者は `nightly-stop` (chart の CronJob) または `api`。認可ポリシーで残した workload と失敗した cluster は含めません。 |
+| 停止リマインダー | `⏰ name stops at 22:00 JST (ENV / namespace)` と **Extend 1h** ボタン。自動停止が `STOP_REMINDER` だけ停止の前に投稿します。ボタンはチャットや API と同じ延長処理を実行し (認可、workload の最大時間、`workload.extend` 監査イベントが適用)、押した本人にだけ新しい停止時刻または拒否理由を返します。 |
+
+補足:
+
+- `notifyChannel` がなければ何も投稿せず、追加の権限も不要です。投稿が失敗しても操作は止まらず、`notify post failed` をログに出すだけです。
+- Discord のメッセージはメンションを無効にして送るため、ユーザーを指名しても通知は飛びません。Slack では `<@user>` のメンションで該当ユーザーに通知が届くことがあります。
+- Discord: チャンネルで Bot に **View Channel** と **Send Messages** を付与します。Slack: Bot に `chat:write` scope (`slack-manifest.yaml` に含まれます) が必要で、チャンネルへの招待 (`/invite @workload-knocker`) も必要です。プライベートチャンネルは `G...` の ID を使います。
+- 1 秒以内に複数の workload が ready になった場合、編集は 1 回の API 呼び出しにまとめます。メッセージの状態はメモリ上にのみあり、コントローラーの再起動後は進行中の start メッセージは編集されません。
 
 ## Slack の workload モーダル
 
@@ -279,7 +326,7 @@ start には実行時間を付けられます。コントローラは workload �
 - **延長**: `POST /api/v1/extend` とフロントエンドサービスが、起動中 workload の `stopAt` を後ろにずらします。start と同じ認可で、
   どの動作モードでも可です。延長後の残り時間が上限を超える場合は拒否します。
 - **リマインド**: `stopAt` の `STOP_REMINDER` 前に、reconcile ループが workload と停止時刻ごとに 1 回 `StopReminder` を呼びます
-  (メモリで記憶するため再起動後は再送されることがあります)。既定の受け手は何もしません。**Extend 1h** ボタン付きの投稿は通知チャンネル機能が接続します。
+  (メモリで記憶するため再起動後は再送されることがあります)。通知チャンネルがあれば **Extend 1h** ボタン付きで投稿し、なければ何も投稿しません。
 
 監査イベント: start は `workload_knocker.duration_seconds` と `workload_knocker.stop_at` を記録し、延長は `workload.extend`、
 期限切れの停止は source `scheduler` の `workload.auto_stop` です。

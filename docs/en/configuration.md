@@ -81,6 +81,8 @@ clusters:
 | `clusters[].provider.kubeconfig.context` | no | Context; defaults to current-context |
 | `clusters[].frontends.slack.slashCommand` | one frontend | Unique slash command registered in the Slack app |
 | `clusters[].frontends.discord.command` | one frontend | Unique Discord slash command name: 1-32 characters of `a-z`, `0-9`, `-`, `_`, without a leading slash |
+| `clusters[].frontends.slack.notifyChannel` | no | Slack channel ID (for example `C0123ABCD`; a channel name is rejected) that receives public start, ready and stop messages. See [Ready message and notify channel](#ready-message-and-notify-channel) |
+| `clusters[].frontends.discord.notifyChannel` | no | Discord channel ID (17-20 digits) that receives the same messages |
 
 Each cluster must configure at least one entry under `frontends`. A frontend is enabled when at least
 one cluster configures it, and only enabled frontends are started.
@@ -165,6 +167,7 @@ Events are debounced for 500 ms. `workload_knocker_config_reload_total{target,re
   and a warning is logged. An added cluster that fails to bootstrap is kept with `cluster_reachable=0`, like at
   startup. Removed clusters disappear from slash command resolution and their `workload_knocker_activation`
   and `workload_knocker_cluster_reachable` series are deleted. Slash commands are resolved against the live registry.
+  A `notifyChannel` change applies to the next message without a restart.
   Discord: the controller compares the registry's command set with the registered one every 15 seconds and, when it changed, bulk-overwrites the application commands again (a failure is logged and retried). Global commands can take longer to appear in clients; a guild ID makes this instant. Enabling Discord for the first time still needs a restart.
 - Authorization: a policy file that appears after startup enables authorization. Deleting the file keeps the last policy.
 - A registry change that needs a restart is rejected with a clear error and the old config stays: changing
@@ -195,7 +198,7 @@ Setup:
 
 1. In the [Discord Developer Portal](https://discord.com/developers/applications) create an application and a bot, and copy the bot token into a Secret (`bot-token`).
 2. No privileged gateway intents are needed. The bot uses the `Guilds` intent only.
-3. Invite the bot with the OAuth2 scopes `applications.commands` and `bot`. The `bot` scope needs no extra permissions: replies are ephemeral interaction responses, so the bot does not need to read or send messages.
+3. Invite the bot with the OAuth2 scopes `applications.commands` and `bot`. The `bot` scope needs no extra permissions as long as no `notifyChannel` is set: replies are ephemeral interaction responses, so the bot does not need to read or send messages. With a [notify channel](#ready-message-and-notify-channel) the bot needs **View Channel** and **Send Messages** in that channel (grant them on the channel, not server-wide). No message content intent is needed.
 4. Set `DISCORD_BOT_TOKEN` (chart: `discord.secretName`, optional `discord.guildId`). Prefer a guild ID while testing: guild commands are available immediately, global commands are not.
 
 On startup the controller bulk-overwrites the application commands of the chosen scope (guild or global) with the configured commands. Other commands of the same application in that scope are removed, so use a dedicated application. Startup fails with a clear error when registration fails (usually a missing `applications.commands` scope).
@@ -239,7 +242,7 @@ applied workload in its cluster every `ROLLOUT_POLL_INTERVAL` and reports one li
 | Line | Meaning |
 |---|---|
 | `⏳ name starting...` | Started; `readyReplicas` has not reached `spec.replicas` yet. This also covers the delay until KEDA changes the replica count (its polling interval). |
-| `✅ name started` | `readyReplicas >= spec.replicas` and above 0. |
+| `✅ name started` | `readyReplicas >= spec.replicas` and above 0. A [ready message](#ready-message-and-notify-channel) is appended as `✅ name started — <message>`. |
 | `⏳ name stopping...` | Stop requested; replicas or ready pods remain. |
 | `⏹ name stopped` | `spec.replicas` is 0 and no pod is ready. |
 | `⚠ name not ready after 10m (0/1 ready, ImagePullBackOff)` | Not started within `ROLLOUT_WATCH_TIMEOUT`. The reason is the last `ready/desired` plus a waiting or scheduling reason of the pods (for example `ImagePullBackOff`, `Unschedulable`). A stop that did not finish reads `still running after 10m`. |
@@ -249,6 +252,50 @@ applied workload in its cluster every `ROLLOUT_POLL_INTERVAL` and reports one li
 - Slack posts the result message with `⏳` lines right away, then one more ephemeral message with the final state once every workload is final. Slack cannot edit a `chat.postEphemeral` message, and the modal submission has no `response_url`, so there are no intermediate updates.
 - Progress is in memory: a controller restart ends it, and the last message stays as it was.
 - The controller keeps polling when a read fails (for example missing RBAC) and shows the error as the reason on timeout.
+
+## Ready message and notify channel
+
+### Ready message
+
+Users learn that a workload is usable from the `✅ name started` line. A ScaledObject can add a hint to that line (how to connect, for example) with the annotation `workload-knocker.io/ready-message`, a Go [`text/template`](https://pkg.go.dev/text/template):
+
+```yaml
+metadata:
+  annotations:
+    workload-knocker.io/ready-message: "Connect to {{.Name}}.example.com:7777{{if .StopAt}} (until {{.StopAt}}){{end}}"
+```
+
+| Field | Value |
+|---|---|
+| `.Name` | Workload name |
+| `.Namespace` | Namespace |
+| `.Cluster` | The registry `env` |
+| `.StartedBy` | The starter as recorded in the store: Discord user ID, Slack user name, or the `user` of an API call |
+| `.StopAt` | Planned stop time as `15:04 MST`; empty when unknown, so guard it with `{{if .StopAt}}` |
+
+Do not put secrets in the annotation: the text is shown in chat. The rendered text is limited to 500 characters.
+
+- The template is checked when the ScaledObject is discovered or its annotation changes. An invalid template logs one `WARN` (`invalid ready-message template`) per change.
+- A template that fails to render logs a `WARN` and the line falls back to the plain `✅ name started`.
+- It is appended to the started line of the progress message (Discord edits the message; Slack puts it into the final message) and to the notify channel message.
+
+### Notify channel
+
+By default the bot only answers the user who ran the command, with ephemeral messages. With `notifyChannel` set on a cluster's Slack or Discord frontend, the controller also posts public messages to that channel, so others see what is running:
+
+| Event | Message |
+|---|---|
+| Start requested (chat or `POST /api/v1/start`) | `🚀 <who> requested start (ENV / cluster / namespace)` with a `⏳ name starting...` line per workload. The same message is edited to `✅ name started — <ready message>` when each workload becomes ready, so there is one message per operation. Ready detection needs the rollout tracking described above. |
+| Stop (chat) | `⏹ <who> stopped workloads (...)` |
+| Stop-all (`POST /api/v1/stop-all`) | One message per cluster naming `nightly-stop` (the chart's CronJob) or `api` and the workloads stopped. Workloads kept by the authorization policy and clusters that failed are not listed. |
+| Stop reminder | `⏰ name stops at 22:00 JST (ENV / namespace)` with an **Extend 1h** button. Auto-stop posts it `STOP_REMINDER` ahead of the stop. Pressing the button runs the same extend as the chat and API (authorization, the workload maximum and the `workload.extend` audit event apply) and answers the presser privately with the new stop time or the reason it was refused. |
+
+Notes:
+
+- Without `notifyChannel` nothing is posted and no extra permission is needed. Posts never block or fail an operation: a failed post is logged as `notify post failed`.
+- Discord messages are sent with mentions disabled, so naming a user pings nobody. In Slack the `<@user>` mention can notify the user it names.
+- Discord: grant the bot **View Channel** and **Send Messages** in the channel. Slack: the bot needs the `chat:write` scope (already in `slack-manifest.yaml`) and must be invited to the channel (`/invite @workload-knocker`); for a private channel use its `G...` ID.
+- Edits for several workloads that become ready within one second are combined into one API call. Messages are kept in memory only: after a controller restart an in-flight start message is not edited any more.
 
 ## Slack workload modal
 
@@ -288,8 +335,8 @@ A default above the maximum is lowered to the maximum.
   authorized like a start and allowed in every operation mode. The remaining run time after the extension may not
   exceed the maximum; otherwise the extension is rejected.
 - **Reminder**: `STOP_REMINDER` before `stopAt` the reconcile loop calls a `StopReminder` once per workload and stop
-  time (remembered in memory, so a restart may send it again). The default receiver does nothing; posting it with an
-  **Extend 1h** button is wired by the notify channel feature.
+  time (remembered in memory, so a restart may send it again). With a notify channel it is posted there
+  with an **Extend 1h** button; without one nothing is posted.
 
 Audit events: a start records `workload_knocker.duration_seconds` and `workload_knocker.stop_at`; an extension
 is `workload.extend`; an expiry is `workload.auto_stop` with source `scheduler`.

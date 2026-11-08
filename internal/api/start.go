@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/notify"
+	"github.com/murasame29/workload-knocker/internal/rollout"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
@@ -29,12 +32,13 @@ type StartHandler struct {
 	audit   audit.Recorder
 	defs    runlimit.Defaults
 	now     func() time.Time
+	opts    settings
 }
 
 // NewStartHandler constructs a StartHandler; az is checked per workload for the api subject.
 // defs are the controller-wide run duration settings.
-func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, defs runlimit.Defaults) *StartHandler {
-	return &StartHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog(), defs: defs, now: time.Now}
+func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, defs runlimit.Defaults, opts ...Option) *StartHandler {
+	return &StartHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog(), defs: defs, now: time.Now, opts: newSettings(opts)}
 }
 
 // startRequest is the JSON schema of the POST body.
@@ -173,6 +177,8 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.announce(r.Context(), req, cluster, user, started, stopAts)
+
 	status := http.StatusOK
 	message := "workloads started"
 	switch {
@@ -204,6 +210,44 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "failed to encode response",
 			slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
 	}
+}
+
+// announce posts the started workloads to the notify channel and, when a tracker is set,
+// follows them until ready so the message can be edited.
+func (h *StartHandler) announce(ctx context.Context, req startRequest, cluster, user string, started []string, stopAts map[string]time.Time) {
+	if len(started) == 0 || !h.opts.notifier.Enabled(req.Env) {
+		return
+	}
+	known := map[string]*model.Workload{}
+	for _, w := range h.store.WorkloadsByNamespace(req.Env, req.Namespace) {
+		known[w.Name] = w
+	}
+	ws := make([]notify.Workload, 0, len(started))
+	targets := make([]rollout.Target, 0, len(started))
+	for _, name := range started {
+		nw := notify.Workload{Namespace: req.Namespace, Name: name, StopAt: stopAts[name]}
+		tg := rollout.Target{Env: req.Env, Namespace: req.Namespace, Name: name, Direction: rollout.Start}
+		if w := known[name]; w != nil {
+			nw.ReadyMessage, tg.Kind = w.ReadyMessage, w.Kind
+		}
+		ws = append(ws, nw)
+		targets = append(targets, tg)
+	}
+	h.opts.notifier.Started(ctx, notify.Event{
+		Kind: notify.KindStart, Env: req.Env, ClusterName: cluster, Namespace: req.Namespace,
+		Actor: apiActor, StartedBy: user, Workloads: ws,
+	})
+	if h.opts.tracker == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in api rollout watch", slog.Any("recover", r))
+			}
+		}()
+		h.opts.tracker.Watch(context.Background(), targets, func(rollout.Snapshot) {})
+	}()
 }
 
 var errWorkloadNotFound = errors.New("workload not found")

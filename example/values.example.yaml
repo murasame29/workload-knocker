@@ -12,6 +12,7 @@ config:
         frontends:
           slack:
             slashCommand: /workload-knocker-stg
+            # notifyChannel: C0123ABCD   # optional: public start/ready/stop messages
       - env: dev
         name: example-development
         provider:

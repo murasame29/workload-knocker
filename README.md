@@ -24,6 +24,9 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
   preview with Confirm/Cancel; see [Discord](docs/en/configuration.md#discord).
 - The Slack slash command (`frontends.slack.slashCommand`) opens a modal. Workloads that differ only by an `api` / `app` / `worker`
   suffix are shown as one checkbox.
+- A `workload-knocker.io/ready-message` annotation on a ScaledObject adds a hint to the started
+  line, and an optional `notifyChannel` posts start, ready and stop messages publicly; see
+  [Ready message and notify channel](docs/en/configuration.md#ready-message-and-notify-channel).
 - Starting a workload sets `workload_knocker_activation{env,cluster,namespace,workload} = 1`.
   Stopping sets it to 0. The requested state is stored in a `workload-state` ConfigMap in each
   managed cluster, so it survives restarts.
@@ -55,7 +58,8 @@ helm install workload-knocker oci://ghcr.io/murasame29/charts/workload-knocker \
 1. Create a Slack app from [`slack-manifest.yaml`](slack-manifest.yaml) (Socket Mode) and store
    the app-level and bot tokens in a Secret (`app-token`, `bot-token`).
    For Discord, create a bot, invite it with the `applications.commands` and `bot` scopes, and store
-   the bot token in a Secret (`bot-token`, `discord.secretName`).
+   the bot token in a Secret (`bot-token`, `discord.secretName`). The bot needs no message
+   permissions unless you set a `notifyChannel`: then grant View Channel and Send Messages in that channel.
 2. Write the cluster registry in `config.inline` ([`example/values.example.yaml`](example/values.example.yaml)).
 3. Grant the controller access to each managed cluster
    ([`example/managed-cluster-rbac.yaml`](example/managed-cluster-rbac.yaml)).

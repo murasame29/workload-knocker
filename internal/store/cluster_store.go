@@ -19,6 +19,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/k8s"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/notify"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
 
@@ -358,6 +359,7 @@ func (s *ClusterStore) handleScaledObjectLocked(so *kedav1alpha1.ScaledObject, i
 	if existing, ok := s.workloads[key]; ok {
 		existing.Kind = kind
 		existing.DefaultDuration, existing.MaxDuration = def, maxDur
+		s.setReadyMessage(existing, so, false)
 		return false
 	}
 
@@ -377,10 +379,26 @@ func (s *ClusterStore) handleScaledObjectLocked(so *kedav1alpha1.ScaledObject, i
 		DefaultDuration: def,
 		MaxDuration:     maxDur,
 	}
+	s.setReadyMessage(s.workloads[key], so, true)
 	s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, activation)
 
 	slog.Debug("ScaledObject registered", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns), slog.String("kind", kind), slog.Int("replicas", replicas))
 	return replicas > 0
+}
+
+// setReadyMessage copies the ready-message annotation to w and warns once per changed invalid template.
+func (s *ClusterStore) setReadyMessage(w *model.Workload, so *kedav1alpha1.ScaledObject, discovered bool) {
+	tmpl := so.Annotations[notify.ReadyMessageAnnotation]
+	if !discovered && tmpl == w.ReadyMessage {
+		return
+	}
+	w.ReadyMessage = tmpl
+	if tmpl == "" {
+		return
+	}
+	if err := notify.ValidateReady(tmpl); err != nil {
+		slog.Warn("invalid ready-message template, the plain ready line is used", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", w.Name), slog.String("namespace", w.Namespace), slog.String("annotation", notify.ReadyMessageAnnotation), slog.String("error.message", err.Error()))
+	}
 }
 
 func hasActivationTrigger(so *kedav1alpha1.ScaledObject) bool {

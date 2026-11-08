@@ -13,6 +13,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/mode"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/notify"
 	"github.com/murasame29/workload-knocker/internal/rollout"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
@@ -163,6 +164,9 @@ type Service struct {
 	rollout          *rollout.Tracker
 	runDefaults      runlimit.Defaults
 	now              func() time.Time
+	notifier         notify.Notifier
+	extender         notify.Extender
+	clusters         config.Resolver
 }
 
 // Option customizes a Service.
@@ -186,9 +190,18 @@ func WithRunDefaults(d runlimit.Defaults) Option { return func(s *Service) { s.r
 // WithClock replaces the clock used to compute stop times (default: time.Now).
 func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
 
+// WithNotifier posts applied starts and stops to the notify channel; the default posts nothing.
+func WithNotifier(n notify.Notifier) Option { return func(s *Service) { s.notifier = n } }
+
+// WithExtender replaces the handler of the Extend button of stop reminders (default: NewExtender over this service).
+func WithExtender(e notify.Extender) Option { return func(s *Service) { s.extender = e } }
+
+// WithClusters sets the registry the default Extender resolves clusters from; without it the button answers "not available".
+func WithClusters(c config.Resolver) Option { return func(s *Service) { s.clusters = c } }
+
 // NewService builds a Service. reconcileTimeout bounds each on-demand Reconcile.
 func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
-	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout, audit: audit.NewSlog(), now: time.Now}
+	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout, audit: audit.NewSlog(), now: time.Now, notifier: notify.Nop{}}
 	for _, o := range opts {
 		o(s)
 	}
@@ -402,7 +415,110 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 	}
 
 	res.AutoStop = started > 0
+	s.notifyApplied(req, res)
 	return res
+}
+
+// Extender handles the Extend button of stop reminders.
+func (s *Service) Extender() notify.Extender {
+	switch {
+	case s.extender != nil:
+		return s.extender
+	case s.clusters != nil:
+		return NewExtender(s, s.clusters)
+	}
+	return notify.UnavailableExtender()
+}
+
+// notifyApplied posts the workloads that were found to the notify channel, one message per action.
+func (s *Service) notifyApplied(req ApplyRequest, res ApplyResult) {
+	cl := req.Cluster
+	if !s.notifier.Enabled(cl.Env) {
+		return
+	}
+	byName := map[string]*model.Workload{}
+	for _, w := range s.store.WorkloadsByNamespace(cl.Env, req.Namespace) {
+		byName[w.Name] = w
+	}
+	var starts, stops []notify.Workload
+	for _, a := range res.Applied {
+		if !a.Found {
+			continue
+		}
+		w := notify.Workload{Namespace: req.Namespace, Name: a.Name, StopAt: a.StopAt}
+		if a.Action == ActionStop {
+			stops = append(stops, w)
+			continue
+		}
+		if m := byName[a.Name]; m != nil {
+			w.ReadyMessage = m.ReadyMessage
+		}
+		starts = append(starts, w)
+	}
+	ev := notify.Event{Env: cl.Env, ClusterName: cl.Name, Namespace: req.Namespace, Actor: chatActor(req.Subject), StartedBy: req.User}
+	if len(starts) > 0 {
+		ev.Kind, ev.Workloads = notify.KindStart, starts
+		s.notifier.Started(context.Background(), ev)
+	}
+	if len(stops) > 0 {
+		ev.Kind, ev.Workloads = notify.KindStop, stops
+		s.notifier.Stopped(context.Background(), ev)
+	}
+}
+
+// chatActor renders the user as a mention (Slack and Discord share the <@id> syntax).
+func chatActor(sub authz.Subject) string {
+	if sub.User == "" {
+		return string(sub.Platform)
+	}
+	return "<@" + sub.User + ">"
+}
+
+// ReadyRenderer fills the ready message into the started items of rollout snapshots.
+// It is not safe for concurrent use; Track never calls onChange concurrently.
+type ReadyRenderer struct {
+	svc  *Service
+	req  ApplyRequest
+	memo map[string]string
+}
+
+// NewReadyRenderer returns a renderer for the workloads applied by req.
+func (s *Service) NewReadyRenderer(req ApplyRequest) *ReadyRenderer {
+	return &ReadyRenderer{svc: s, req: req, memo: map[string]string{}}
+}
+
+// Decorate sets Detail of started items to the rendered ready message and returns snap.
+// A template that fails to render logs a warning and leaves the plain line.
+func (r *ReadyRenderer) Decorate(snap rollout.Snapshot) rollout.Snapshot {
+	for i := range snap {
+		it := &snap[i]
+		if it.State == rollout.StateStarted && it.Target.Direction == rollout.Start {
+			it.Detail = r.text(it.Target.Name)
+		}
+	}
+	return snap
+}
+
+func (r *ReadyRenderer) text(name string) string {
+	if t, ok := r.memo[name]; ok {
+		return t
+	}
+	cl := r.req.Cluster
+	out := ""
+	for _, w := range r.svc.store.WorkloadsByNamespace(cl.Env, r.req.Namespace) {
+		if w.Name != name {
+			continue
+		}
+		var err error
+		out, err = notify.RenderReady(w.ReadyMessage, notify.ReadyData{Name: name, Namespace: r.req.Namespace, Cluster: cl.Env, StartedBy: r.req.User, StopAt: notify.FormatStopAt(w.StopAt)})
+		if err != nil {
+			slog.Warn("ready-message render failed, the plain ready line is used", slog.String("cluster.env", cl.Env), slog.String("namespace", r.req.Namespace), slog.String("workload", name), slog.String("error.message", err.Error()))
+			out = ""
+		}
+		break
+	}
+	r.memo[name] = out
+	return out
 }
 
 // rejectApply records a rejection and returns true when the operation must not run.
