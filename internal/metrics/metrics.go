@@ -16,6 +16,10 @@ type MetricsManager interface {
 	IncTokenRefresh(cluster, result string)
 	// ObserveOperation records one workload operation (operation: start|stop|stop_all, result: success|error|not_found).
 	ObserveOperation(env, cluster, operation, result string, d time.Duration)
+	// DeleteCluster drops the activation series of env/cluster and the reachable series of cluster.
+	DeleteCluster(env, cluster string)
+	// IncConfigReload counts one hot reload attempt (target: registry|authz, result: success|error).
+	IncConfigReload(target, result string)
 	Handler() http.Handler
 }
 
@@ -25,6 +29,7 @@ type Manager struct {
 	reachable    *prometheus.GaugeVec
 	tokenRefresh *prometheus.CounterVec
 	operations   *prometheus.CounterVec
+	configReload *prometheus.CounterVec
 	opDuration   *prometheus.HistogramVec
 	registry     *prometheus.Registry
 }
@@ -74,17 +79,33 @@ func New() *Manager {
 		[]string{"env", "cluster", "operation"},
 	)
 
+	configReload := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "workload_knocker_config_reload_total",
+			Help: "Total number of configuration hot reload attempts, labeled by target (registry, authz) and result (success, error)",
+		},
+		[]string{"target", "result"},
+	)
+	// Pre-create every series so a rate() works before the first reload.
+	for _, target := range []string{"registry", "authz"} {
+		for _, result := range []string{"success", "error"} {
+			configReload.WithLabelValues(target, result)
+		}
+	}
+
 	registry.MustRegister(activation)
 	registry.MustRegister(reachable)
 	registry.MustRegister(tokenRefresh)
 	registry.MustRegister(operations)
 	registry.MustRegister(opDuration)
+	registry.MustRegister(configReload)
 
 	return &Manager{
 		activation:   activation,
 		reachable:    reachable,
 		tokenRefresh: tokenRefresh,
 		operations:   operations,
+		configReload: configReload,
 		opDuration:   opDuration,
 		registry:     registry,
 	}
@@ -98,6 +119,17 @@ func (m *Manager) SetActivation(env, cluster, namespace, workload string, value 
 // DeleteMetric removes the series with the given labels from a Gauge
 func (m *Manager) DeleteMetric(env, cluster, namespace, workload string) {
 	m.activation.DeleteLabelValues(env, cluster, namespace, workload)
+}
+
+// DeleteCluster removes the series of a cluster that left the registry.
+func (m *Manager) DeleteCluster(env, cluster string) {
+	m.activation.DeletePartialMatch(prometheus.Labels{"env": env, "cluster": cluster})
+	m.reachable.DeleteLabelValues(cluster)
+}
+
+// IncConfigReload counts one hot reload attempt.
+func (m *Manager) IncConfigReload(target, result string) {
+	m.configReload.WithLabelValues(target, result).Inc()
 }
 
 // SetReachable updates the reachability Gauge of the given cluster

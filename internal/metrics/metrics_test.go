@@ -57,3 +57,38 @@ func TestManager_ExistingMetricsUnchanged(t *testing.T) {
 		t.Fatalf("token refresh: got %v, want 1", got)
 	}
 }
+
+func TestManager_DeleteCluster_DropsOnlyThatCluster(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m.SetActivation("stg", "c1", "ns", "api", 1)
+	m.SetActivation("stg", "c1", "ns", "web", 0)
+	m.SetActivation("dev", "c2", "ns", "api", 1)
+	m.SetReachable("c1", 1)
+	m.SetReachable("c2", 1)
+
+	m.DeleteCluster("stg", "c1")
+
+	if got := testutil.CollectAndCount(m.activation); got != 1 {
+		t.Errorf("activation series: got %d, want 1 (dev only)", got)
+	}
+	if got := testutil.CollectAndCount(m.reachable); got != 1 {
+		t.Errorf("reachable series: got %d, want 1 (c2 only)", got)
+	}
+}
+
+func TestManager_IncConfigReload(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m.IncConfigReload("registry", "error")
+	m.IncConfigReload("registry", "error")
+
+	if got := testutil.ToFloat64(m.configReload.WithLabelValues("registry", "error")); got != 2 {
+		t.Errorf("registry/error = %v, want 2", got)
+	}
+	if got := testutil.CollectAndCount(m.configReload); got != 4 {
+		t.Errorf("series = %d, want 4 pre-created", got)
+	}
+}

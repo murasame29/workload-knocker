@@ -25,6 +25,10 @@ type Env struct {
 	// In production the ConfigMap is mounted read-only into the Pod and this points to it.
 	ClusterConfigPath string `env:"CLUSTER_CONFIG_PATH" envDefault:"/etc/workload-knocker/config.yaml"`
 
+	// AuthzConfigPath is the authorization policy file. Empty means the default path, and
+	// authorization is disabled when that file does not exist (see internal/authz).
+	AuthzConfigPath string `env:"AUTHZ_CONFIG_PATH"`
+
 	// ClusterReconcileTimeout is the Reconcile timeout when a Slack command is received.
 	ClusterReconcileTimeout time.Duration `env:"CLUSTER_RECONCILE_TIMEOUT" envDefault:"2s"`
 

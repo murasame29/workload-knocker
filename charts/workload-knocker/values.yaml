@@ -19,6 +19,16 @@ config:
   # Cluster registry (see docs/en/configuration.md). Serialized without template evaluation.
   inline: {}
 
+# Authorization policy (see docs/en/configuration.md#authorization). Hot reloaded from a ConfigMap.
+# With enabled=false no policy file is mounted and every chat user and API caller may start and
+# stop every workload. Set exactly one of existingConfigMap or inline when enabled.
+authz:
+  enabled: false
+  existingConfigMap: ""
+  key: authz.yaml
+  # Policy document, serialized without template evaluation.
+  inline: {}
+
 slack:
   # Secret holding the Slack app-level token (xapp-...) and bot token (xoxb-...).
   secretName: ""
@@ -128,6 +138,7 @@ tolerations: []
 affinity: {}
 
 # Mount kubeconfig files here when a cluster uses provider.type=kubeconfig.
+# /etc/workload-knocker is a read-only projected volume (registry and policy); mount elsewhere.
 extraVolumes: []
 extraVolumeMounts: []
 

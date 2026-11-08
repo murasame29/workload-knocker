@@ -12,6 +12,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/metrics"
@@ -31,7 +32,9 @@ type Bot struct {
 	client   *slack.Client
 	socket   *socketmode.Client
 	svc      *frontend.Service
-	registry *config.Config
+	registry config.Resolver
+	authz    *authz.Holder
+	groups   *groupCache
 
 	// sem is a semaphore limiting concurrent goroutines.
 	sem chan struct{}
@@ -42,8 +45,9 @@ type Bot struct {
 }
 
 // New creates a Bot.
-// registry resolves clusters from Slack slash commands.
-func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, m metrics.MetricsManager) (*Bot, error) {
+// registry resolves clusters from Slack slash commands on every request, so hot reload applies.
+// az is the live authorization policy.
+func New(cfg *config.Env, store model.WorkloadStore, registry config.Resolver, az *authz.Holder, m metrics.MetricsManager) (*Bot, error) {
 	if cfg.SlackAppToken == "" || cfg.SlackBotToken == "" {
 		return nil, fmt.Errorf("slackbot.New: SLACK_APP_TOKEN and SLACK_BOT_TOKEN are required")
 	}
@@ -55,10 +59,13 @@ func New(cfg *config.Env, store model.WorkloadStore, registry *config.Config, m 
 	socket := socketmode.New(client)
 
 	return &Bot{
-		client:   client,
-		socket:   socket,
-		svc:      frontend.NewService(store, m, cfg.ClusterReconcileTimeout),
+		client: client,
+		socket: socket,
+		svc: frontend.NewService(store, m, cfg.ClusterReconcileTimeout,
+			frontend.WithAuthorizer(az), frontend.WithMode(cfg.OperationMode)),
 		registry: registry,
+		authz:    az,
+		groups:   newGroupCache(client, groupCacheTTL),
 		sem:      make(chan struct{}, maxConcurrentEvents),
 		done:     make(chan struct{}),
 	}, nil

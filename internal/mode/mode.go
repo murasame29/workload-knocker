@@ -6,13 +6,13 @@ import (
 	"strings"
 )
 
-// Mode selects which operations the REST API accepts.
+// Mode selects which operations the REST API and chat frontends accept.
 type Mode string
 
 const (
-	// Full allows the API to start, stop and stop-all.
+	// Full allows the API to start, stop and stop-all, and chat to start and stop.
 	Full Mode = "full"
-	// ScheduledStop allows API start only; workloads are stopped by the nightly CronJob.
+	// ScheduledStop allows start only (API and chat); workloads are stopped by the nightly CronJob.
 	ScheduledStop Mode = "scheduled-stop"
 	// Off allows API start only; there is no scheduled stop, stopping is manual from chat.
 	Off Mode = "off"
@@ -42,6 +42,10 @@ func (Mode) AllowAPIStart() bool { return true }
 
 // AllowAPIStop reports whether the API may stop workloads (stop and stop-all).
 func (m Mode) AllowAPIStop() bool { return m == Full }
+
+// AllowChatStop reports whether chat frontends may stop workloads.
+// scheduled-stop leaves stopping to the nightly job; full and off allow it.
+func (m Mode) AllowChatStop() bool { return m != ScheduledStop }
 
 // UnmarshalText lets caarlos0/env parse and validate OPERATION_MODE.
 func (m *Mode) UnmarshalText(b []byte) error {

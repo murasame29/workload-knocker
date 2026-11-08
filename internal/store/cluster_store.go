@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -121,34 +122,51 @@ func (s *ClusterStore) Stop(ns, name string) bool {
 	return true
 }
 
-// StopAll stops all workloads. Returns the number of workloads running at call time.
-func (s *ClusterStore) StopAll(_ context.Context) (int, error) {
+// StopAll stops the workloads allow accepts (nil = all). It returns the number stopped and the
+// "namespace/name" of running workloads that were skipped.
+func (s *ClusterStore) StopAll(_ context.Context, allow func(namespace, workload string) bool) (int, []string, error) {
 	s.mu.Lock()
 	stopped := 0
+	var skipped []string
+	type meta struct{ ns, name string }
+	var changed []meta
 	for _, w := range s.workloads {
+		if allow != nil && !allow(w.Namespace, w.Name) {
+			if w.Replicas > 0 {
+				skipped = append(skipped, w.Namespace+"/"+w.Name)
+			}
+			continue
+		}
 		if w.Replicas > 0 {
 			stopped++
 		}
 		w.Replicas = 0
 		w.StartedBy = ""
+		changed = append(changed, meta{ns: w.Namespace, name: w.Name})
 	}
+	slices.Sort(skipped)
 	entries := s.snapshotEntriesLocked()
-	// Collect the namespace/name list for metrics
-	type meta struct{ ns, name string }
-	metaList := make([]meta, 0, len(s.workloads))
-	for _, w := range s.workloads {
-		metaList = append(metaList, meta{ns: w.Namespace, name: w.Name})
-	}
 	count := len(s.workloads)
 	s.mu.Unlock()
 
 	s.persist(entries)
-	for _, mw := range metaList {
+	for _, mw := range changed {
 		s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, mw.ns, mw.name, 0)
 	}
 
-	slog.Info("all workloads stopped", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("action", "stop-all"), slog.Int("count", count), slog.Int("stopped", stopped))
-	return stopped, nil
+	slog.Info("all workloads stopped", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("action", "stop-all"), slog.Int("count", count), slog.Int("stopped", stopped), slog.Int("skipped", len(skipped)))
+	return stopped, skipped, nil
+}
+
+// snapshot returns copies of all workloads.
+func (s *ClusterStore) snapshot() []model.Workload {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]model.Workload, 0, len(s.workloads))
+	for _, w := range s.workloads {
+		out = append(out, *w)
+	}
+	return out
 }
 
 // Bootstrap is the one-time startup initialization.

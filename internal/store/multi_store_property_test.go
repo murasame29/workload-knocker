@@ -198,12 +198,12 @@ func TestProperty_StopAllIdempotent(t *testing.T) {
 			}
 		}
 
-		first := ms.StopAll(context.Background())
+		first := ms.StopAll(context.Background(), nil)
 		if first.TotalStopped == 0 {
 			t.Fatalf("first StopAll: TotalStopped=0, want >0")
 		}
 
-		second := ms.StopAll(context.Background())
+		second := ms.StopAll(context.Background(), nil)
 		if second.TotalStopped != 0 {
 			t.Errorf("second StopAll: TotalStopped=%d, want 0 (idempotent)", second.TotalStopped)
 		}

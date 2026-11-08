@@ -1,0 +1,33 @@
+# Authorization policy (docs/en/configuration.md#authorization).
+# Rules only allow; there are no deny rules. A request is allowed when any rule matches
+# env, namespace, workload and action and lists the subject. Otherwise `default` applies.
+version: 1
+default: deny
+
+rules:
+  # The platform team may start and stop everything in staging.
+  - env: stg
+    namespaces: ["*"]
+    subjects:
+      slack:
+        groups: [S01PLATFORM]   # Slack usergroup ID
+
+  # Developers may only start checkout workloads in team namespaces of staging.
+  - env: stg
+    namespaces: ["team-*"]
+    workloads: ["checkout-*"]
+    actions: [start]
+    subjects:
+      slack:
+        users: [U01ALICE00, U01BOB0000]   # Slack user IDs
+
+  # Sandbox namespaces in every env, for Slack, Discord and the REST API.
+  - env: "*"
+    namespaces: ["sandbox"]
+    subjects:
+      slack:
+        groups: [S01DEVS000]
+      discord:
+        users: ["123456789012345678"]
+        roles: ["223456789012345678"]
+      api: true

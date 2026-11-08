@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -10,6 +11,7 @@ import (
 	"go.uber.org/dig"
 
 	"github.com/murasame29/workload-knocker/internal/api"
+	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	k8sauth "github.com/murasame29/workload-knocker/internal/k8s/auth"
@@ -17,6 +19,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/k8s/auth/kubeconfig"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/reload"
 	"github.com/murasame29/workload-knocker/internal/server"
 	httpserver "github.com/murasame29/workload-knocker/internal/server/http"
 	slackbot "github.com/murasame29/workload-knocker/internal/server/slack"
@@ -62,8 +65,17 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 			return reg, nil
 		},
 
+		// Live registry (swapped on hot reload) and authorization policy (nil policy = disabled)
+		config.NewHolder,
+		newAuthzHolder,
+		func(h *authz.Holder) authz.Authorizer { return h },
+
 		// MultiStore, consuming k8sauth.Multiplexer as RestConfigSource
 		newMultiStore,
+		func(mux *k8sauth.Multiplexer, m metrics.MetricsManager) store.ClusterFactory {
+			return store.NewClusterFactory(mux, m)
+		},
+		newWatchers,
 		// WorkloadStore interface (for consumers)
 		func(s *store.MultiStore) model.WorkloadStore { return s },
 
@@ -82,10 +94,13 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		newFrontends,
 
 		// Lifecycle Manager: single entry point to start and stop from main
-		func(cfg *config.Env, h *httpserver.Server, fs []frontend.Frontend) *server.Manager {
+		func(cfg *config.Env, h *httpserver.Server, fs []frontend.Frontend, ws reload.Watchers) *server.Manager {
 			components := []server.Lifecycle{h}
 			for _, f := range fs {
 				components = append(components, f)
+			}
+			for _, w := range ws {
+				components = append(components, w)
 			}
 			return server.NewManager(cfg.ShutdownTimeout, components...)
 		},
@@ -100,10 +115,10 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	return c, nil
 }
 
-func newFrontends(cfg *config.Env, reg *config.Config, ws model.WorkloadStore, m metrics.MetricsManager) ([]frontend.Frontend, error) {
+func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *authz.Holder, ws model.WorkloadStore, m metrics.MetricsManager) ([]frontend.Frontend, error) {
 	var fs []frontend.Frontend
 	if reg.FrontendEnabled(config.FrontendSlack) {
-		b, err := slackbot.New(cfg, ws, reg, m)
+		b, err := slackbot.New(cfg, ws, live, az, m)
 		if err != nil {
 			return nil, err
 		}
@@ -126,4 +141,31 @@ func newMultiStore(cfg *config.Env, reg *config.Config, mux *k8sauth.Multiplexer
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return store.NewMultiStore(ctx, reg, mux, m, cfg.StopAllTimeout)
+}
+
+// newAuthzHolder loads the policy; a missing default file disables authorization (allow all).
+func newAuthzHolder(cfg *config.Env) (*authz.Holder, error) {
+	p, path, err := authz.LoadConfigured(cfg.AuthzConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		slog.Info("authorization disabled: every chat user and API caller may start and stop every workload",
+			slog.String("reason", "AUTHZ_CONFIG_PATH is unset and the default policy file does not exist"), slog.String("path", path))
+	} else {
+		slog.Info("authorization policy loaded", slog.String("path", path), slog.Int("rules", p.Rules()), slog.Bool("default.allow", p.DefaultAllow()))
+	}
+	return authz.NewHolder(p), nil
+}
+
+// newWatchers wires the file watchers that hot reload the registry and the policy.
+func newWatchers(cfg *config.Env, live *config.Holder, az *authz.Holder, ms *store.MultiStore, build store.ClusterFactory, m metrics.MetricsManager) reload.Watchers {
+	rr := &reload.Registry{Path: cfg.ClusterConfigPath, Env: cfg, Config: live, Store: ms, Build: build, Metrics: m}
+	rr.Seed()
+	ar := &reload.Authz{Path: authz.PathOrDefault(cfg.AuthzConfigPath), Policy: az, Metrics: m}
+	ar.Seed()
+	return reload.Watchers{
+		reload.NewWatcher("registry", rr.Path, reload.DefaultDebounce, rr.Reload),
+		reload.NewWatcher("authz", ar.Path, reload.DefaultDebounce, ar.Reload),
+	}
 }

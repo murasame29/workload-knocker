@@ -58,6 +58,16 @@
         "inline": {"type": "object"}
       }
     },
+    "authz": {
+      "type": "object",
+      "required": ["enabled", "key"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "existingConfigMap": {"type": "string", "maxLength": 253},
+        "key": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[-._a-zA-Z0-9]+$"},
+        "inline": {"type": "object"}
+      }
+    },
     "slack": {
       "type": "object",
       "required": ["secretName", "appTokenKey", "botTokenKey"],

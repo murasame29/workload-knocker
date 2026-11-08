@@ -32,3 +32,14 @@ func TestAllow(t *testing.T) {
 		}
 	}
 }
+
+func TestMode_AllowChatStop(t *testing.T) {
+	t.Parallel()
+
+	cases := map[Mode]bool{Full: true, Off: true, ScheduledStop: false, "": true}
+	for m, want := range cases {
+		if got := m.AllowChatStop(); got != want {
+			t.Errorf("%q.AllowChatStop() = %v, want %v", m, got, want)
+		}
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,7 +23,7 @@ const (
 )
 
 // Config is the root Cluster Registry schema plus the validated lookup.
-// It is immutable once it passes Validate / Load (no hot-reload).
+// It is immutable once it passes Validate / Load; hot reload swaps a whole Config (see Holder).
 type Config struct {
 	Controller Controller `yaml:"controller"`
 	Clusters   []Cluster  `yaml:"clusters"`
@@ -93,6 +94,26 @@ func (c *Config) FrontendEnabled(name string) bool {
 		}
 	}
 	return false
+}
+
+// FrontendNames lists every known frontend; add new frontends here so hot reload can tell a
+// newly enabled one (restart required) from a change that can be applied live.
+var FrontendNames = []string{FrontendSlack}
+
+// EnabledFrontends returns the names of the frontends at least one cluster configures.
+func (c *Config) EnabledFrontends() []string {
+	var out []string
+	for _, n := range FrontendNames {
+		if c.FrontendEnabled(n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// SameConnection reports whether o reaches the same cluster the same way (name and provider).
+func (c Cluster) SameConnection(o Cluster) bool {
+	return c.Name == o.Name && reflect.DeepEqual(c.Provider, o.Provider)
 }
 
 // All returns a copy of all registered clusters.
@@ -210,6 +231,11 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read cluster registry file %s: %w", path, err)
 	}
+	return ParseValidated(path, data)
+}
+
+// ParseValidated Parses and Validates registry bytes read from path.
+func ParseValidated(path string, data []byte) (*Config, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("cluster registry file %s is empty", path)
 	}

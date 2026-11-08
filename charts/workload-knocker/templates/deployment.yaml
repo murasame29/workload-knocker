@@ -14,11 +14,11 @@ spec:
       {{- include "workload-knocker.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- /* No checksum annotation for the registry or policy ConfigMaps: the controller hot reloads them without a Pod restart. */}}
+      {{- with .Values.podAnnotations }}
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-        {{- end }}
+      {{- end }}
       labels:
         {{- include "workload-knocker.selectorLabels" . | nindent 8 }}
     spec:
@@ -48,6 +48,10 @@ spec:
               value: "8080"
             - name: CLUSTER_CONFIG_PATH
               value: /etc/workload-knocker/config.yaml
+            {{- if .Values.authz.enabled }}
+            - name: AUTHZ_CONFIG_PATH
+              value: /etc/workload-knocker/authz.yaml
+            {{- end }}
             - name: CONTROLLER_NAMESPACE
               value: {{ .Values.settings.controllerNamespace | quote }}
             - name: CLUSTER_RECONCILE_TIMEOUT
@@ -90,8 +94,7 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: config
-              mountPath: /etc/workload-knocker/config.yaml
-              subPath: config.yaml
+              mountPath: /etc/workload-knocker
               readOnly: true
             - name: tmp
               mountPath: /tmp
@@ -99,13 +102,23 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
+        {{- /* A projected volume (not subPath) so ConfigMap updates reach the Pod for hot reload. */}}
         - name: config
-          configMap:
-            name: {{ include "workload-knocker.configMapName" . | quote }}
+          projected:
             defaultMode: 0444
-            items:
-              - key: {{ .Values.config.key | quote }}
-                path: config.yaml
+            sources:
+              - configMap:
+                  name: {{ include "workload-knocker.configMapName" . | quote }}
+                  items:
+                    - key: {{ .Values.config.key | quote }}
+                      path: config.yaml
+              {{- if .Values.authz.enabled }}
+              - configMap:
+                  name: {{ include "workload-knocker.authzConfigMapName" . | quote }}
+                  items:
+                    - key: {{ .Values.authz.key | quote }}
+                      path: authz.yaml
+              {{- end }}
         - name: tmp
           emptyDir: {}
         {{- with .Values.extraVolumes }}

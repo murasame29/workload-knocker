@@ -11,6 +11,7 @@
 | `STOP_ALL_TIMEOUT` | `10s` | Per-cluster timeout for `/api/v1/stop-all` |
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
+| `AUTHZ_CONFIG_PATH` | unset | Authorization policy file. Unset and no file at `/etc/workload-knocker/authz.yaml`: authorization is disabled and everyone may start and stop everything (one info log at startup). Set, or the default file exists: it must parse or startup fails (see [Authorization](#authorization)) |
 | `API_TOKEN` | empty | Bearer token for `/api/v1/*`. When empty, `/api/v1/*` responds `503` (fail closed) |
 | `SLACK_APP_TOKEN` | required with Slack | Slack app-level token (`xapp-...`); required only when a cluster configures `frontends.slack` |
 | `SLACK_BOT_TOKEN` | required with Slack | Slack bot token (`xoxb-...`); required only when a cluster configures `frontends.slack` |
@@ -20,7 +21,7 @@
 
 ## Cluster registry
 
-The registry is read once at startup. Restart the Pod after changing it.
+The registry is read at startup and hot reloaded afterwards (see [Hot reload](#hot-reload)).
 
 ```yaml
 controller:
@@ -41,7 +42,7 @@ clusters:
     provider:
       type: kubeconfig
       kubeconfig:
-        path: /etc/workload-knocker/kubeconfig
+        path: /etc/kubeconfig/kubeconfig
         context: kind-local                                             # optional
     frontends:
       slack:
@@ -65,6 +66,94 @@ one cluster configures it, and only enabled frontends are started.
 
 > **Breaking change:** the former `clusters[].slack.slashCommand` moved to
 > `clusters[].frontends.slack.slashCommand`. The old `slack` key is rejected at startup.
+
+## Authorization
+
+A policy file decides who may start or stop which workload. See
+[`example/authz.example.yaml`](../../example/authz.example.yaml).
+
+```yaml
+version: 1            # required, must be 1
+default: deny         # deny (default) or allow, applied when no rule matches
+rules:
+  - env: stg                      # exact env or glob; "*" = every env
+    namespaces: ["team-*"]        # globs, required
+    workloads: ["checkout-*"]     # globs on the workload name, default ["*"]
+    actions: [start]              # start and/or stop, default both
+    subjects:
+      slack:
+        users: [U01ALICE00]       # Slack user IDs
+        groups: [S01PLATFORM]     # Slack usergroup IDs
+      discord:
+        users: ["123456789012345678"]
+        roles: ["223456789012345678"]
+      api: true                   # the REST API caller
+```
+
+- Globs use Go `path.Match` syntax (`*`, `?`, `[a-z]`); they are case sensitive and `*` does not cross `/`.
+- Any rule that matches env, namespace, workload and action and lists the subject allows the request.
+  **There are no deny rules in 0.1.0**: you cannot carve an exception out of a broader allow, so keep
+  allow rules narrow and `default: deny`.
+- A merged `foo-api` / `foo-app` / `foo-worker` entry is checked per member workload.
+- Unknown keys, malformed globs, IDs of the wrong shape (for example a usergroup ID under `users`) and a rule
+  without any subject are rejected when the file is loaded.
+- The file may be YAML or JSON.
+
+### Where it applies
+
+| Surface | Behavior |
+|---|---|
+| Slack namespaces and workloads | Only namespaces and workloads the user may start or stop are listed. With none, the user gets a clear message. |
+| Slack plan and apply | Every start and stop is checked again at plan time and at apply time. Entries the user may not perform are rejected with a reason, whatever the modal submitted. |
+| `POST /api/v1/start` | Checked per workload for subject `api`. Refused workloads are returned in `forbidden`; if nothing was started and something was refused, the status is `403`. A refusal does not reveal whether the workload exists. |
+| `POST /api/v1/stop-all` | Stops only workloads the `api` subject may stop. Running workloads that were kept are listed per cluster in `skipped` and counted in `total_skipped`. |
+
+### Operation mode in chat
+
+| `OPERATION_MODE` | Chat start | Chat stop |
+|---|---|---|
+| `full` | yes | yes |
+| `scheduled-stop` | yes | no: stop entries are rejected with a message that the nightly job stops workloads |
+| `off` | yes | yes |
+
+The mode applies on top of the policy. The API side is described in [Operation modes](#operation-modes-and-nightly-stop).
+
+### Subject resolution
+
+| Source | Subject |
+|---|---|
+| Slack | The user ID plus the usergroups the user belongs to. Only usergroups named in the policy are looked up (`usergroups.users.list`) and cached for 60 seconds, so a membership change can take up to a minute to apply. |
+| REST API | The fixed subject `api`. |
+| Discord | The schema accepts `users` and `roles` and the subject type carries user plus roles; the Discord adapter supplies them when it lands. |
+
+Usergroup lookups need the `usergroups:read` bot scope (listed in `slack-manifest.yaml`; reinstall the app
+if you created it before this scope was added). It is only used when a rule lists `slack.groups`. If a lookup fails the controller logs a warning and matches the user ID only for that
+group. It never fails open: a user allowed only through a group is denied until the lookup succeeds.
+
+## Hot reload
+
+The cluster registry and the authorization policy are watched with fsnotify. The parent directory is
+watched, so editors' atomic renames and Kubernetes ConfigMap updates (the `..data` symlink swap) are both seen.
+Events are debounced for 500 ms. `workload_knocker_config_reload_total{target,result}` counts attempts.
+
+- A valid change is applied atomically and a summary is logged. In-flight requests finish on the previous config.
+- An invalid change (parse or validation error, deleted file) is rejected: the previous config stays active, an
+  error is logged and `result="error"` is incremented.
+- Registry: clusters can be added, removed or changed. New or changed clusters are built and bootstrapped
+  (30 s timeout each) before the swap. If a changed cluster cannot be bootstrapped its old connection is kept
+  and a warning is logged. An added cluster that fails to bootstrap is kept with `cluster_reachable=0`, like at
+  startup. Removed clusters disappear from slash command resolution and their `workload_knocker_activation`
+  and `workload_knocker_cluster_reachable` series are deleted. Slash commands are resolved against the live registry.
+- Authorization: a policy file that appears after startup enables authorization. Deleting the file keeps the last policy.
+- A registry change that needs a restart is rejected with a clear error and the old config stays: changing
+  `controller.namespace`, enabling a frontend that was not enabled at startup, or enabling one without its tokens.
+- Environment variables (tokens, `OPERATION_MODE`, timeouts, paths) are never hot reloaded.
+
+In Kubernetes, a ConfigMap change reaches the Pod after the kubelet sync, usually within about a minute. The chart
+therefore mounts the registry and the policy as one projected volume at `/etc/workload-knocker` (a `subPath`
+mount would never update) and does not put a checksum annotation on the Pod template for either ConfigMap, so a
+change does not restart the Pod. Run `kubectl rollout restart` only for the restart-required cases above.
+Because that directory is read-only and managed, mount extra files such as kubeconfigs elsewhere.
 
 ## Managed cluster access
 
@@ -148,13 +237,15 @@ Checks run in this order: authentication, operation mode, request validation.
 {"env": "stg", "namespace": "my-namespace", "workloads": ["a", "b"], "user": "ci-bot"}
 ```
 
-`user` is optional (default `rest-api`). Returns `200` with `started` and `not_found` lists,
-`400` for invalid input, `404` for an unknown `env` or when no workload was found.
+`user` is optional (default `rest-api`). Returns `200` with `started`, `not_found` and `forbidden` lists,
+`400` for invalid input, `403` when every requested workload is refused by the [authorization policy](#authorization),
+`404` for an unknown `env` or when no workload was found.
 
 ### `POST /api/v1/stop-all`
 
-Allowed only in `full` mode (`403` otherwise). Stops workloads in all managed clusters (best effort). Returns `200` with a per-cluster
-breakdown even when some clusters fail.
+Allowed only in `full` mode (`403` otherwise). Stops the workloads the `api` subject may stop in all managed
+clusters (best effort); running workloads kept by the authorization policy are reported in `skipped`
+per cluster and in `total_skipped`. Returns `200` with a per-cluster breakdown even when some clusters fail.
 
 ### Probes
 
@@ -170,6 +261,7 @@ initial sync of all clusters.
 | `workload_knocker_token_refresh_total` | counter | `cluster`, `result` |
 | `workload_knocker_operations_total` | counter | `env`, `cluster`, `operation`, `result` |
 | `workload_knocker_operation_duration_seconds` | histogram | `env`, `cluster`, `operation` |
+| `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
 
 `operation` is `start`, `stop` or `stop_all`. `result` is `success`, `error` or `not_found`
 (`error` is only reported by `stop_all`). User IDs and workload names are never used as labels

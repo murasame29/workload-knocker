@@ -26,11 +26,12 @@ const (
 
 // fakeMetrics is a minimal implementation of metrics.MetricsManager.
 type fakeMetrics struct {
-	mu             sync.Mutex
-	activations    map[string]float64 // key: "env/cluster/ns/name"
-	deleted        map[string]struct{}
-	reachable      map[string]float64
-	tokenRefreshes map[string]int // key: "cluster/result"
+	mu              sync.Mutex
+	activations     map[string]float64 // key: "env/cluster/ns/name"
+	deleted         map[string]struct{}
+	reachable       map[string]float64
+	tokenRefreshes  map[string]int // key: "cluster/result"
+	deletedClusters []string
 }
 
 func (f *fakeMetrics) ensureLocked() {
@@ -77,6 +78,15 @@ func (f *fakeMetrics) IncTokenRefresh(cluster, result string) {
 	f.ensureLocked()
 	f.tokenRefreshes[cluster+"/"+result]++
 }
+
+func (f *fakeMetrics) DeleteCluster(env, cluster string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensureLocked()
+	f.deletedClusters = append(f.deletedClusters, env+"/"+cluster)
+}
+
+func (f *fakeMetrics) IncConfigReload(string, string) {}
 
 func (f *fakeMetrics) Handler() http.Handler { return http.NotFoundHandler() }
 
@@ -282,7 +292,7 @@ func TestClusterStore_StopAll_ReturnsCount(t *testing.T) {
 		t.Fatalf("Start wl-2: false")
 	}
 
-	stopped, err := store.StopAll(context.Background())
+	stopped, _, err := store.StopAll(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("StopAll: %v", err)
 	}

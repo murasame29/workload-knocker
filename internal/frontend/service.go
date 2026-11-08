@@ -6,8 +6,10 @@ import (
 	"slices"
 	"time"
 
+	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/metrics"
+	"github.com/murasame29/workload-knocker/internal/mode"
 	"github.com/murasame29/workload-knocker/internal/model"
 )
 
@@ -61,6 +63,32 @@ type Change struct {
 	Names  []string
 }
 
+// Reason says why an operation was rejected.
+type Reason string
+
+const (
+	// ReasonUnauthorized: the authorization policy does not allow the subject.
+	ReasonUnauthorized Reason = "unauthorized"
+	// ReasonChatStopDisabled: OPERATION_MODE=scheduled-stop leaves stopping to the nightly job.
+	ReasonChatStopDisabled Reason = "chat-stop-disabled"
+)
+
+// Rejection is a plan or apply line that was refused; Label is the display target.
+type Rejection struct {
+	Action Action
+	Label  string
+	Names  []string
+	Reason Reason
+}
+
+// Message is the user-facing explanation, safe to show in a chat.
+func (r Rejection) Message() string {
+	if r.Reason == ReasonChatStopDisabled {
+		return "stopping from chat is disabled (OPERATION_MODE=scheduled-stop); workloads are stopped by the nightly job"
+	}
+	return "you are not authorized to " + string(r.Action) + " this"
+}
+
 // Plan is the diff between the desired and current state of one namespace.
 type Plan struct {
 	Cluster   config.Cluster
@@ -69,6 +97,8 @@ type Plan struct {
 	// ToStart / ToStop are the workload names to change.
 	ToStart []string
 	ToStop  []string
+	// Rejected are the changes refused for the subject; they are not in Changes / ToStart / ToStop.
+	Rejected []Rejection
 }
 
 // Empty reports whether the plan has nothing to change.
@@ -78,9 +108,12 @@ func (p Plan) Empty() bool { return len(p.ToStart) == 0 && len(p.ToStop) == 0 }
 type ApplyRequest struct {
 	Cluster   config.Cluster
 	Namespace string
-	User      string
-	ToStart   []string
-	ToStop    []string
+	// User is the display name recorded as the starter.
+	User string
+	// Subject is checked against the policy again at apply time; never trust the submitted lists.
+	Subject authz.Subject
+	ToStart []string
+	ToStop  []string
 }
 
 // Applied is the outcome of one workload operation.
@@ -94,6 +127,8 @@ type Applied struct {
 // ApplyResult is the data a frontend renders after applying a plan.
 type ApplyResult struct {
 	Applied []Applied
+	// Rejected are the requested operations refused at apply time.
+	Rejected []Rejection
 	// AutoStop is true when started workloads are stopped again by the nightly auto-stop.
 	AutoStop bool
 }
@@ -103,11 +138,42 @@ type Service struct {
 	store            model.WorkloadStore
 	metrics          metrics.MetricsManager
 	reconcileTimeout time.Duration
+	authz            authz.Authorizer
+	mode             mode.Mode
 }
 
+// Option customizes a Service.
+type Option func(*Service)
+
+// WithAuthorizer sets the policy. Without it every operation is denied (fail closed).
+func WithAuthorizer(a authz.Authorizer) Option { return func(s *Service) { s.authz = a } }
+
+// WithMode sets the operation mode; scheduled-stop forbids stopping from chat.
+func WithMode(m mode.Mode) Option { return func(s *Service) { s.mode = m } }
+
 // NewService builds a Service. reconcileTimeout bounds each on-demand Reconcile.
-func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTimeout time.Duration) *Service {
-	return &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout}
+func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
+	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// check returns "" when sub may perform a on the workload, else the rejection reason.
+func (s *Service) check(sub authz.Subject, env, namespace string, a Action, name string) Reason {
+	if a == ActionStop && !s.mode.AllowChatStop() {
+		return ReasonChatStopDisabled
+	}
+	if s.authz == nil || !s.authz.Allowed(sub, env, namespace, name, authz.Action(a)) {
+		return ReasonUnauthorized
+	}
+	return ""
+}
+
+// operable reports whether sub may start or stop the workload at all.
+func (s *Service) operable(sub authz.Subject, env, namespace, name string) bool {
+	return s.check(sub, env, namespace, ActionStart, name) == "" || s.check(sub, env, namespace, ActionStop, name) == ""
 }
 
 // Reconcile refreshes the cluster state; on failure it logs and the cached state is used.
@@ -119,16 +185,27 @@ func (s *Service) Reconcile(env string) {
 	}
 }
 
-// Namespaces returns the managed namespaces of env sorted a-z.
-func (s *Service) Namespaces(env string) []string {
-	ns := slices.Clone(s.store.Namespaces(env))
-	slices.Sort(ns)
-	return ns
+// Namespaces returns the namespaces of env that hold a workload sub may operate, sorted a-z.
+// total is the namespace count before the policy filter.
+func (s *Service) Namespaces(sub authz.Subject, env string) (allowed []string, total int) {
+	all := slices.Clone(s.store.Namespaces(env))
+	slices.Sort(all)
+	for _, ns := range all {
+		if slices.ContainsFunc(s.store.WorkloadsByNamespace(env, ns), func(w *model.Workload) bool {
+			return s.operable(sub, env, ns, w.Name)
+		}) {
+			allowed = append(allowed, ns)
+		}
+	}
+	return allowed, len(all)
 }
 
-// List groups the workloads of env/namespace into entries and applies limits.
-func (s *Service) List(env, namespace string, limits Limits) Listing {
-	entries := GroupEntries(s.store.WorkloadsByNamespace(env, namespace))
+// List groups the workloads of env/namespace that sub may operate into entries and applies limits.
+func (s *Service) List(sub authz.Subject, env, namespace string, limits Limits) Listing {
+	visible := slices.DeleteFunc(slices.Clone(s.store.WorkloadsByNamespace(env, namespace)), func(w *model.Workload) bool {
+		return !s.operable(sub, env, namespace, w.Name)
+	})
+	entries := GroupEntries(visible)
 	l := Listing{Entries: entries, Limits: limits}
 	if limits.MaxEntries > 0 && len(entries) > limits.MaxEntries {
 		l.Truncated = len(entries) - limits.MaxEntries
@@ -137,9 +214,23 @@ func (s *Service) List(env, namespace string, limits Limits) Listing {
 	return l
 }
 
-// BuildPlan diffs the selection (checked = wants running) against the current state.
+// ChatStopAllowed reports whether chat may stop workloads in the current operation mode.
+func (s *Service) ChatStopAllowed() bool { return s.mode.AllowChatStop() }
+
+// Plan is BuildPlan for sub: changes the policy or mode refuses move to Plan.Rejected.
+func (s *Service) Plan(sub authz.Subject, cl config.Cluster, namespace string, entries []Entry, selected map[string]bool) Plan {
+	return buildPlan(cl, namespace, entries, selected, func(a Action, name string) Reason {
+		return s.check(sub, cl.Env, namespace, a, name)
+	})
+}
+
+// BuildPlan diffs the selection (checked = wants running) against the current state, without authorization.
 // An entry counts as ON if any member name is in selected.
 func BuildPlan(cl config.Cluster, namespace string, entries []Entry, selected map[string]bool) Plan {
+	return buildPlan(cl, namespace, entries, selected, func(Action, string) Reason { return "" })
+}
+
+func buildPlan(cl config.Cluster, namespace string, entries []Entry, selected map[string]bool, decide func(Action, string) Reason) Plan {
 	plan := Plan{Cluster: cl, Namespace: namespace}
 	for _, e := range entries {
 		want := false
@@ -160,6 +251,8 @@ func BuildPlan(cl config.Cluster, namespace string, entries []Entry, selected ma
 				stopNames = append(stopNames, w.Name)
 			}
 		}
+		startNames = plan.reject(e, ActionStart, startNames, decide)
+		stopNames = plan.reject(e, ActionStop, stopNames, decide)
 		plan.ToStart = append(plan.ToStart, startNames...)
 		plan.ToStop = append(plan.ToStop, stopNames...)
 		if len(startNames) > 0 {
@@ -172,24 +265,50 @@ func BuildPlan(cl config.Cluster, namespace string, entries []Entry, selected ma
 	return plan
 }
 
+// reject moves the names decide refuses into p.Rejected and returns the rest.
+func (p *Plan) reject(e Entry, a Action, names []string, decide func(Action, string) Reason) []string {
+	var kept, refused []string
+	var reason Reason
+	for _, n := range names {
+		if r := decide(a, n); r != "" {
+			refused, reason = append(refused, n), r
+			continue
+		}
+		kept = append(kept, n)
+	}
+	if len(refused) > 0 {
+		p.Rejected = append(p.Rejected, Rejection{Action: a, Label: e.ChangeLabel(refused), Names: refused, Reason: reason})
+	}
+	return kept
+}
+
 // Apply runs the requested starts then stops through the store, recording metrics.
+// Every entry is checked against the policy and mode again; refused ones land in ApplyResult.Rejected.
 func (s *Service) Apply(req ApplyRequest) ApplyResult {
 	cl := req.Cluster
 	var res ApplyResult
+	started := 0
 
 	for _, name := range req.ToStart {
 		if name == "" {
+			continue
+		}
+		if s.rejectApply(&res, req, ActionStart, name) {
 			continue
 		}
 		begin := time.Now()
 		ok := s.store.Start(cl.Env, req.Namespace, name, req.User)
 		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStart), resultLabel(ok), time.Since(begin))
 		res.Applied = append(res.Applied, Applied{Action: ActionStart, Name: name, Found: ok})
+		started++
 		slog.Info("workload started", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", req.Namespace), slog.String("user.name", req.User))
 	}
 
 	for _, name := range req.ToStop {
 		if name == "" {
+			continue
+		}
+		if s.rejectApply(&res, req, ActionStop, name) {
 			continue
 		}
 		begin := time.Now()
@@ -199,8 +318,19 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 		slog.Info("workload stopped", slog.String("service", name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", req.Namespace), slog.String("user.name", req.User))
 	}
 
-	res.AutoStop = len(req.ToStart) > 0
+	res.AutoStop = started > 0
 	return res
+}
+
+// rejectApply records a rejection and returns true when the operation must not run.
+func (s *Service) rejectApply(res *ApplyResult, req ApplyRequest, a Action, name string) bool {
+	reason := s.check(req.Subject, req.Cluster.Env, req.Namespace, a, name)
+	if reason == "" {
+		return false
+	}
+	res.Rejected = append(res.Rejected, Rejection{Action: a, Label: name, Names: []string{name}, Reason: reason})
+	slog.Warn("workload operation rejected", slog.String("action", string(a)), slog.String("reason", string(reason)), slog.String("workload", name), slog.String("cluster.env", req.Cluster.Env), slog.String("namespace", req.Namespace), slog.String("user.name", req.User))
+	return true
 }
 
 // resultLabel maps a store outcome to the metrics result label.
