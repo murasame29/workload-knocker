@@ -89,6 +89,8 @@ type ClusterFrontends struct {
 // SlackFrontend holds Slack settings. SlashCommand is unique in the registry.
 type SlackFrontend struct {
 	SlashCommand string `yaml:"slashCommand"`
+	// NotifyChannel is an optional channel ID that receives public start, ready and stop messages.
+	NotifyChannel string `yaml:"notifyChannel,omitempty"`
 }
 
 // FrontendEnabled reports whether at least one cluster configures the named frontend.
@@ -117,6 +119,17 @@ func (c *Config) EnabledFrontends() []string {
 		}
 	}
 	return out
+}
+
+// NotifyChannel returns the notify channel ID configured for the frontend, or "" when none.
+func (c Cluster) NotifyChannel(frontend string) string {
+	switch {
+	case frontend == FrontendSlack && c.Frontends.Slack != nil:
+		return c.Frontends.Slack.NotifyChannel
+	case frontend == FrontendDiscord && c.Frontends.Discord != nil:
+		return c.Frontends.Discord.NotifyChannel
+	}
+	return ""
 }
 
 // SameConnection reports whether o reaches the same cluster the same way (name and provider).
@@ -176,9 +189,17 @@ func (c *Config) Validate() error {
 		if cl.Frontends.Slack != nil && cl.Frontends.Slack.SlashCommand == "" {
 			return fmt.Errorf("cluster[%d] %q: frontends.slack.slashCommand is required", i, cl.Env)
 		}
+		if cl.Frontends.Slack != nil {
+			if err := validateSlackChannel(cl.Frontends.Slack.NotifyChannel); err != nil {
+				return fmt.Errorf("cluster[%d] %q: frontends.slack.notifyChannel: %w", i, cl.Env, err)
+			}
+		}
 		if cl.Frontends.Discord != nil {
 			if err := validateDiscordCommand(cl.Frontends.Discord.Command); err != nil {
 				return fmt.Errorf("cluster[%d] %q: frontends.discord.command: %w", i, cl.Env, err)
+			}
+			if err := validateDiscordChannel(cl.Frontends.Discord.NotifyChannel); err != nil {
+				return fmt.Errorf("cluster[%d] %q: frontends.discord.notifyChannel: %w", i, cl.Env, err)
 			}
 		}
 		if err := validateProvider(cl); err != nil {

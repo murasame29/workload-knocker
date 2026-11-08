@@ -12,6 +12,10 @@ clusters:
     frontends:
       slack:
         slashCommand: /workload-knocker-local
+        # Optional channel ID for public start/ready/stop messages (bot needs chat:write and an invite).
+        # notifyChannel: C0123ABCD
       # Discord (needs DISCORD_BOT_TOKEN; optional DISCORD_GUILD_ID). Lowercase, no leading slash.
       # discord:
       #   command: workload-knocker-local
+      #   # Optional channel ID for public messages (bot needs View Channel and Send Messages there).
+      #   notifyChannel: "123456789012345678"

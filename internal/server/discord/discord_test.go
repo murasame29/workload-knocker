@@ -273,6 +273,24 @@ type fakeSession struct {
 	// overwrites counts OverwriteCommands calls; overwriteErr makes them fail.
 	overwrites   int
 	overwriteErr error
+	// sent / edited record channel messages posted and edited through the notify poster.
+	sent   []sentMessage
+	edited []*discordgo.MessageEdit
+}
+
+type sentMessage struct {
+	channel string
+	msg     *discordgo.MessageSend
+}
+
+func (s *fakeSession) SendMessage(channel string, m *discordgo.MessageSend) (string, error) {
+	s.sent = append(s.sent, sentMessage{channel, m})
+	return fmt.Sprintf("msg-%d", len(s.sent)), nil
+}
+
+func (s *fakeSession) EditMessage(e *discordgo.MessageEdit) error {
+	s.edited = append(s.edited, e)
+	return nil
 }
 
 func (s *fakeSession) Open() error           { return nil }

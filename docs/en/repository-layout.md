@@ -15,6 +15,7 @@
 | `internal/metrics/` | Prometheus metrics, including `workload_knocker_activation` |
 | `internal/mode/` | `OPERATION_MODE` |
 | `internal/model/` | Shared workload types |
+| `internal/notify/` | Ready message templates and the optional notify channel (platform-neutral notifier, `Poster` adapters, Extend button contract) |
 | `internal/reconcile/` | Background reconcile loop with per-tick hooks |
 | `internal/reload/` | Hot reload of the registry and the policy |
 | `internal/rollout/` | Rollout progress tracking after Confirm (polling, state machine, per-cluster readers) |

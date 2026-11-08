@@ -15,6 +15,7 @@
 | `internal/metrics/` | Prometheus メトリクス (`workload_knocker_activation` など) |
 | `internal/mode/` | `OPERATION_MODE` |
 | `internal/model/` | 共有の workload 型 |
+| `internal/notify/` | ready メッセージのテンプレートと任意の通知チャンネル (プラットフォーム非依存の notifier、`Poster` アダプタ、Extend ボタンの契約) |
 | `internal/reconcile/` | バックグラウンド reconcile ループ (tick ごとのフック付き) |
 | `internal/reload/` | Registry とポリシーのホットリロード |
 | `internal/rollout/` | Confirm 後の rollout 進捗追跡 (ポーリング、状態遷移、cluster ごとの reader) |

@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/notify"
 )
 
 // StopAllHandler handles /api/v1/stop-all.
@@ -21,11 +23,12 @@ type StopAllHandler struct {
 	metrics metrics.MetricsManager
 	authz   authz.Authorizer
 	audit   audit.Recorder
+	opts    settings
 }
 
 // New constructs a StopAllHandler; az decides which workloads the api subject may stop.
-func New(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer) *StopAllHandler {
-	return &StopAllHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog()}
+func New(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, opts ...Option) *StopAllHandler {
+	return &StopAllHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog(), opts: newSettings(opts)}
 }
 
 // stopAllResponse is the JSON schema of the HTTP response.
@@ -82,6 +85,7 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.recordAll(r, running, result, clusterNames)
+	h.announce(r, running, result, clusterNames)
 
 	message := "stop-all dispatched to all clusters"
 	if skipped > 0 {
@@ -118,6 +122,31 @@ func (h *StopAllHandler) runningWorkloads() []model.Workload {
 		}
 	}
 	return out
+}
+
+// announce posts the workloads that were stopped to the notify channel of their cluster, one message per cluster.
+func (h *StopAllHandler) announce(r *http.Request, running []model.Workload, result model.StopAllResult, clusterNames map[string]string) {
+	byEnv := map[string][]notify.Workload{}
+	for _, w := range running {
+		if result.PerCluster[w.Env].Error != "" || !h.authz.Allowed(authz.APISubject, w.Env, w.Namespace, w.Name, authz.ActionStop) {
+			continue
+		}
+		byEnv[w.Env] = append(byEnv[w.Env], notify.Workload{Namespace: w.Namespace, Name: w.Name})
+	}
+	actor := string(sourceOf(r))
+	if actor == string(audit.SourceAPI) {
+		actor = apiActor
+	}
+	envs := make([]string, 0, len(byEnv))
+	for env := range byEnv {
+		envs = append(envs, env)
+	}
+	slices.Sort(envs)
+	for _, env := range envs {
+		h.opts.notifier.Stopped(r.Context(), notify.Event{
+			Kind: notify.KindStopAll, Env: env, ClusterName: clusterNames[env], Actor: actor, Workloads: byEnv[env],
+		})
+	}
 }
 
 // recordAll emits one event per workload that was running when the request arrived.

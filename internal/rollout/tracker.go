@@ -54,7 +54,8 @@ type Target struct {
 type Item struct {
 	Target Target
 	State  State
-	// Detail is the last observed reason, set on timeout (for example "0/1 ready, ImagePullBackOff").
+	// Detail is the last observed reason on timeout (for example "0/1 ready, ImagePullBackOff"),
+	// or the ready message a frontend adds to a started item.
 	Detail string
 }
 

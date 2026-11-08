@@ -45,6 +45,9 @@ type session interface {
 	OverwriteCommands(guildID string, cmds []*discordgo.ApplicationCommand) error
 	Respond(i *discordgo.Interaction, r *discordgo.InteractionResponse) error
 	Edit(i *discordgo.Interaction, e *discordgo.WebhookEdit) error
+	// SendMessage posts a channel message and returns its ID; EditMessage edits it.
+	SendMessage(channelID string, m *discordgo.MessageSend) (string, error)
+	EditMessage(e *discordgo.MessageEdit) error
 }
 
 // liveSession adapts *discordgo.Session to session.
@@ -74,11 +77,25 @@ func (s liveSession) Edit(i *discordgo.Interaction, e *discordgo.WebhookEdit) er
 	return err
 }
 
+func (s liveSession) SendMessage(channelID string, m *discordgo.MessageSend) (string, error) {
+	msg, err := s.ChannelMessageSendComplex(channelID, m)
+	if err != nil {
+		return "", err
+	}
+	return msg.ID, nil
+}
+
+func (s liveSession) EditMessage(e *discordgo.MessageEdit) error {
+	_, err := s.ChannelMessageEditComplex(e)
+	return err
+}
+
 // Bot is the workload control bot running on the Discord gateway.
 type Bot struct {
 	sess     session
 	svc      *frontend.Service
 	registry registry
+	poster   *poster
 	guildID  string
 	// registered is the command set last bulk-overwritten; only the Start goroutine touches it.
 	registered []string
@@ -118,6 +135,7 @@ func newBot(sess session, svc *frontend.Service, registry registry, guildID stri
 		sess:     sess,
 		svc:      svc,
 		registry: registry,
+		poster:   newPoster(sess),
 		guildID:  guildID,
 		flows:    newFlowStore(flowTTL),
 		sem:      make(chan struct{}, maxConcurrentEvents),

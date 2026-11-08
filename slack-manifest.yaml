@@ -22,6 +22,7 @@ oauth_config:
   scopes:
     bot:
       - commands
+      # Ephemeral replies; also posts to frontends.slack.notifyChannel (invite the bot to that channel).
       - chat:write
       # Resolves usergroup members for authz subjects.groups; unused without group rules.
       - usergroups:read

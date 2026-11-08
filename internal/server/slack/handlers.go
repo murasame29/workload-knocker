@@ -477,8 +477,11 @@ func (b *Bot) handleInteraction(callback slack.InteractionCallback) {
 		slog.Debug("block actions received", slog.Int("count", len(callback.ActionCallback.BlockActions)))
 		for _, action := range callback.ActionCallback.BlockActions {
 			slog.Debug("block action", slog.String("action.id", action.ActionID), slog.String("block.id", action.BlockID), slog.String("selected.value", action.SelectedOption.Value))
-			if action.ActionID == actionSelectNamespace {
+			switch action.ActionID {
+			case actionSelectNamespace:
 				b.handleNamespaceSelected(callback, action.SelectedOption.Value)
+			case actionExtend:
+				b.handleExtend(callback, action.Value)
 			}
 		}
 	default:
@@ -755,13 +758,13 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		slog.Error("failed to send result message", slog.String("error.message", err.Error()))
 	}
 	if tracked {
-		b.watchRollout(meta, res, targets, timeout)
+		b.watchRollout(meta, req, res, targets, timeout)
 	}
 }
 
 // watchRollout follows the rollout in the background. Slack cannot edit an ephemeral message
 // posted with chat.postEphemeral, so only the final state is posted as a second message.
-func (b *Bot) watchRollout(meta previewMetadata, res frontend.ApplyResult, targets []rollout.Target, timeout time.Duration) {
+func (b *Bot) watchRollout(meta previewMetadata, req frontend.ApplyRequest, res frontend.ApplyResult, targets []rollout.Target, timeout time.Duration) {
 	b.watchers.Add(1)
 	go func() {
 		defer b.watchers.Done()
@@ -770,10 +773,12 @@ func (b *Bot) watchRollout(meta previewMetadata, res frontend.ApplyResult, targe
 				slog.Error("panic in slack rollout watch", slog.Any("recover", r), slog.String("stack", string(debug.Stack())))
 			}
 		}()
+		ready := b.svc.NewReadyRenderer(req)
 		b.svc.Track(b.watchCtx, targets, func(snap rollout.Snapshot) {
 			if !snap.Done() {
 				return
 			}
+			snap = ready.Decorate(snap)
 			header := fmt.Sprintf("📡 Rollout result (%s / %s)", strings.ToUpper(targets[0].Env), meta.Namespace)
 			if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
 				slack.MsgOptionBlocks(mrkdwnSections(header, progressLines(res, snap, timeout))...),

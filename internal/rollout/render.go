@@ -10,6 +10,9 @@ func Line(it Item, timeout time.Duration) string {
 	n := it.Target.Name
 	switch it.State {
 	case StateStarted:
+		if it.Detail != "" {
+			return fmt.Sprintf("✅ %s started — %s", n, it.Detail)
+		}
 		return fmt.Sprintf("✅ %s started", n)
 	case StateStopped:
 		return fmt.Sprintf("⏹ %s stopped", n)

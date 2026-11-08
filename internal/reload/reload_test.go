@@ -365,3 +365,31 @@ func TestAuthzReload_EnablesAuthorizationWhenFileAppears(t *testing.T) {
 		t.Error("policy that appeared at runtime must be enforced")
 	}
 }
+
+func TestRegistryReload_NotifyChannelAppliesWithoutRestart(t *testing.T) {
+	t.Parallel()
+
+	slackWith := func(extra string) string {
+		return "controller: {namespace: workload-control}\nclusters:\n  - env: stg\n    name: stg-cluster\n    provider: {type: eks, eks: {region: ap-northeast-1}}\n    frontends: {slack: {slashCommand: /wk-stg" + extra + "}}\n"
+	}
+	f := newRegistryFixture(t, slackWith(""))
+	channel := func() string {
+		cl, _ := f.r.Config.ByEnv("stg")
+		return cl.NotifyChannel(config.FrontendSlack)
+	}
+	if channel() != "" {
+		t.Fatalf("channel = %q before reload", channel())
+	}
+
+	f.write(t, slackWith(", notifyChannel: C0123ABCD"))
+	f.r.Reload(context.Background())
+	if channel() != "C0123ABCD" || f.m.count("registry/success") != 1 {
+		t.Errorf("channel = %q counters = %v, want the new channel applied live", channel(), f.m.reloads)
+	}
+
+	f.write(t, slackWith(", notifyChannel: general"))
+	f.r.Reload(context.Background())
+	if channel() != "C0123ABCD" || f.m.count("registry/error") != 1 {
+		t.Errorf("an invalid channel must keep the previous config: channel=%q counters=%v", channel(), f.m.reloads)
+	}
+}
