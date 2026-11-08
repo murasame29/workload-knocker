@@ -1,0 +1,48 @@
+name: Bug report
+description: Report something that does not work as expected
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Chart/app version, image tag, or git commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - Helm
+        - Binary
+        - Other
+    validations:
+      required: false
+  - type: textarea
+    id: operation
+    attributes:
+      label: Operation
+      description: What you did (Slack command, API call, or deployment step).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact Slack tokens, signing secrets, AWS credentials and other secrets before pasting.
+      render: shell
+    validations:
+      required: false

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    "docker:pinDigests"
+  ],
+  "timezone": "Asia/Tokyo",
+  "schedule": ["* * * * 1"],
+  "labels": ["dependencies"],
+  "separateMajorMinor": true,
+  "separateMultipleMajor": true,
+  "postUpdateOptions": ["gomodTidy"],
+  "gomod": { "enabled": true },
+  "commitMessagePrefix": "chore(deps):",
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "commitMessagePrefix": "ci(deps):"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "github-actions non-major"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["k8s.io/**"],
+      "groupName": "k8s.io modules"
+    },
+    {
+      "description": "go.mod pins k8s.io/client-go with a replace directive aligned with github.com/kedacore/keda/v2; do not bump it independently.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["k8s.io/client-go"],
+      "enabled": false
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": false
+    }
+  ]
+}
