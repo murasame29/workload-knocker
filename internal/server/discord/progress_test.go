@@ -75,8 +75,8 @@ func TestConfirm_ShowsStartingThenStarted(t *testing.T) {
 	if len(got) != 2 || !strings.Contains(got[0], "⏳ terraria starting...") || !strings.Contains(got[1], "✅ terraria started") {
 		t.Fatalf("edits = %q, want starting then started", got)
 	}
-	if !strings.Contains(got[1], "<@u1> changed workloads") || !strings.Contains(got[1], "Auto-stop") {
-		t.Errorf("final edit keeps the header and auto-stop note: %q", got[1])
+	if !strings.Contains(got[1], "<@u1> changed workloads") || strings.Contains(got[1], "22:00 JST") {
+		t.Errorf("final edit keeps the header and has no fixed stop time: %q", got[1])
 	}
 }
 

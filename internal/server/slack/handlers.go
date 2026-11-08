@@ -760,9 +760,6 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		callback.User.ID, envUpper, cl.Name, meta.Namespace,
 	)
 	resultLines := progressLines(res, initial, timeout)
-	if res.AutoStop {
-		resultLines = append(resultLines, "⏰ Auto-stop: today 22:00 JST")
-	}
 
 	if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
 		slack.MsgOptionBlocks(mrkdwnSections(resultHeader, resultLines)...),

@@ -330,9 +330,6 @@ func progressText(userID string, cl config.Cluster, namespace string, res fronte
 	}
 	lines = append(lines, appliedStopLines(res.Applied)...)
 	lines = append(lines, rejectionLines(res.Rejected)...)
-	if res.AutoStop {
-		lines = append(lines, "⏰ Auto-stop: today 22:00 JST")
-	}
 	head := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)", userID, strings.ToUpper(cl.Env), cl.Name, namespace)
 	return fitLines(head, lines, contentMaxLen)
 }
