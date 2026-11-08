@@ -10,6 +10,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 )
@@ -247,6 +248,53 @@ type previewMetadata struct {
 	ToStop    []string `json:"to_stop"`  // workload name
 }
 
+// planLines renders the allowed plan changes for the preview modal.
+func planLines(plan frontend.Plan) []string {
+	lines := make([]string, 0, len(plan.Changes))
+	for _, c := range plan.Changes {
+		if c.Action == frontend.ActionStart {
+			lines = append(lines, fmt.Sprintf("🟢 %s: stopped → *start*", c.Label))
+		} else {
+			lines = append(lines, fmt.Sprintf("🔴 %s: running → *stop*", c.Label))
+		}
+	}
+	return lines
+}
+
+// rejectionLines renders refused changes with the reason.
+func rejectionLines(rejected []frontend.Rejection) []string {
+	lines := make([]string, 0, len(rejected))
+	for _, r := range rejected {
+		lines = append(lines, fmt.Sprintf("⛔ %s: %s", r.Label, r.Message()))
+	}
+	return lines
+}
+
+// applyLines renders the outcome of an apply, including entries refused at apply time.
+func applyLines(res frontend.ApplyResult) []string {
+	var lines []string
+	for _, a := range res.Applied {
+		if a.Action == frontend.ActionStart {
+			lines = append(lines, fmt.Sprintf("🟢 %s → start", a.Name))
+		} else {
+			lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
+		}
+	}
+	return append(lines, rejectionLines(res.Rejected)...)
+}
+
+// modalNote explains an empty list or a disabled chat stop; "" when there is nothing to say.
+func modalNote(listing frontend.Listing, chatStopAllowed bool) string {
+	var notes []string
+	if listing.Total() == 0 {
+		notes = append(notes, "ℹ️ You are not authorized to operate any workload in this namespace.")
+	}
+	if !chatStopAllowed {
+		notes = append(notes, "ℹ️ Stopping from chat is disabled: running workloads are stopped by the nightly job.")
+	}
+	return strings.Join(notes, "\n")
+}
+
 // handleSlashCommand handles /workload-knocker-*.
 // The cluster is resolved via b.registry.BySlashCommand(cmd.Command).
 func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
@@ -263,15 +311,23 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 
 	slog.Info("slash command received", slog.String("user.name", cmd.UserName), slog.String("command", cmd.Command), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
 
+	// Resolve the subject while reconciling so both fit the 3s trigger_id window.
+	subCh := make(chan authz.Subject, 1)
+	go func() { subCh <- b.subject(cmd.UserID) }()
+
 	// Reflect the latest ScaledObject state on demand.
 	b.svc.Reconcile(cl.Env)
 
-	namespaces := b.svc.Namespaces(cl.Env)
+	namespaces, total := b.svc.Namespaces(<-subCh, cl.Env)
 
-	// If no namespace is registered, return an error without opening the Modal
+	// If no namespace is visible, return an error without opening the Modal
 	if len(namespaces) == 0 {
+		text := "⚠️ No managed workloads are registered yet. Please wait for ScaledObject discovery."
+		if total > 0 {
+			text = "⚠️ You are not authorized to operate any workload in this cluster."
+		}
 		if _, err := b.client.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText("⚠️ No managed workloads are registered yet. Please wait for ScaledObject discovery.", false),
+			slack.MsgOptionText(text, false),
 		); err != nil {
 			slog.Error("failed to post ephemeral message", slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
 		}
@@ -348,15 +404,17 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 
 	cl, ok := b.registry.ByEnv(meta.Cluster)
 	if !ok {
-		// The registry is immutable after startup, so a missing cluster is unexpected; guard defensively.
+		// The cluster may have been removed by a registry hot reload while the modal was open.
 		slog.Warn("cluster not found at namespace selection")
 		return
 	}
 
 	slog.Info("namespace selected", slog.String("user.name", callback.User.Name), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", namespace))
 
+	sub := b.subject(callback.User.ID)
+
 	// Entries beyond the Modal block limit cannot be shown, so the service cuts them off; warn.
-	listing := b.svc.List(cl.Env, namespace, listLimits)
+	listing := b.svc.List(sub, cl.Env, namespace, listLimits)
 	truncated := listing.Truncated
 	if truncated > 0 {
 		slog.Warn("display entries exceed the Modal limit; some are hidden",
@@ -365,13 +423,18 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 	}
 
 	// namespace select (keep the selected state; sorted a-z)
-	nsBlock := namespaceInputBlock(b.svc.Namespaces(cl.Env), namespace)
+	visibleNamespaces, _ := b.svc.Namespaces(sub, cl.Env)
+	nsBlock := namespaceInputBlock(visibleNamespaces, namespace)
 
 	// workload checkboxes (running ones are initially selected; sorted a-z)
 	// Slack checkboxes allow 10 options max, so split across multiple blocks.
 	blocks := make([]slack.Block, 0, 2+maxWorkloadCheckboxBlocks)
 	blocks = append(blocks, nsBlock)
 	blocks = append(blocks, workloadCheckboxBlocks(namespace, listing)...)
+
+	if note := modalNote(listing, b.svc.ChatStopAllowed()); note != "" {
+		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", note, false, false), nil, nil))
+	}
 
 	if truncated > 0 {
 		blocks = append(blocks, slack.NewSectionBlock(
@@ -435,34 +498,22 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 	// Compare with the current state; rebuild with the same order and merge unit as render.
 	// Entries not rendered in the Modal are excluded from the diff; otherwise
 	// "not shown = unchecked = stop" would stop running workloads that are off screen.
-	listing := b.svc.List(cl.Env, meta.Namespace, frontend.Limits{PageSize: checkboxMaxOptions})
-	plan := frontend.BuildPlan(cl, meta.Namespace, frontend.Rendered(listing.Entries, meta.Rendered), selectedSet)
+	sub := b.subject(callback.User.ID)
+	listing := b.svc.List(sub, cl.Env, meta.Namespace, frontend.Limits{PageSize: checkboxMaxOptions})
+	plan := b.svc.Plan(sub, cl, meta.Namespace, frontend.Rendered(listing.Entries, meta.Rendered), selectedSet)
 	toStart, toStop := plan.ToStart, plan.ToStop
 
-	previewLines := make([]string, 0, len(plan.Changes))
-	for _, c := range plan.Changes {
-		if c.Action == frontend.ActionStart {
-			previewLines = append(previewLines, fmt.Sprintf("🟢 %s: stopped → *start*", c.Label))
-		} else {
-			previewLines = append(previewLines, fmt.Sprintf("🔴 %s: running → *stop*", c.Label))
-		}
-	}
+	previewLines := planLines(plan)
+	rejectedLines := rejectionLines(plan.Rejected)
 
 	envUpper := strings.ToUpper(cl.Env)
 
 	if len(toStart) == 0 && len(toStop) == 0 {
-		// No changes: close the modal with an empty Ack and send an ephemeral notice
+		// Nothing allowed to change: close the modal with an empty Ack and send an ephemeral notice
 		b.ack(*req)
+		header := fmt.Sprintf("ℹ️ *%s / %s / %s* — no changes", envUpper, cl.Name, meta.Namespace)
 		if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
-			slack.MsgOptionBlocks(
-				slack.NewSectionBlock(
-					slack.NewTextBlockObject("mrkdwn",
-						fmt.Sprintf("ℹ️ *%s / %s / %s* — no changes", envUpper, cl.Name, meta.Namespace),
-						false, false,
-					),
-					nil, nil,
-				),
-			),
+			slack.MsgOptionBlocks(mrkdwnSections(header, rejectedLines)...),
 		); err != nil {
 			slog.Error("failed to send no-change message", slog.String("error.message", err.Error()))
 		}
@@ -507,7 +558,7 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		Close:           slack.NewTextBlockObject("plain_text", "Back", false, false),
 		PrivateMetadata: string(previewMeta),
 		Blocks: slack.Blocks{
-			BlockSet: mrkdwnSections(previewHeader, previewLines),
+			BlockSet: mrkdwnSections(previewHeader, append(previewLines, rejectedLines...)),
 		},
 	}
 
@@ -526,8 +577,7 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		return
 	}
 
-	// Defensive check: do nothing if the cluster vanished from the registry
-	// (it is immutable after startup, so this is only a guard).
+	// Do nothing if the cluster was removed from the registry by a hot reload.
 	cl, ok := b.registry.ByEnv(meta.Cluster)
 	if !ok {
 		slog.Warn("cluster not found in registry at apply time")
@@ -546,17 +596,11 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 		Cluster:   cl,
 		Namespace: meta.Namespace,
 		User:      user,
+		Subject:   b.subject(callback.User.ID),
 		ToStart:   meta.ToStart,
 		ToStop:    meta.ToStop,
 	})
-	var resultLines []string
-	for _, a := range res.Applied {
-		if a.Action == frontend.ActionStart {
-			resultLines = append(resultLines, fmt.Sprintf("🟢 %s → start", a.Name))
-		} else {
-			resultLines = append(resultLines, fmt.Sprintf("🔴 %s → stop", a.Name))
-		}
-	}
+	resultLines := applyLines(res)
 
 	resultHeader := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)",
 		callback.User.ID, envUpper, cl.Name, meta.Namespace,

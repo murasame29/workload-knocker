@@ -50,6 +50,11 @@ app.kubernetes.io/instance: {{ .Release.Name | quote }}
 {{- default (include "workload-knocker.fullname" .) .Values.config.existingConfigMap }}
 {{- end }}
 
+{{/* Authorization policy ConfigMap name. */}}
+{{- define "workload-knocker.authzConfigMapName" -}}
+{{- default (printf "%s-authz" (include "workload-knocker.fullname" .) | trunc 63 | trimSuffix "-") .Values.authz.existingConfigMap }}
+{{- end }}
+
 {{/* Container image reference. Digest takes priority; an empty tag uses appVersion. */}}
 {{- define "workload-knocker.image" -}}
 {{- if .Values.image.digest }}

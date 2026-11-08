@@ -1,0 +1,15 @@
+authz:
+  enabled: true
+  inline:
+    version: 1
+    default: deny
+    rules:
+      - env: stg
+        namespaces: ["team-*"]
+        workloads: ["*"]
+        actions: [start, stop]
+        subjects:
+          slack:
+            users: [U01ABCDEF]
+            groups: [S01ABCDEF]
+          api: true

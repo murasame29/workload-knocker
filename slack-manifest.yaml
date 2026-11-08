@@ -23,6 +23,8 @@ oauth_config:
     bot:
       - commands
       - chat:write
+      # Resolves usergroup members for authz subjects.groups; unused without group rules.
+      - usergroups:read
 
 settings:
   interactivity:

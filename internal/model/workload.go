@@ -26,9 +26,13 @@ type StopAllResult struct {
 
 // ClusterStopResult is the StopAll result of a single cluster
 type ClusterStopResult struct {
-	Stopped int    // workloads stopped in this cluster
-	Error   string // error message ("" on success)
+	Stopped int      // workloads stopped in this cluster
+	Skipped []string // "namespace/name" of running workloads the filter did not allow to stop
+	Error   string   // error message ("" on success)
 }
+
+// StopFilter reports whether a workload may be stopped by StopAll; nil allows every workload.
+type StopFilter func(env, namespace, workload string) bool
 
 // WorkloadStore is the interface for workload state operations across clusters.
 // Implemented by MultiStore in production and by an in-memory store in mocks.
@@ -43,9 +47,9 @@ type WorkloadStore interface {
 	Start(env, ns, name, user string) bool
 	// Stop sets the workload to stopped (replicas=0).
 	Stop(env, ns, name string) bool
-	// StopAll stops workloads of all clusters in parallel.
+	// StopAll stops the workloads allowed by the filter in all clusters in parallel.
 	// A failure in one cluster does not stop the others; it is recorded in the result.
-	StopAll(ctx context.Context) StopAllResult
+	StopAll(ctx context.Context, allow StopFilter) StopAllResult
 	// Reconcile refreshes the state of the given env (called on Slack commands).
 	Reconcile(ctx context.Context, env string) error
 	// ReconcileAll reconciles all clusters in parallel (called at startup Bootstrap).

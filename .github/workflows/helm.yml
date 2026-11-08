@@ -138,6 +138,40 @@ jobs:
           reject --set mode=bad
           reject --set api.tokenSecret.name=
 
+      - name: Authorization policy and hot reload contract
+        shell: bash
+        run: |
+          values=charts/workload-knocker/ci/test-values.yaml
+          authz=charts/workload-knocker/ci/authz-values.yaml
+          render() { helm template workload-knocker charts/workload-knocker --values "${values}" "$@"; }
+          helm lint charts/workload-knocker --strict --values "${values}" --values "${authz}"
+          default="$(render)"
+          enabled="$(render --values "${authz}")"
+          # Hot reload needs a directory-level projected volume and no checksum-triggered restart.
+          for out in "${default}" "${enabled}"; do
+            grep --fixed-strings --quiet 'projected:' <<< "${out}"
+            if grep --quiet 'checksum/\|subPath' <<< "${out}"; then
+              echo 'config checksum annotation or subPath mount rendered' >&2; exit 1
+            fi
+          done
+          if grep --fixed-strings --quiet 'AUTHZ_CONFIG_PATH' <<< "${default}"; then
+            echo 'authorization rendered while disabled' >&2; exit 1
+          fi
+          grep --fixed-strings --quiet 'value: /etc/workload-knocker/authz.yaml' <<< "${enabled}"
+          grep --fixed-strings --quiet 'path: authz.yaml' <<< "${enabled}"
+          grep --fixed-strings --quiet '"authz.yaml": |-' <<< "${enabled}"
+          existing="$(render --set authz.enabled=true --set authz.existingConfigMap=my-policy)"
+          grep --fixed-strings --quiet 'name: "my-policy"' <<< "${existing}"
+          if grep --fixed-strings --quiet '"authz.yaml": |-' <<< "${existing}"; then
+            echo 'inline policy rendered next to existingConfigMap' >&2; exit 1
+          fi
+          if render --set authz.enabled=true > /dev/null 2>&1; then
+            echo 'authz.enabled without a policy was accepted' >&2; exit 1
+          fi
+          if render --set authz.enabled=maybe > /dev/null 2>&1; then
+            echo 'non-boolean authz.enabled was accepted' >&2; exit 1
+          fi
+
       - name: Package chart and verify license material
         shell: bash
         run: |

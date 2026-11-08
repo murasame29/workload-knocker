@@ -3,8 +3,16 @@ workload-knocker has been installed in namespace {{ .Release.Namespace }}.
 Check the controller:
   kubectl --namespace {{ .Release.Namespace }} get pods -l 'app.kubernetes.io/name={{ include "workload-knocker.name" . }},app.kubernetes.io/instance={{ .Release.Name }}'
 
-The cluster registry is read at startup. Restart the Deployment after changing
-an externally managed ConfigMap:
+The cluster registry{{ if .Values.authz.enabled }} and the authorization policy are{{ else }} is{{ end }} hot reloaded: after a ConfigMap change Kubernetes
+updates the mounted file within about a minute and the controller applies it without a restart.
+An invalid file is rejected and the previous config stays active; check the logs and
+workload_knocker_config_reload_total{result="error"}.
+Changing env settings, tokens, controller.namespace or enabling a new chat frontend still needs a restart:
   kubectl --namespace {{ .Release.Namespace }} rollout restart deployment/{{ include "workload-knocker.fullname" . }}
+{{- if not .Values.authz.enabled }}
 
-/api/v1/* has no authentication. Restrict network access to the Service.
+Authorization is disabled: every chat user and API caller may start and stop every workload.
+Set authz.enabled=true and provide a policy (see docs/en/configuration.md#authorization).
+{{- end }}
+
+/api/v1/* requires a bearer token. Restrict network access to the Service as well.

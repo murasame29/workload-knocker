@@ -18,7 +18,7 @@ Slack  <->  workload-knocker  --- EKS / kubeconfig --->  managed cluster A, B, .
 
 ## How it works
 
-- The controller loads a cluster registry (YAML) at startup and lists every
+- The controller loads a cluster registry (YAML), hot reloads it on change, and lists every
   `ScaledObject` whose Prometheus trigger queries `workload_knocker_activation`.
 - The Slack slash command (`frontends.slack.slashCommand`) opens a modal. Workloads that differ only by an `api` / `app` / `worker`
   suffix are shown as one checkbox.
@@ -51,6 +51,9 @@ helm install workload-knocker oci://ghcr.io/murasame29/charts/workload-knocker \
 2. Write the cluster registry in `config.inline` ([`example/values.example.yaml`](example/values.example.yaml)).
 3. Grant the controller access to each managed cluster
    ([`example/managed-cluster-rbac.yaml`](example/managed-cluster-rbac.yaml)).
+4. Restrict who may start or stop what with an authorization policy
+   ([`example/authz.example.yaml`](example/authz.example.yaml), `authz.enabled` in the chart).
+   Without a policy file, authorization is disabled and everyone may do everything.
 
 See [docs/en/configuration.md](docs/en/configuration.md) for every option, the HTTP API, and metrics.
 
@@ -59,6 +62,12 @@ See [docs/en/configuration.md](docs/en/configuration.md) for every option, the H
 `/api/v1/*` requires `Authorization: Bearer <API_TOKEN>`. If `API_TOKEN` is unset the API
 responds `503` (fail closed). `OPERATION_MODE` limits which operations the API accepts. Still
 restrict network access to the Service, and do not expose it publicly.
+
+The authorization policy decides, per env, namespace, workload and action, which Slack users and
+usergroups (and the API caller) may start or stop. Chat lists only what the user may operate and
+re-checks every change on apply. The registry and the policy are hot reloaded; an invalid file is
+rejected and the previous config stays active. See
+[docs/en/configuration.md](docs/en/configuration.md#authorization).
 
 ## Development
 

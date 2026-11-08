@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
 )
@@ -21,11 +22,12 @@ const defaultStartUser = "rest-api"
 type StartHandler struct {
 	store   model.WorkloadStore
 	metrics metrics.MetricsManager
+	authz   authz.Authorizer
 }
 
-// NewStartHandler constructs a StartHandler.
-func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager) *StartHandler {
-	return &StartHandler{store: store, metrics: m}
+// NewStartHandler constructs a StartHandler; az is checked per workload for the api subject.
+func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer) *StartHandler {
+	return &StartHandler{store: store, metrics: m, authz: az}
 }
 
 // startRequest is the JSON schema of the POST body.
@@ -47,7 +49,9 @@ type startResponse struct {
 	TotalStarted int      `json:"total_started"`
 	Started      []string `json:"started"`
 	NotFound     []string `json:"not_found"`
-	Message      string   `json:"message"`
+	// Forbidden lists workloads the authorization policy does not let the API start.
+	Forbidden []string `json:"forbidden"`
+	Message   string   `json:"message"`
 }
 
 // ServeHTTP implements net/http.Handler.
@@ -55,6 +59,7 @@ type startResponse struct {
 // Status codes:
 //   - 405: method other than POST
 //   - 400: JSON parse failure, or missing env / namespace / workloads
+//   - 403: every requested workload is refused by the authorization policy
 //   - 404: env not in the Cluster Registry, or none of the workloads found
 //   - 200: at least one started (workloads not found are listed in not_found)
 func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +109,15 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cluster := h.clusterName(req.Env)
 	started := make([]string, 0, len(req.Workloads))
 	notFound := make([]string, 0)
+	forbidden := make([]string, 0)
 	for _, name := range req.Workloads {
+		// Authorize before touching the store so a refusal never reveals whether the workload exists.
+		if !h.authz.Allowed(authz.APISubject, req.Env, req.Namespace, name, authz.ActionStart) {
+			forbidden = append(forbidden, name)
+			slog.WarnContext(r.Context(), "start refused by authorization policy",
+				slog.String("cluster.env", req.Env), slog.String("namespace", req.Namespace), slog.String("workload", name))
+			continue
+		}
 		begin := time.Now()
 		ok := h.store.Start(req.Env, req.Namespace, name, user)
 		if ok {
@@ -121,17 +134,21 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	status := http.StatusOK
 	message := "workloads started"
-	if len(started) == 0 {
+	switch {
+	case len(started) == 0 && len(forbidden) > 0 && len(notFound) == 0:
+		status = http.StatusForbidden
+		message = "not authorized to start the requested workloads"
+	case len(started) == 0:
 		// None of the specified workloads were found (wrong namespace / name).
 		status = http.StatusNotFound
 		message = "no matching workloads were found"
-	} else if len(notFound) > 0 {
-		message = "some workloads were started; others were not found"
+	case len(notFound) > 0 || len(forbidden) > 0:
+		message = "some workloads were started; others were not found or not authorized"
 	}
 
 	slog.InfoContext(r.Context(), "start request completed",
 		slog.String("cluster.env", req.Env), slog.String("namespace", req.Namespace),
-		slog.Int("total_started", len(started)), slog.Int("not_found", len(notFound)))
+		slog.Int("total_started", len(started)), slog.Int("not_found", len(notFound)), slog.Int("forbidden", len(forbidden)))
 
 	resp := startResponse{
 		Env:          req.Env,
@@ -139,6 +156,7 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		TotalStarted: len(started),
 		Started:      started,
 		NotFound:     notFound,
+		Forbidden:    forbidden,
 		Message:      message,
 	}
 

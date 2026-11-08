@@ -4,12 +4,26 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/metrics"
+	"github.com/murasame29/workload-knocker/internal/mode"
 	"github.com/murasame29/workload-knocker/internal/model"
 )
+
+// authzFunc adapts a function to authz.Authorizer.
+type authzFunc func(s authz.Subject, env, ns, workload string, a authz.Action) bool
+
+func (f authzFunc) Allowed(s authz.Subject, env, ns, workload string, a authz.Action) bool {
+	return f(s, env, ns, workload, a)
+}
+
+var allowAll = authzFunc(func(authz.Subject, string, string, string, authz.Action) bool { return true })
+
+var alice = authz.Subject{Platform: authz.PlatformSlack, User: "UALICE111"}
 
 // fakeStore is an in-memory model.WorkloadStore recording Start / Stop calls.
 type fakeStore struct {
@@ -43,18 +57,19 @@ func manyWorkloads(n int) []*model.Workload {
 func TestService_Namespaces_SortedWithoutMutatingStore(t *testing.T) {
 	t.Parallel()
 
-	svc := NewService(&fakeStore{}, metrics.New(), 0)
-	if got := svc.Namespaces("stg"); !slices.Equal(got, []string{"alpha", "zeta"}) {
-		t.Errorf("Namespaces = %v", got)
+	svc := NewService(&fakeStore{workloads: []*model.Workload{wl("a", 0)}}, metrics.New(), 0, WithAuthorizer(allowAll))
+	got, total := svc.Namespaces(alice, "stg")
+	if !slices.Equal(got, []string{"alpha", "zeta"}) || total != 2 {
+		t.Errorf("Namespaces = %v (total %d)", got, total)
 	}
 }
 
 func TestService_List_AppliesLimits(t *testing.T) {
 	t.Parallel()
 
-	svc := NewService(&fakeStore{workloads: manyWorkloads(25)}, metrics.New(), 0)
+	svc := NewService(&fakeStore{workloads: manyWorkloads(25)}, metrics.New(), 0, WithAuthorizer(allowAll))
 
-	l := svc.List("stg", "labs", Limits{PageSize: 10, MaxEntries: 22})
+	l := svc.List(alice, "stg", "labs", Limits{PageSize: 10, MaxEntries: 22})
 	if len(l.Entries) != 22 || l.Truncated != 3 || l.Total() != 25 {
 		t.Fatalf("entries=%d truncated=%d total=%d", len(l.Entries), l.Truncated, l.Total())
 	}
@@ -63,7 +78,7 @@ func TestService_List_AppliesLimits(t *testing.T) {
 		t.Errorf("pages = %d (last %d), want 3 (last 2)", len(pages), len(pages[len(pages)-1]))
 	}
 
-	unlimited := svc.List("stg", "labs", Limits{})
+	unlimited := svc.List(alice, "stg", "labs", Limits{})
 	if unlimited.Truncated != 0 || len(unlimited.Pages()) != 1 {
 		t.Errorf("unlimited: truncated=%d pages=%d", unlimited.Truncated, len(unlimited.Pages()))
 	}
@@ -129,10 +144,10 @@ func TestService_Apply_CallsStoreInOrder(t *testing.T) {
 	t.Parallel()
 
 	fs := &fakeStore{}
-	svc := NewService(fs, metrics.New(), 0)
+	svc := NewService(fs, metrics.New(), 0, WithAuthorizer(allowAll))
 
 	res := svc.Apply(ApplyRequest{
-		Cluster: config.Cluster{Env: "stg", Name: "c"}, Namespace: "labs", User: "u",
+		Cluster: config.Cluster{Env: "stg", Name: "c"}, Namespace: "labs", User: "u", Subject: alice,
 		ToStart: []string{"a", "missing", ""}, ToStop: []string{"b"},
 	})
 
@@ -144,5 +159,145 @@ func TestService_Apply_CallsStoreInOrder(t *testing.T) {
 	}
 	if !res.AutoStop {
 		t.Error("AutoStop = false with starts")
+	}
+}
+
+// onlyWorkloads allows alice exactly the listed actions on the listed workload names.
+func onlyWorkloads(actions []authz.Action, names ...string) authz.Authorizer {
+	return authzFunc(func(s authz.Subject, _, _, w string, a authz.Action) bool {
+		return s.User == alice.User && slices.Contains(names, w) && slices.Contains(actions, a)
+	})
+}
+
+func TestService_NilAuthorizerDeniesEverything(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeStore{workloads: []*model.Workload{wl("a", 1)}}
+	svc := NewService(fs, metrics.New(), 0)
+
+	if got, total := svc.Namespaces(alice, "stg"); len(got) != 0 || total != 2 {
+		t.Errorf("Namespaces = %v (total %d), want none of 2", got, total)
+	}
+	res := svc.Apply(ApplyRequest{Cluster: config.Cluster{Env: "stg"}, Namespace: "labs", Subject: alice, ToStart: []string{"a"}, ToStop: []string{"a"}})
+	if len(fs.calls) != 0 || len(res.Rejected) != 2 {
+		t.Errorf("calls = %v rejected = %+v, want store untouched", fs.calls, res.Rejected)
+	}
+}
+
+func TestService_ListAndNamespaces_HideWhatSubjectCannotOperate(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeStore{workloads: []*model.Workload{wl("mine", 0), wl("theirs", 1)}}
+	svc := NewService(fs, metrics.New(), 0, WithAuthorizer(onlyWorkloads([]authz.Action{authz.ActionStart}, "mine")))
+
+	l := svc.List(alice, "stg", "labs", Limits{})
+	if len(l.Entries) != 1 || l.Entries[0].Key != "mine" {
+		t.Fatalf("entries = %+v, want only mine", l.Entries)
+	}
+	if got, _ := svc.Namespaces(alice, "stg"); len(got) != 2 {
+		t.Errorf("Namespaces = %v, want both (each holds mine)", got)
+	}
+
+	nothing := NewService(fs, metrics.New(), 0, WithAuthorizer(onlyWorkloads([]authz.Action{authz.ActionStart}, "other")))
+	if got, total := nothing.Namespaces(alice, "stg"); len(got) != 0 || total != 2 {
+		t.Errorf("Namespaces = %v (total %d), want none of 2", got, total)
+	}
+	stranger := authz.Subject{Platform: authz.PlatformSlack, User: "UOTHER999"}
+	if l := svc.List(stranger, "stg", "labs", Limits{}); len(l.Entries) != 0 {
+		t.Errorf("stranger sees %+v", l.Entries)
+	}
+}
+
+func TestService_Plan_RejectsUnauthorizedChanges(t *testing.T) {
+	t.Parallel()
+
+	entries := GroupEntries([]*model.Workload{
+		wl("checkout-api", 0), wl("checkout-app", 0), // start allowed only for api
+		wl("legacy", 1), // stop not allowed
+	})
+	svc := NewService(&fakeStore{}, metrics.New(), 0,
+		WithAuthorizer(onlyWorkloads([]authz.Action{authz.ActionStart}, "checkout-api")))
+
+	plan := svc.Plan(alice, config.Cluster{Env: "stg"}, "labs", entries, map[string]bool{"checkout-api": true})
+
+	if !slices.Equal(plan.ToStart, []string{"checkout-api"}) || len(plan.ToStop) != 0 {
+		t.Errorf("ToStart = %v ToStop = %v", plan.ToStart, plan.ToStop)
+	}
+	if len(plan.Changes) != 1 || plan.Changes[0].Label != "checkout (api)" {
+		t.Errorf("Changes = %+v", plan.Changes)
+	}
+	if len(plan.Rejected) != 2 ||
+		plan.Rejected[0].Action != ActionStart || !slices.Equal(plan.Rejected[0].Names, []string{"checkout-app"}) ||
+		plan.Rejected[1].Action != ActionStop || !slices.Equal(plan.Rejected[1].Names, []string{"legacy"}) ||
+		plan.Rejected[1].Reason != ReasonUnauthorized {
+		t.Errorf("Rejected = %+v", plan.Rejected)
+	}
+}
+
+func TestService_Apply_RechecksEverySubmittedEntry(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeStore{}
+	svc := NewService(fs, metrics.New(), 0, WithAuthorizer(onlyWorkloads([]authz.Action{authz.ActionStart}, "ok")))
+
+	res := svc.Apply(ApplyRequest{
+		Cluster: config.Cluster{Env: "stg", Name: "c"}, Namespace: "labs", User: "alice", Subject: alice,
+		ToStart: []string{"ok", "forged"}, ToStop: []string{"ok"},
+	})
+
+	if want := []string{"start:ok:alice"}; !slices.Equal(fs.calls, want) {
+		t.Errorf("calls = %v, want %v", fs.calls, want)
+	}
+	if len(res.Rejected) != 2 || res.Rejected[0].Label != "forged" || res.Rejected[1].Action != ActionStop {
+		t.Errorf("Rejected = %+v", res.Rejected)
+	}
+}
+
+func TestService_ScheduledStopModeRejectsChatStops(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeStore{}
+	svc := NewService(fs, metrics.New(), 0, WithAuthorizer(allowAll), WithMode(mode.ScheduledStop))
+	if svc.ChatStopAllowed() {
+		t.Fatal("ChatStopAllowed = true in scheduled-stop")
+	}
+
+	entries := GroupEntries([]*model.Workload{wl("up", 1), wl("down", 0)})
+	plan := svc.Plan(alice, config.Cluster{Env: "stg"}, "labs", entries, map[string]bool{"down": true})
+	if !slices.Equal(plan.ToStart, []string{"down"}) || len(plan.ToStop) != 0 {
+		t.Errorf("ToStart = %v ToStop = %v", plan.ToStart, plan.ToStop)
+	}
+	if len(plan.Rejected) != 1 || plan.Rejected[0].Reason != ReasonChatStopDisabled ||
+		!strings.Contains(plan.Rejected[0].Message(), "nightly job") {
+		t.Errorf("Rejected = %+v", plan.Rejected)
+	}
+
+	res := svc.Apply(ApplyRequest{Cluster: config.Cluster{Env: "stg"}, Namespace: "labs", Subject: alice, ToStop: []string{"up"}})
+	if len(fs.calls) != 0 || len(res.Rejected) != 1 || res.Rejected[0].Reason != ReasonChatStopDisabled {
+		t.Errorf("calls = %v rejected = %+v", fs.calls, res.Rejected)
+	}
+}
+
+func TestService_OffAndFullModesAllowChatStops(t *testing.T) {
+	t.Parallel()
+
+	for _, m := range []mode.Mode{mode.Full, mode.Off} {
+		fs := &fakeStore{}
+		svc := NewService(fs, metrics.New(), 0, WithAuthorizer(allowAll), WithMode(m))
+		svc.Apply(ApplyRequest{Cluster: config.Cluster{Env: "stg"}, Namespace: "labs", Subject: alice, ToStop: []string{"x"}})
+		if !slices.Equal(fs.calls, []string{"stop:x"}) {
+			t.Errorf("mode %s: calls = %v", m, fs.calls)
+		}
+	}
+}
+
+func TestService_ScheduledStopHidesStopOnlyWorkloads(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeStore{workloads: []*model.Workload{wl("stop-only", 1)}}
+	svc := NewService(fs, metrics.New(), 0,
+		WithAuthorizer(onlyWorkloads([]authz.Action{authz.ActionStop}, "stop-only")), WithMode(mode.ScheduledStop))
+	if l := svc.List(alice, "stg", "labs", Limits{}); len(l.Entries) != 0 {
+		t.Errorf("entries = %+v, want none: chat cannot stop in scheduled-stop", l.Entries)
 	}
 }

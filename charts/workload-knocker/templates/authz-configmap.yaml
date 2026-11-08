@@ -1,0 +1,14 @@
+{{- if and .Values.authz.enabled (not .Values.authz.existingConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "workload-knocker.authzConfigMapName" . | quote }}
+  labels:
+    {{- include "workload-knocker.labels" . | nindent 4 }}
+data:
+  {{ .Values.authz.key | quote }}: |-
+    {{- if not .Values.authz.inline }}
+    {{- fail "authz.inline is required when authz.enabled=true and authz.existingConfigMap is empty" }}
+    {{- end }}
+    {{- .Values.authz.inline | toYaml | nindent 4 }}
+{{- end }}
