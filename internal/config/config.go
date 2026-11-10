@@ -12,11 +12,15 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// envPattern keeps env usable as part of a ConfigMap data key (the per-env state key).
+var envPattern = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
 
 // Provider type identifiers.
 const (
@@ -199,6 +203,9 @@ func (c *Config) Validate() error {
 	for i, cl := range c.Clusters {
 		if cl.Env == "" {
 			return fmt.Errorf("cluster[%d]: env is required", i)
+		}
+		if !envPattern.MatchString(cl.Env) {
+			return fmt.Errorf("cluster[%d] %q: env may contain only letters, digits, '-', '_' and '.'", i, cl.Env)
 		}
 		if cl.Name == "" {
 			return fmt.Errorf("cluster[%d] %q: name is required", i, cl.Env)

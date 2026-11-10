@@ -46,7 +46,7 @@ func (f *fakeBuilder) factory() ClusterFactory {
 				return true, nil, errors.New("api unreachable")
 			})
 		}
-		return kedaStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(fake.NewClientset(), ns), f.m, nil), nil
+		return kedaStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(fake.NewClientset(), ns, c.Env), f.m, nil), nil
 	}
 }
 

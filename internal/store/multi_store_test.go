@@ -48,7 +48,7 @@ func newTestMultiStore(
 			continue
 		}
 		lister := k8s.NewKEDAScaledObjectLister(kk)
-		repo := k8s.NewConfigMapStateRepository(kc, controllerNs)
+		repo := k8s.NewConfigMapStateRepository(kc, controllerNs, c.Env)
 		stores[c.Env] = kedaStore(c, lister, repo, m, nil)
 	}
 	ms, err := NewMultiStoreFromClusterStores(reg, m, stores, 10*time.Second)

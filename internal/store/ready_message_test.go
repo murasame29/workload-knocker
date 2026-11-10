@@ -70,7 +70,7 @@ func TestClusterStore_ReadyMessageAnnotation(t *testing.T) {
 
 	lister := &mutableLister{}
 	lister.set("Connect to {{.Name}}.example.com:7777")
-	store := kedaStore(testCluster("stg"), lister, k8s.NewConfigMapStateRepository(fake.NewClientset(), testControllerNs), &fakeMetrics{}, nil)
+	store := kedaStore(testCluster("stg"), lister, k8s.NewConfigMapStateRepository(fake.NewClientset(), testControllerNs, "stg"), &fakeMetrics{}, nil)
 	ctx := context.Background()
 	if err := store.Bootstrap(ctx); err != nil {
 		t.Fatal(err)

@@ -7,13 +7,13 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// NewStateRepositoryForConfig builds the ConfigMap StateRepository from a rest.Config.
-func NewStateRepositoryForConfig(cfg *rest.Config, controllerNs string) (StateRepository, error) {
+// NewStateRepositoryForConfig builds the ConfigMap StateRepository of the cluster env from a rest.Config.
+func NewStateRepositoryForConfig(cfg *rest.Config, controllerNs, env string) (StateRepository, error) {
 	kc, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes.NewForConfig: %w", err)
 	}
-	return NewConfigMapStateRepository(kc, controllerNs), nil
+	return NewConfigMapStateRepository(kc, controllerNs, env), nil
 }
 
 // NewClusterRolloutReader builds a RolloutReader from a rest.Config.

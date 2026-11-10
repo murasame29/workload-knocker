@@ -74,7 +74,7 @@ clusters:
 | フィールド | 必須 | 説明 |
 |---|---|---|
 | `controller.namespace` | ◯ | state ConfigMap を置く namespace |
-| `clusters[].env` | ◯ | 一意の識別子。メトリクスの `env` ラベルに使う |
+| `clusters[].env` | ◯ | 一意の識別子 (英数字、`-`、`_`、`.`)。メトリクスの `env` ラベルと、`workload-state` ConfigMap の state キー `state.<env>.json` に使う。同じ cluster を指すエントリを複数置ける (actuator を変える場合など)。それぞれ別のキーに保存する |
 | `clusters[].name` | ◯ | cluster 名。`eks:DescribeCluster` の引数と `cluster` ラベル |
 | `clusters[].actuator` | | workload の検出と起動・停止の方式。`keda-prometheus` (既定) は `workload_knocker_activation` の Prometheus trigger を持つ `ScaledObject` を管理し、そのゲージを公開する。`keda-external` は Prometheus なしで KEDA の external scaler gRPC プロトコルを提供する ([KEDA external scaler](#keda-external-scaler) を参照)。未知の値は拒否される。変更するとその cluster をホットリロードする。[GitOps](gitops.md) を参照 |
 | `clusters[].provider.type` | ◯ | `eks` または `kubeconfig` |

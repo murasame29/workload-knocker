@@ -75,7 +75,7 @@ clusters:
 | Field | Required | Description |
 |---|---|---|
 | `controller.namespace` | yes | Namespace for the state ConfigMap |
-| `clusters[].env` | yes | Unique identifier; used as the `env` metric label |
+| `clusters[].env` | yes | Unique identifier (letters, digits, `-`, `_`, `.`); used as the `env` metric label and as the state key `state.<env>.json` in the `workload-state` ConfigMap. Several entries may point at the same cluster (for example with different actuators); each keeps its own key |
 | `clusters[].name` | yes | Cluster name; `eks:DescribeCluster` argument and `cluster` metric label |
 | `clusters[].actuator` | no | How workloads are discovered and started or stopped. `keda-prometheus` (default) manages `ScaledObject`s with a `workload_knocker_activation` Prometheus trigger and publishes that gauge. `keda-external` serves KEDA's external scaler gRPC protocol without Prometheus (see [KEDA external scaler](#keda-external-scaler)). Unknown values are rejected. Changing it hot reloads the cluster. See [GitOps](gitops.md) |
 | `clusters[].provider.type` | yes | `eks` or `kubeconfig` |
