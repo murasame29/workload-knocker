@@ -75,7 +75,7 @@ clusters:
 | Field | Required | Description |
 |---|---|---|
 | `controller.namespace` | yes | Namespace for the state ConfigMap |
-| `clusters[].env` | yes | Unique identifier; used as the `env` metric label |
+| `clusters[].env` | yes | Unique identifier (letters, digits, `-`, `_`, `.`); used as the `env` metric label and as the state key `state.<env>.json` in the `workload-state` ConfigMap. Several entries may point at the same cluster (for example with different actuators); each keeps its own key |
 | `clusters[].name` | yes | Cluster name; `eks:DescribeCluster` argument and `cluster` metric label |
 | `clusters[].actuator` | no | How workloads are discovered and started or stopped. `keda-prometheus` (default) manages `ScaledObject`s with a `workload_knocker_activation` Prometheus trigger and publishes that gauge. `keda-external` serves KEDA's external scaler gRPC protocol without Prometheus (see [KEDA external scaler](#keda-external-scaler)). Unknown values are rejected. Changing it hot reloads the cluster. See [GitOps](gitops.md) |
 | `clusters[].provider.type` | yes | `eks` or `kubeconfig` |
@@ -229,7 +229,7 @@ For EKS, run the controller with an IAM role (IRSA), register that role in the c
 Access Entry with `kubernetes_groups: ["workload-knocker"]`, and apply
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml). The controller
 needs `get/list/watch` on `scaledobjects`, `get/list` on `deployments`, `statefulsets`, their
-`scale` subresources and `pods` (discovery and rollout progress), and `get/create/update` on
+`scale` subresources and `pods` (discovery and rollout progress), and `get/create/patch` (state is written per env key with a merge patch) on
 ConfigMaps in `controller.namespace`.
 
 When a ScaledObject is discovered that has no entry in the state ConfigMap, the controller reads

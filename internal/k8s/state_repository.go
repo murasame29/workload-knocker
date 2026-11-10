@@ -9,13 +9,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
 const (
-	stateConfigMapName    = "workload-state"
-	stateConfigMapDataKey = "state.json"
+	stateConfigMapName = "workload-state"
+	// legacyStateKey is the single key written before state was split per cluster env.
+	legacyStateKey = "state.json"
 )
+
+// StateKey is the ConfigMap data key that holds the state of the cluster env.
+func StateKey(env string) string { return "state." + env + ".json" }
 
 // StateEntry is the persisted unit of workload state.
 type StateEntry struct {
@@ -36,7 +41,8 @@ type StateRepository interface {
 	Save(ctx context.Context, entries map[string]StateEntry) error
 }
 
-// configMapStateRepository persists state in a ConfigMap on the controller cluster.
+// configMapStateRepository persists the state of one cluster env under its own key of a shared
+// ConfigMap, so several registry entries pointing at the same cluster do not overwrite each other.
 type configMapStateRepository struct {
 	client    kubernetes.Interface
 	namespace string
@@ -44,14 +50,14 @@ type configMapStateRepository struct {
 	dataKey   string
 }
 
-// NewConfigMapStateRepository returns a StateRepository that uses the
-// <namespace>/<workload-state> ConfigMap on the controller cluster.
-func NewConfigMapStateRepository(client kubernetes.Interface, namespace string) StateRepository {
+// NewConfigMapStateRepository returns a StateRepository that stores the state of env in the
+// <namespace>/workload-state ConfigMap under StateKey(env).
+func NewConfigMapStateRepository(client kubernetes.Interface, namespace, env string) StateRepository {
 	return &configMapStateRepository{
 		client:    client,
 		namespace: namespace,
 		name:      stateConfigMapName,
-		dataKey:   stateConfigMapDataKey,
+		dataKey:   StateKey(env),
 	}
 }
 
@@ -59,7 +65,7 @@ func (r *configMapStateRepository) Load(ctx context.Context) (map[string]StateEn
 	cm, err := r.client.CoreV1().ConfigMaps(r.namespace).Get(ctx, r.name, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			if createErr := r.createEmpty(ctx); createErr != nil {
+			if createErr := r.createEmpty(ctx); createErr != nil && !k8serrors.IsAlreadyExists(createErr) {
 				return nil, fmt.Errorf("create empty state configmap: %w", createErr)
 			}
 			return map[string]StateEntry{}, nil
@@ -68,7 +74,11 @@ func (r *configMapStateRepository) Load(ctx context.Context) (map[string]StateEn
 	}
 
 	raw, ok := cm.Data[r.dataKey]
-	if !ok || raw == "" {
+	if !ok {
+		// Migrate from the single key of older versions; the next Save removes it.
+		raw = cm.Data[legacyStateKey]
+	}
+	if raw == "" {
 		return map[string]StateEntry{}, nil
 	}
 
@@ -85,28 +95,32 @@ func (r *configMapStateRepository) Save(ctx context.Context, entries map[string]
 		return fmt.Errorf("marshal state: %w", err)
 	}
 
-	cm, err := r.client.CoreV1().ConfigMaps(r.namespace).Get(ctx, r.name, metav1.GetOptions{})
+	// A merge patch touches only this env's key (and drops the legacy key), so writers of other
+	// envs never conflict.
+	patch, err := json.Marshal(map[string]any{"data": map[string]any{r.dataKey: string(data), legacyStateKey: nil}})
 	if err != nil {
-		if !k8serrors.IsNotFound(err) {
-			return fmt.Errorf("get state configmap for update: %w", err)
-		}
-		// NotFound: create it
-		cm = &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{Name: r.name, Namespace: r.namespace},
-			Data:       map[string]string{r.dataKey: string(data)},
-		}
-		if _, err := r.client.CoreV1().ConfigMaps(r.namespace).Create(ctx, cm, metav1.CreateOptions{}); err != nil {
-			return fmt.Errorf("create state configmap: %w", err)
-		}
+		return fmt.Errorf("marshal state patch: %w", err)
+	}
+	_, err = r.client.CoreV1().ConfigMaps(r.namespace).Patch(ctx, r.name, types.MergePatchType, patch, metav1.PatchOptions{})
+	if err == nil {
 		return nil
 	}
-
-	if cm.Data == nil {
-		cm.Data = make(map[string]string)
+	if !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("patch state configmap: %w", err)
 	}
-	cm.Data[r.dataKey] = string(data)
-	if _, err := r.client.CoreV1().ConfigMaps(r.namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("update state configmap: %w", err)
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: r.name, Namespace: r.namespace},
+		Data:       map[string]string{r.dataKey: string(data)},
+	}
+	if _, err := r.client.CoreV1().ConfigMaps(r.namespace).Create(ctx, cm, metav1.CreateOptions{}); err != nil {
+		if k8serrors.IsAlreadyExists(err) {
+			// Another env created it concurrently; retry the patch once.
+			if _, perr := r.client.CoreV1().ConfigMaps(r.namespace).Patch(ctx, r.name, types.MergePatchType, patch, metav1.PatchOptions{}); perr != nil {
+				return fmt.Errorf("patch state configmap: %w", perr)
+			}
+			return nil
+		}
+		return fmt.Errorf("create state configmap: %w", err)
 	}
 	return nil
 }
@@ -116,8 +130,6 @@ func (r *configMapStateRepository) createEmpty(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{Name: r.name, Namespace: r.namespace},
 		Data:       map[string]string{r.dataKey: "{}"},
 	}
-	if _, err := r.client.CoreV1().ConfigMaps(r.namespace).Create(ctx, cm, metav1.CreateOptions{}); err != nil {
-		return err
-	}
-	return nil
+	_, err := r.client.CoreV1().ConfigMaps(r.namespace).Create(ctx, cm, metav1.CreateOptions{})
+	return err
 }

@@ -74,7 +74,7 @@ clusters:
 | フィールド | 必須 | 説明 |
 |---|---|---|
 | `controller.namespace` | ◯ | state ConfigMap を置く namespace |
-| `clusters[].env` | ◯ | 一意の識別子。メトリクスの `env` ラベルに使う |
+| `clusters[].env` | ◯ | 一意の識別子 (英数字、`-`、`_`、`.`)。メトリクスの `env` ラベルと、`workload-state` ConfigMap の state キー `state.<env>.json` に使う。同じ cluster を指すエントリを複数置ける (actuator を変える場合など)。それぞれ別のキーに保存する |
 | `clusters[].name` | ◯ | cluster 名。`eks:DescribeCluster` の引数と `cluster` ラベル |
 | `clusters[].actuator` | | workload の検出と起動・停止の方式。`keda-prometheus` (既定) は `workload_knocker_activation` の Prometheus trigger を持つ `ScaledObject` を管理し、そのゲージを公開する。`keda-external` は Prometheus なしで KEDA の external scaler gRPC プロトコルを提供する ([KEDA external scaler](#keda-external-scaler) を参照)。未知の値は拒否される。変更するとその cluster をホットリロードする。[GitOps](gitops.md) を参照 |
 | `clusters[].provider.type` | ◯ | `eks` または `kubeconfig` |
@@ -224,7 +224,7 @@ EKS では controller に IAM Role (IRSA) を付与し、その Role を Access 
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml) を適用します。
 必要な権限は `scaledobjects` の `get/list/watch`、`deployments` / `statefulsets` とその `scale`
 サブリソースおよび `pods` の `get/list` (検出と rollout の進捗表示)、`controller.namespace` の
-ConfigMap の `get/create/update` です。
+ConfigMap の `get/create/patch` です (state は env ごとのキーを merge patch で更新します)。
 
 state ConfigMap にエントリが無い ScaledObject を新たに検出すると、scale target
 (既定は `Deployment`、または `StatefulSet`) の replicas を読みます。replicas が 0 より大きければ

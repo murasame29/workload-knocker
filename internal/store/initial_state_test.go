@@ -28,7 +28,7 @@ func (f *fakeTargets) Replicas(_ context.Context, kind, ns, name string) (int32,
 }
 
 func newTargetStore(kc *fake.Clientset, kk *kedafake.Clientset, m *fakeMetrics, t k8s.ScaleTargetReader) *ClusterStore {
-	return kedaStore(testCluster("stg"), k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m, t)
+	return kedaStore(testCluster("stg"), k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs, "stg"), m, t)
 }
 
 func TestClusterStore_InitialState(t *testing.T) {
@@ -86,7 +86,7 @@ func TestClusterStore_Bootstrap_SavedStateWinsOverTarget(t *testing.T) {
 
 	targets := &fakeTargets{replicas: map[string]int32{"Deployment/ns/wl": 3}}
 	kc := fake.NewClientset()
-	repo := k8s.NewConfigMapStateRepository(kc, testControllerNs)
+	repo := k8s.NewConfigMapStateRepository(kc, testControllerNs, "stg")
 	if err := repo.Save(context.Background(), map[string]k8s.StateEntry{"ns/wl": {Replicas: 0}}); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}

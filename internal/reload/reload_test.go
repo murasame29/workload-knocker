@@ -76,7 +76,7 @@ func fakeFactory(m metrics.MetricsManager) store.ClusterFactory {
 	return func(_ context.Context, c config.Cluster, ns string) (*store.ClusterStore, error) {
 		lister := k8s.NewKEDAScaledObjectLister(kedafake.NewSimpleClientset(scaledObject("ns", "w-"+c.Env)))
 		be := kedaprometheus.New(c, lister, nil, m)
-		return store.NewClusterStore(c, be, be, k8s.NewConfigMapStateRepository(fake.NewClientset(), ns)), nil
+		return store.NewClusterStore(c, be, be, k8s.NewConfigMapStateRepository(fake.NewClientset(), ns, c.Env)), nil
 	}
 }
 

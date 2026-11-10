@@ -89,7 +89,7 @@ func NewClusterFactory(src RestConfigSource, m metrics.MetricsManager) ClusterFa
 		if err != nil {
 			return nil, fmt.Errorf("build rest.Config: %w", err)
 		}
-		repo, err := k8s.NewStateRepositoryForConfig(restCfg, controllerNs)
+		repo, err := k8s.NewStateRepositoryForConfig(restCfg, controllerNs, c.Env)
 		if err != nil {
 			return nil, fmt.Errorf("build state repository: %w", err)
 		}

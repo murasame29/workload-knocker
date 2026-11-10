@@ -154,6 +154,22 @@ func TestValidate_MissingFieldError(t *testing.T) {
 	}
 }
 
+func TestValidate_EnvFormat(t *testing.T) {
+	t.Parallel()
+
+	for _, env := range []string{"stg us", "stg/us", "ステージング"} {
+		cfg := &Config{
+			Controller: Controller{Namespace: "workload-knocker"},
+			Clusters: []Cluster{
+				{Env: env, Name: "a", Provider: ClusterProvider{Type: ProviderTypeEKS, EKS: &ProviderEKS{Region: "ap-northeast-1"}}, Frontends: ClusterFrontends{Slack: &SlackFrontend{SlashCommand: "/cmd-a"}}},
+			},
+		}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "env may contain only") {
+			t.Errorf("env %q: got %v, want a format error", env, err)
+		}
+	}
+}
+
 func TestValidate_DuplicateEnvError(t *testing.T) {
 	t.Parallel()
 

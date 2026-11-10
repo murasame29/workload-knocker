@@ -21,10 +21,12 @@ import (
 )
 
 const (
-	testControllerNs      = "workload-control"
-	testStateConfigMap    = "workload-state"
-	testStateConfigMapKey = "state.json"
+	testControllerNs   = "workload-control"
+	testStateConfigMap = "workload-state"
 )
+
+// testStateConfigMapKey is the state key of the "stg" env used by most tests.
+var testStateConfigMapKey = k8s.StateKey("stg")
 
 // fakeMetrics is a minimal implementation of metrics.MetricsManager.
 type fakeMetrics struct {
@@ -134,7 +136,7 @@ func makeScaledObject(ns, name string) *kedav1alpha1.ScaledObject {
 // newTestStore is a helper that builds a ClusterStore from fake K8s clients.
 func newTestStore(t *testing.T, c config.Cluster, kc *fake.Clientset, kk *kedafake.Clientset, m *fakeMetrics) *ClusterStore {
 	t.Helper()
-	return kedaStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m, nil)
+	return kedaStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs, c.Env), m, nil)
 }
 
 // kedaStore builds a ClusterStore on the keda-prometheus actuator; targets may be nil.
