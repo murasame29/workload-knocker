@@ -229,7 +229,7 @@ For EKS, run the controller with an IAM role (IRSA), register that role in the c
 Access Entry with `kubernetes_groups: ["workload-knocker"]`, and apply
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml). The controller
 needs `get/list/watch` on `scaledobjects`, `get/list` on `deployments`, `statefulsets`, their
-`scale` subresources and `pods` (discovery and rollout progress), and `get/create/update` on
+`scale` subresources and `pods` (discovery and rollout progress), and `get/create/patch` (state is written per env key with a merge patch) on
 ConfigMaps in `controller.namespace`.
 
 When a ScaledObject is discovered that has no entry in the state ConfigMap, the controller reads

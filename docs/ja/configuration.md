@@ -224,7 +224,7 @@ EKS では controller に IAM Role (IRSA) を付与し、その Role を Access 
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml) を適用します。
 必要な権限は `scaledobjects` の `get/list/watch`、`deployments` / `statefulsets` とその `scale`
 サブリソースおよび `pods` の `get/list` (検出と rollout の進捗表示)、`controller.namespace` の
-ConfigMap の `get/create/update` です。
+ConfigMap の `get/create/patch` です (state は env ごとのキーを merge patch で更新します)。
 
 state ConfigMap にエントリが無い ScaledObject を新たに検出すると、scale target
 (既定は `Deployment`、または `StatefulSet`) の replicas を読みます。replicas が 0 より大きければ
