@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/murasame29/workload-knocker/compare/v0.1.3...v0.1.4) (2026-11-10)
+
+
+### Bug Fixes
+
+* **chart:** make the API token Secret optional unless nightly stop is enabled ([#55](https://github.com/murasame29/workload-knocker/issues/55)) ([cc82efd](https://github.com/murasame29/workload-knocker/commit/cc82efd4b2d804e762e289e73c162d850e7404e5))
+
 ## [0.1.3](https://github.com/murasame29/workload-knocker/compare/v0.1.2...v0.1.3) (2026-11-08)
 
 
