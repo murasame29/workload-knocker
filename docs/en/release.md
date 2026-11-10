@@ -25,7 +25,7 @@ Create a repository secret `RELEASE_PLEASE_TOKEN`: a fine-grained PAT or a GitHu
 
 ## Versioning
 
-Semantic versioning with the 0.x rule (`bump-minor-pre-major`): while below 1.0.0, `feat` and breaking changes (`!` or a `BREAKING CHANGE:` footer) bump the minor version and `fix` bumps the patch. The manifest starts at `0.0.0`, so the first release PR proposes `0.1.0`.
+Semantic versioning with the 0.x rules (`bump-minor-pre-major`, `bump-patch-for-minor-pre-major`): while below 1.0.0, breaking changes (`!` or a `BREAKING CHANGE:` footer) bump the minor version, and `feat` and `fix` bump the patch. Each feature is released and verified on its own; a milestone such as 0.2.0 is cut with a `Release-As` footer or `release-as` in `release-please-config.json`. The manifest starts at `0.0.0`, so the first release PR proposes `0.1.0`.
 
 To cut 1.0.0, add a commit (or an empty commit) on `main` with the footer `Release-As: 1.0.0`; the release PR then proposes 1.0.0. From 1.0.0 on, breaking changes bump the major version and `feat` the minor version.
 

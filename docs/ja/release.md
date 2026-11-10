@@ -19,7 +19,7 @@
 
 ## バージョニング
 
-SemVer。1.0.0 未満では `feat` と破壊的変更が minor、`fix` が patch を上げます。manifest は `0.0.0` から始まるため最初のリリース PR は `0.1.0` を提案します。1.0.0 にするには `Release-As: 1.0.0` フッター付きのコミットを `main` に入れます (空コミットでも可)。1.0.0 以降は破壊的変更が major、`feat` が minor を上げます。
+SemVer。1.0.0 未満では破壊的変更が minor、`feat` と `fix` が patch を上げます (`bump-patch-for-minor-pre-major`)。機能ごとにリリースして検証し、0.2.0 のようなマイルストーンは `Release-As` フッターか `release-please-config.json` の `release-as` で切ります。manifest は `0.0.0` から始まるため最初のリリース PR は `0.1.0` を提案します。1.0.0 にするには `Release-As: 1.0.0` フッター付きのコミットを `main` に入れます (空コミットでも可)。1.0.0 以降は破壊的変更が major、`feat` が minor を上げます。
 
 ## release ブランチからのパッチリリース (未実装)
 
