@@ -73,6 +73,7 @@ clusters:
 | `controller.namespace` | ◯ | state ConfigMap を置く namespace |
 | `clusters[].env` | ◯ | 一意の識別子。メトリクスの `env` ラベルに使う |
 | `clusters[].name` | ◯ | cluster 名。`eks:DescribeCluster` の引数と `cluster` ラベル |
+| `clusters[].actuator` | | workload の検出と起動・停止の方式。現時点では `keda-prometheus` (既定) のみ。`workload_knocker_activation` の Prometheus trigger を持つ `ScaledObject` を管理し、そのゲージを公開する。未知の値は拒否される。変更するとその cluster をホットリロードする。[GitOps](gitops.md) を参照 |
 | `clusters[].provider.type` | ◯ | `eks` または `kubeconfig` |
 | `clusters[].provider.eks.region` | eks | AWS リージョン |
 | `clusters[].provider.eks.assumeRoleArn` | | cross-account 時に AssumeRole する Role |

@@ -2,7 +2,7 @@
 
 Start and stop KEDA-scaled Kubernetes workloads on demand from Slack or Discord.
 
-[Japanese](docs/ja/configuration.md) | [Configuration](docs/en/configuration.md) | [Repository layout](docs/en/repository-layout.md)
+[Japanese](docs/ja/configuration.md) | [Configuration](docs/en/configuration.md) | [GitOps](docs/en/gitops.md) | [Repository layout](docs/en/repository-layout.md)
 
 workload-knocker keeps dev and staging workloads at zero until someone needs them. A
 Slack or Discord slash command lists the `ScaledObject`s of a cluster. Selecting a
@@ -72,6 +72,7 @@ helm install workload-knocker oci://ghcr.io/murasame29/charts/workload-knocker \
    Without a policy file, authorization is disabled and everyone may do everything.
 
 See [docs/en/configuration.md](docs/en/configuration.md) for every option, the HTTP API, and metrics.
+If Argo CD or Flux manages the workloads, read [GitOps](docs/en/gitops.md) first.
 
 ## Operation modes
 

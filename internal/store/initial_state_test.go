@@ -28,7 +28,7 @@ func (f *fakeTargets) Replicas(_ context.Context, kind, ns, name string) (int32,
 }
 
 func newTargetStore(kc *fake.Clientset, kk *kedafake.Clientset, m *fakeMetrics, t k8s.ScaleTargetReader) *ClusterStore {
-	return NewClusterStore(testCluster("stg"), k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m, WithScaleTargetReader(t))
+	return kedaStore(testCluster("stg"), k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m, t)
 }
 
 func TestClusterStore_InitialState(t *testing.T) {

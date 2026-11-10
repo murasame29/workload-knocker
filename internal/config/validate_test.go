@@ -254,3 +254,42 @@ func TestEnvValidateFrontends(t *testing.T) {
 		t.Errorf("Slack disabled: %v", err)
 	}
 }
+
+func TestValidate_Actuator(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		actuator string
+		wantErr  string
+	}{
+		{actuator: ""},
+		{actuator: ActuatorKEDAPrometheus},
+		{actuator: "nope", wantErr: `unsupported actuator "nope" (supported: keda-prometheus)`},
+	} {
+		cfg := validConfig()
+		cfg.Clusters[0].Actuator = tc.actuator
+		err := cfg.Validate()
+		switch {
+		case tc.wantErr == "" && err != nil:
+			t.Errorf("actuator %q: %v", tc.actuator, err)
+		case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+			t.Errorf("actuator %q: error = %v, want %q", tc.actuator, err, tc.wantErr)
+		}
+	}
+}
+
+func TestCluster_SameBackend(t *testing.T) {
+	t.Parallel()
+
+	base := validClusters()[0]
+	explicit := base
+	explicit.Actuator = ActuatorKEDAPrometheus
+	other := base
+	other.Actuator = "other"
+	if !base.SameBackend(explicit) {
+		t.Error("empty and explicit default actuator must be the same backend")
+	}
+	if base.SameBackend(other) {
+		t.Error("a different actuator must be a different backend")
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/rest"
 
+	"github.com/murasame29/workload-knocker/internal/actuator/factory"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
 	"github.com/murasame29/workload-knocker/internal/metrics"
@@ -51,8 +52,8 @@ var _ model.WorkloadStore = (*MultiStore)(nil)
 
 // NewMultiStore eagerly builds a ClusterStore for each registered cluster.
 // stopAllTimeout is the per-cluster timeout of StopAll.
-// It passes the *rest.Config from RestConfigSource to k8s.NewClusterAccess and injects the resulting
-// ScaledObjectLister + StateRepository into the ClusterStore.
+// It builds the clients from the *rest.Config of RestConfigSource and injects the resulting
+// StateRepository and the cluster's actuator into the ClusterStore.
 // A client creation failure only logs a warning and skips that cluster; error only if all fail.
 func NewMultiStore(ctx context.Context, reg *config.Config, src RestConfigSource, m metrics.MetricsManager, stopAllTimeout time.Duration) (*MultiStore, error) {
 	build := NewClusterFactory(src, m)
@@ -80,22 +81,23 @@ func NewMultiStore(ctx context.Context, reg *config.Config, src RestConfigSource
 // ClusterFactory builds an un-bootstrapped ClusterStore for one cluster.
 type ClusterFactory func(ctx context.Context, c config.Cluster, controllerNs string) (*ClusterStore, error)
 
-// NewClusterFactory returns the production factory (rest.Config from src, real K8s clients).
+// NewClusterFactory returns the production factory (rest.Config from src, real K8s clients,
+// the actuator selected by the cluster).
 func NewClusterFactory(src RestConfigSource, m metrics.MetricsManager) ClusterFactory {
 	return func(ctx context.Context, c config.Cluster, controllerNs string) (*ClusterStore, error) {
 		restCfg, err := src.RestConfig(ctx, c)
 		if err != nil {
 			return nil, fmt.Errorf("build rest.Config: %w", err)
 		}
-		lister, repo, err := k8s.NewClusterAccess(restCfg, controllerNs)
+		repo, err := k8s.NewStateRepositoryForConfig(restCfg, controllerNs)
 		if err != nil {
-			return nil, fmt.Errorf("build cluster access: %w", err)
+			return nil, fmt.Errorf("build state repository: %w", err)
 		}
-		targets, err := k8s.NewScaleTargetReaderForConfig(restCfg)
+		d, a, err := factory.New(c, restCfg, m)
 		if err != nil {
-			return nil, fmt.Errorf("build scale target reader: %w", err)
+			return nil, err
 		}
-		return NewClusterStore(c, lister, repo, m, WithScaleTargetReader(targets)), nil
+		return NewClusterStore(c, d, a, repo), nil
 	}
 }
 
