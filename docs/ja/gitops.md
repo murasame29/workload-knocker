@@ -11,7 +11,24 @@ workload-knocker は Argo CD / Flux のアプリケーションを OutOfSync に
 - workload のマニフェストは `spec.replicas` を省略するか、GitOps ツール側で無視する必要があります。
 
 既定の `keda-prometheus` actuator は workload には何も書かず、`workload_knocker_activation` ゲージを公開するだけで、
-スケールは KEDA が行います。それでも KEDA が `spec.replicas` を変更するため、マニフェストのルールは同様に適用されます。`keda-external` actuator も、ゲージの代わりに gRPC ストリームを使う点以外は同じです。
+スケールは KEDA が行います。それでも KEDA が `spec.replicas` を変更するため、マニフェストのルールは同様に適用されます。`keda-external` actuator も、ゲージの代わりに gRPC ストリームを使う点以外は同じです。[`direct` actuator](#direct-actuator) はこのルールを自分で強制します。
+
+## direct actuator
+
+`actuator: direct` は対象を自分でスケールするため、start / stop の前に毎回この方針を確認します。
+
+- 書き込むのは scale subresource (`deployments/scale`, `statefulsets/scale`) だけで、workload 自体には書きません。
+- `metadata.managedFields` を読み、`GITOPS_MANAGERS` (既定は `argocd-controller`、`kustomize-controller`、
+  `helm-controller`) の manager が `spec.replicas` を所有していれば Git を優先します。workload はスケールされず、
+  操作は `replicas is managed by <manager>; remove replicas from the manifest` で失敗し、warning を出力して
+  `workload_knocker_gitops_conflicts` が 1 になります。マニフェストから `replicas` を省く (または下記のように除外する) と、
+  次の操作でメトリクスが 0 に戻ります。
+- それ以外の manager は影響しません。方針に沿った workload にある HPA や `kube-controller-manager` のエントリ、
+  scale subresource 経由のエントリでブロックされることはありません。
+
+Argo CD が Synced のままであることの確認: `replicas` を持たず `workload-knocker.io/enabled: "true"` を付けた
+Deployment の Application を同期し、チャットから start / stop して、Application が `Synced` / `Healthy` のまま、
+`workload_knocker_gitops_conflicts` が 0 であることを確認します。
 
 ## 理由
 

@@ -48,6 +48,8 @@ settings:
   defaultRunDuration: 4h
   maxRunDuration: 12h
   stopReminder: 15m
+  # Field managers that block the direct actuator when they own spec.replicas (default: Argo CD, kustomize, Helm).
+  # gitopsManagers: [argocd-controller, kustomize-controller, helm-controller]
 
 # full | scheduled-stop | off (see docs/en/configuration.md)
 mode: full

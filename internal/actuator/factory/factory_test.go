@@ -37,3 +37,12 @@ func TestNew_RejectsUnknownActuator(t *testing.T) {
 		t.Fatal("New succeeded for an unknown actuator")
 	}
 }
+
+func TestNew_Direct(t *testing.T) {
+	t.Parallel()
+
+	d, a, err := New(config.Cluster{Env: "stg", Name: "c", Actuator: config.ActuatorDirect}, &rest.Config{Host: "https://example.invalid"}, nil)
+	if err != nil || d == nil || a == nil {
+		t.Fatalf("New = %v, %v, %v", d, a, err)
+	}
+}

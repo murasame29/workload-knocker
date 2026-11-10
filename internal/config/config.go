@@ -87,10 +87,11 @@ type ProviderKubeconfig struct {
 const (
 	ActuatorKEDAPrometheus = "keda-prometheus"
 	ActuatorKEDAExternal   = "keda-external"
+	ActuatorDirect         = "direct"
 )
 
 // ActuatorNames lists every supported actuator; add new ones here and in internal/actuator/factory.
-var ActuatorNames = []string{ActuatorKEDAPrometheus, ActuatorKEDAExternal}
+var ActuatorNames = []string{ActuatorKEDAPrometheus, ActuatorKEDAExternal, ActuatorDirect}
 
 // Frontend identifiers.
 const (

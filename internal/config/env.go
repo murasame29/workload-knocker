@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -166,4 +167,22 @@ func LoadEnv() (*Env, error) {
 	}
 
 	return cfg, nil
+}
+
+// DefaultGitOpsManagers are the field managers whose ownership of spec.replicas the direct actuator respects.
+const DefaultGitOpsManagers = "argocd-controller,kustomize-controller,helm-controller"
+
+// GitOpsManagers returns the comma-separated GITOPS_MANAGERS list, or the default when it is empty.
+func GitOpsManagers() []string {
+	raw := os.Getenv("GITOPS_MANAGERS")
+	if strings.TrimSpace(raw) == "" {
+		raw = DefaultGitOpsManagers
+	}
+	var out []string
+	for _, m := range strings.Split(raw, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
 }

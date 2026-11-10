@@ -3,7 +3,7 @@
 | Path | Contents |
 |---|---|
 | `cmd/server/` | Entry point (`main.go`), including the `--version` flag |
-| `internal/actuator/` | `Discoverer` / `Actuator` interfaces, the `keda-prometheus` and `keda-external` implementations, the per-cluster `factory` and the `actuatortest` contract suite |
+| `internal/actuator/` | `Discoverer` / `Actuator` interfaces, the `keda-prometheus`, `keda-external` and `direct` implementations, the per-cluster `factory` and the `actuatortest` contract suite |
 | `internal/api/` | REST handlers (`/api/v1/start`, `/api/v1/extend`, `/api/v1/stop-all`, `/api/v1/workloads`) and bearer auth middleware |
 | `internal/audit/` | Audit event schema and recorder (see [audit-log.md](audit-log.md)) |
 | `internal/autostop/` | Reconcile hook that stops expired workloads and calls the stop reminder |

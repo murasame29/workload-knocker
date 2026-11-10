@@ -19,3 +19,16 @@ clusters:
       #   command: workload-knocker-local
       #   # Optional channel ID for public messages (bot needs View Channel and Send Messages there).
       #   notifyChannel: "123456789012345678"
+
+  # A cluster without KEDA and Prometheus: annotate a Deployment or StatefulSet with
+  # workload-knocker.io/enabled: "true" (and workload-knocker.io/replicas: "2" if it is not 1).
+  # - env: small
+  #   name: small-cluster
+  #   actuator: direct
+  #   provider:
+  #     type: kubeconfig
+  #     kubeconfig:
+  #       path: ~/.kube/config
+  #   frontends:
+  #     slack:
+  #       slashCommand: /workload-knocker-small

@@ -90,6 +90,10 @@ spec:
               value: {{ .Values.settings.maxRunDuration | quote }}
             - name: STOP_REMINDER
               value: {{ .Values.settings.stopReminder | quote }}
+            {{- with .Values.settings.gitopsManagers }}
+            - name: GITOPS_MANAGERS
+              value: {{ join "," . | quote }}
+            {{- end }}
             - name: SHUTDOWN_TIMEOUT
               value: {{ .Values.settings.shutdownTimeout | quote }}
             - name: LOG_LEVEL

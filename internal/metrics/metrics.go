@@ -12,6 +12,9 @@ import (
 type MetricsManager interface {
 	SetActivation(env, cluster, namespace, workload string, value float64)
 	DeleteMetric(env, cluster, namespace, workload string)
+	// SetGitOpsConflict sets 1 while a GitOps manager owns spec.replicas of the workload, 0 once resolved.
+	SetGitOpsConflict(env, cluster, namespace, workload string, value float64)
+	DeleteGitOpsConflict(env, cluster, namespace, workload string)
 	SetReachable(cluster string, value float64)
 	IncTokenRefresh(cluster, result string)
 	// ObserveOperation records one workload operation (operation: start|stop|stop_all, result: success|error|not_found).
@@ -32,6 +35,7 @@ type MetricsManager interface {
 // Manager implements MetricsManager
 type Manager struct {
 	activation   *prometheus.GaugeVec
+	gitopsConfl  *prometheus.GaugeVec
 	reachable    *prometheus.GaugeVec
 	tokenRefresh *prometheus.CounterVec
 	operations   *prometheus.CounterVec
@@ -51,6 +55,14 @@ func New() *Manager {
 		prometheus.GaugeOpts{
 			Name: "workload_knocker_activation",
 			Help: "Workload activation state: 1 = running, 0 = stopped",
+		},
+		[]string{"env", "cluster", "namespace", "workload"},
+	)
+
+	gitopsConflicts := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "workload_knocker_gitops_conflicts",
+			Help: "GitOps conflict of the direct actuator: 1 = a GitOps manager owns spec.replicas so the workload is not scaled, 0 = resolved",
 		},
 		[]string{"env", "cluster", "namespace", "workload"},
 	)
@@ -127,6 +139,7 @@ func New() *Manager {
 	)
 
 	registry.MustRegister(activation)
+	registry.MustRegister(gitopsConflicts)
 	registry.MustRegister(reachable)
 	registry.MustRegister(tokenRefresh)
 	registry.MustRegister(operations)
@@ -138,6 +151,7 @@ func New() *Manager {
 
 	return &Manager{
 		activation:   activation,
+		gitopsConfl:  gitopsConflicts,
 		reachable:    reachable,
 		tokenRefresh: tokenRefresh,
 		operations:   operations,
@@ -160,9 +174,20 @@ func (m *Manager) DeleteMetric(env, cluster, namespace, workload string) {
 	m.activation.DeleteLabelValues(env, cluster, namespace, workload)
 }
 
+// SetGitOpsConflict sets the GitOps conflict Gauge of a workload.
+func (m *Manager) SetGitOpsConflict(env, cluster, namespace, workload string, value float64) {
+	m.gitopsConfl.WithLabelValues(env, cluster, namespace, workload).Set(value)
+}
+
+// DeleteGitOpsConflict removes the GitOps conflict series of a workload.
+func (m *Manager) DeleteGitOpsConflict(env, cluster, namespace, workload string) {
+	m.gitopsConfl.DeleteLabelValues(env, cluster, namespace, workload)
+}
+
 // DeleteCluster removes the series of a cluster that left the registry.
 func (m *Manager) DeleteCluster(env, cluster string) {
 	m.activation.DeletePartialMatch(prometheus.Labels{"env": env, "cluster": cluster})
+	m.gitopsConfl.DeletePartialMatch(prometheus.Labels{"env": env, "cluster": cluster})
 	m.reachable.DeleteLabelValues(cluster)
 	m.extStreams.DeleteLabelValues(cluster)
 }
