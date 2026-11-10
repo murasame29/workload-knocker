@@ -378,8 +378,10 @@ The Helm chart sets the controller's `OPERATION_MODE` and `API_TOKEN` environmen
 | `scheduled-stop` | yes | no (`403`; the nightly CronJob stops workloads) | required (`enabled: true`) |
 | `off` | yes | no | must not be enabled |
 
-`api.tokenSecret.name` is required in every mode so that `/api/v1/*` is never unauthenticated.
-Create the Secret before installing:
+`api.tokenSecret.name` is required when `nightlyStop.enabled` is true, because the CronJob calls
+`/api/v1/stop-all`. Otherwise it is optional: leave it empty when you do not use the REST API, and
+`API_TOKEN` is not rendered, so `/api/v1/*` answers `503` (fail closed) while chat keeps working.
+To use the API, create the Secret before installing:
 
 ```sh
 kubectl create secret generic workload-knocker-api \
@@ -403,7 +405,7 @@ kubectl create secret generic workload-knocker-api \
 | `nightlyStop.image` | `curlimages/curl`, pinned by digest |
 
 Invalid combinations (unknown `mode`, `scheduled-stop` without the CronJob, `off` with the
-CronJob, empty `api.tokenSecret.name`) fail at `helm template`/`helm install`.
+CronJob, the CronJob without `api.tokenSecret.name`) fail at `helm template`/`helm install`.
 
 ## HTTP API
 
