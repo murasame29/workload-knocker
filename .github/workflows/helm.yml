@@ -173,7 +173,11 @@ jobs:
           reject --set mode=scheduled-stop
           reject --set mode=off --set nightlyStop.enabled=true
           reject --set mode=bad
-          reject --set api.tokenSecret.name=
+          reject --set nightlyStop.enabled=true --set-string api.tokenSecret.name=
+          no_token="$(render --set-string api.tokenSecret.name=)"
+          if grep --fixed-strings --quiet 'name: API_TOKEN' <<< "${no_token}"; then
+            echo 'API_TOKEN rendered without api.tokenSecret.name' >&2; exit 1
+          fi
 
       - name: Authorization policy and hot reload contract
         shell: bash

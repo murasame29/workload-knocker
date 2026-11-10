@@ -368,8 +368,9 @@ Helm chart は controller の環境変数 `OPERATION_MODE` と `API_TOKEN` を�
 | `scheduled-stop` | 可 | 不可 (`403`。夜間 CronJob が停止) | 必須 (`enabled: true`) |
 | `off` | 可 | 不可 | 有効化不可 |
 
-`/api/v1/*` を無認証にしないため、どのモードでも `api.tokenSecret.name` は必須です。
-インストール前に Secret を作成します。
+`nightlyStop.enabled` が true の場合は CronJob が `/api/v1/stop-all` を呼ぶため、`api.tokenSecret.name` が必須です。
+それ以外は任意です。REST API を使わない場合は空にすると `API_TOKEN` を出力せず、`/api/v1/*` は
+`503` (fail closed) を返し、チャットからの操作はそのまま使えます。API を使う場合はインストール前に Secret を作成します。
 
 ```sh
 kubectl create secret generic workload-knocker-api \
@@ -393,7 +394,7 @@ kubectl create secret generic workload-knocker-api \
 | `nightlyStop.image` | `curlimages/curl` (digest 固定) |
 
 不正な組み合わせ (未知の `mode`、CronJob なしの `scheduled-stop`、CronJob ありの `off`、
-`api.tokenSecret.name` が空) は `helm template` / `helm install` で失敗します。
+`api.tokenSecret.name` なしの CronJob) は `helm template` / `helm install` で失敗します。
 
 ## HTTP API
 

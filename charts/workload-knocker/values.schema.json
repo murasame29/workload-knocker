@@ -11,7 +11,7 @@
           "type": "object",
           "required": ["name", "key"],
           "properties": {
-            "name": {"type": "string", "minLength": 1, "maxLength": 253},
+            "name": {"type": "string", "maxLength": 253},
             "key": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"}
           }
         }

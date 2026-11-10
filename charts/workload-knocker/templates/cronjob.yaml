@@ -41,7 +41,7 @@ spec:
                 - name: API_TOKEN
                   valueFrom:
                     secretKeyRef:
-                      name: {{ required "api.tokenSecret.name is required" .Values.api.tokenSecret.name | quote }}
+                      name: {{ .Values.api.tokenSecret.name | quote }}
                       key: {{ .Values.api.tokenSecret.key | quote }}
                 - name: STOP_ALL_URL
                   value: {{ printf "http://%s.%s.svc:%v/api/v1/stop-all" (include "workload-knocker.fullname" .) .Release.Namespace .Values.service.port | quote }}

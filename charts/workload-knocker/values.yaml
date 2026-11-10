@@ -50,8 +50,8 @@ discord:
 mode: full
 
 api:
-  # Secret holding the bearer token that protects /api/v1/*. Required in every mode:
-  # the API must never be unauthenticated.
+  # Secret holding the bearer token for /api/v1/*. Required with nightlyStop; when empty the
+  # API is disabled (503, fail closed) and chat frontends keep working.
   tokenSecret:
     name: ""
     key: api-token

@@ -76,14 +76,18 @@ app.kubernetes.io/instance: {{ .Release.Name | quote }}
 {{- if and (eq $mode "off") .Values.nightlyStop.enabled -}}
 {{- fail "mode off cannot be combined with nightlyStop.enabled=true" -}}
 {{- end -}}
-{{- $secret := required "api.tokenSecret.name is required" .Values.api.tokenSecret.name -}}
+{{- if and .Values.nightlyStop.enabled (not .Values.api.tokenSecret.name) -}}
+{{- fail "api.tokenSecret.name is required when nightlyStop.enabled=true (the CronJob calls the API)" -}}
+{{- end -}}
 - name: OPERATION_MODE
   value: {{ $mode | quote }}
+{{- with .Values.api.tokenSecret.name }}
 - name: API_TOKEN
   valueFrom:
     secretKeyRef:
-      name: {{ $secret | quote }}
-      key: {{ .Values.api.tokenSecret.key | quote }}
+      name: {{ . | quote }}
+      key: {{ $.Values.api.tokenSecret.key | quote }}
+{{- end }}
 {{- end }}
 
 {{/* Nightly stop curl image reference. Digest takes priority. */}}
