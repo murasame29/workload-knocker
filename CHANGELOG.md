@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/murasame29/workload-knocker/compare/v0.1.4...v0.1.5) (2026-11-10)
+
+
+### Features
+
+* KEDA external-push actuator without Prometheus ([#60](https://github.com/murasame29/workload-knocker/issues/60)) ([2daf58d](https://github.com/murasame29/workload-knocker/commit/2daf58d3d7f18d813d7af5246c1c3adc86a0af1f))
+
 ## [0.1.4](https://github.com/murasame29/workload-knocker/compare/v0.1.3...v0.1.4) (2026-11-10)
 
 
