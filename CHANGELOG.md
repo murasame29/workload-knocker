@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.6](https://github.com/murasame29/workload-knocker/compare/v0.1.5...v0.1.6) (2026-11-10)
+
+
+### Features
+
+* direct actuator without KEDA and Prometheus ([#59](https://github.com/murasame29/workload-knocker/issues/59)) ([6474d7f](https://github.com/murasame29/workload-knocker/commit/6474d7fdd28ce290b69b54e08ac542ff5de25bc8))
+
+
+### Bug Fixes
+
+* **store:** keep the state of each cluster env under its own key ([#62](https://github.com/murasame29/workload-knocker/issues/62)) ([cf839b5](https://github.com/murasame29/workload-knocker/commit/cf839b50b6a76824c7223e034c9a3516c3494734))
+
 ## [0.1.5](https://github.com/murasame29/workload-knocker/compare/v0.1.4...v0.1.5) (2026-11-10)
 
 
