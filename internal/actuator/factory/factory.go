@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/murasame29/workload-knocker/internal/actuator"
+	"github.com/murasame29/workload-knocker/internal/actuator/direct"
 	"github.com/murasame29/workload-knocker/internal/actuator/kedaexternal"
 	"github.com/murasame29/workload-knocker/internal/actuator/kedaprometheus"
 	"github.com/murasame29/workload-knocker/internal/config"
@@ -24,6 +25,7 @@ type builder func(c config.Cluster, cfg *rest.Config, m metrics.MetricsManager) 
 var builders = map[string]builder{
 	config.ActuatorKEDAPrometheus: buildKEDAPrometheus,
 	config.ActuatorKEDAExternal:   buildKEDAExternal,
+	config.ActuatorDirect:         buildDirect,
 }
 
 // New builds the Discoverer and Actuator of cluster c from its rest.Config.
@@ -58,5 +60,14 @@ func buildKEDAExternal(c config.Cluster, cfg *rest.Config, m metrics.MetricsMana
 		return nil, nil, fmt.Errorf("keda.NewForConfig: %w", err)
 	}
 	be := kedaexternal.New(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewScaleTargetReader(kc), kedaexternal.Shared(), m)
+	return be, be, nil
+}
+
+func buildDirect(c config.Cluster, cfg *rest.Config, m metrics.MetricsManager) (actuator.Discoverer, actuator.Actuator, error) {
+	kc, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("kubernetes.NewForConfig: %w", err)
+	}
+	be := direct.New(c, kc, m, config.GitOpsManagers())
 	return be, be, nil
 }

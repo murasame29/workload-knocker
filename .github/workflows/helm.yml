@@ -142,6 +142,21 @@ jobs:
             echo 'invalid external scaler port was accepted' >&2; exit 1
           fi
 
+      - name: GitOps managers
+        run: |
+          values=charts/workload-knocker/ci/test-values.yaml
+          if helm template workload-knocker charts/workload-knocker --values "${values}" \
+            | grep --fixed-strings --quiet 'name: GITOPS_MANAGERS'; then
+            echo 'GITOPS_MANAGERS rendered without settings.gitopsManagers' >&2; exit 1
+          fi
+          helm template workload-knocker charts/workload-knocker --values "${values}" \
+            --set 'settings.gitopsManagers={argocd-controller,flux}' > "${RUNNER_TEMP}/gitops.yaml"
+          grep --fixed-strings --quiet 'value: "argocd-controller,flux"' "${RUNNER_TEMP}/gitops.yaml"
+          if helm lint charts/workload-knocker --strict --values "${values}" \
+            --set 'settings.gitopsManagers={a b}'; then
+            echo 'a manager name with a space was accepted' >&2; exit 1
+          fi
+
       - name: Reject invalid values
         run: |
           values=charts/workload-knocker/ci/test-values.yaml

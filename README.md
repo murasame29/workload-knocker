@@ -8,7 +8,8 @@ workload-knocker keeps dev and staging workloads at zero until someone needs the
 Slack or Discord slash command lists the `ScaledObject`s of a cluster. Selecting a
 workload makes the controller emit the Prometheus gauge `workload_knocker_activation`, and KEDA
 scales the workload up from that metric through its Prometheus trigger. One controller can manage several clusters (EKS or any cluster reachable
-through a kubeconfig).
+through a kubeconfig). Clusters without KEDA and Prometheus can use the `direct` actuator, which scales annotated
+Deployments and StatefulSets itself (see [Direct actuator](docs/en/configuration.md#direct-actuator)).
 
 ```
 Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed cluster A, B, ...

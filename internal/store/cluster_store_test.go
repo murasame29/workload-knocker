@@ -90,6 +90,9 @@ func (f *fakeMetrics) DeleteCluster(env, cluster string) {
 	f.deletedClusters = append(f.deletedClusters, env+"/"+cluster)
 }
 
+func (f *fakeMetrics) SetGitOpsConflict(string, string, string, string, float64) {}
+func (f *fakeMetrics) DeleteGitOpsConflict(string, string, string, string)       {}
+
 func (f *fakeMetrics) IncConfigReload(string, string) {}
 
 func (f *fakeMetrics) IncReconcile(string, string)        {}

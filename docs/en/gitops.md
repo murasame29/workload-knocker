@@ -13,7 +13,24 @@ the same policy, selected per cluster with `clusters[].actuator` (see [Configura
 The default `keda-prometheus` actuator writes nothing to the workloads: it only publishes the
 `workload_knocker_activation` gauge and KEDA scales the target. KEDA still changes `spec.replicas`,
 so the rule for manifests applies to it too. The `keda-external` actuator behaves the same, with a gRPC
-stream instead of the gauge.
+stream instead of the gauge. The [`direct` actuator](#direct-actuator) enforces the rule itself.
+
+## Direct actuator
+
+`actuator: direct` scales the target itself, so it enforces the policy before every start and stop:
+
+- It writes only the scale subresource (`deployments/scale`, `statefulsets/scale`), never the workload.
+- It reads `metadata.managedFields`. If a manager from `GITOPS_MANAGERS` (default `argocd-controller`,
+  `kustomize-controller`, `helm-controller`) owns `spec.replicas`, Git has priority: the workload is not
+  scaled, the operation fails with `replicas is managed by <manager>; remove replicas from the manifest`,
+  a warning is logged and `workload_knocker_gitops_conflicts` is 1. Remove `replicas` from the manifest
+  (or exclude it as below) and the next operation resets the metric to 0.
+- Other managers do not matter: the HPA and `kube-controller-manager` entries on a compliant workload
+  do not block it, and neither does an entry written through the scale subresource.
+
+To check that Argo CD stays Synced: sync an Application whose Deployment has no `replicas` and the
+annotation `workload-knocker.io/enabled: "true"`, start and stop the workload from chat, and confirm
+the Application stays `Synced` and `Healthy` with `workload_knocker_gitops_conflicts` at 0.
 
 ## Why
 

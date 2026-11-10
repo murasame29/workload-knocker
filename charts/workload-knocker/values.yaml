@@ -112,6 +112,9 @@ settings:
   maxRunDuration: 24h
   # Reminder before the auto-stop; "0" disables it.
   stopReminder: 15m
+  # Field managers whose ownership of spec.replicas stops the direct actuator (GITOPS_MANAGERS).
+  # Empty uses argocd-controller, kustomize-controller and helm-controller.
+  gitopsManagers: []
 
 service:
   type: ClusterIP

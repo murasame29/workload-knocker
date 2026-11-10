@@ -15,6 +15,7 @@
 | `DEFAULT_RUN_DURATION` | `0` | Auto-stop delay of a start that gives no duration. `0` means no auto-stop (the previous behavior). Must be `0` or at least `15m`, and not above `MAX_RUN_DURATION`. Chart: `settings.defaultRunDuration` |
 | `MAX_RUN_DURATION` | `24h` | Upper bound of a run duration and of the remaining run time after an extension. At least `15m`. Chart: `settings.maxRunDuration` |
 | `STOP_REMINDER` | `15m` | How long before the auto-stop the reminder fires. `0` disables it. Delivery needs a notify channel (see [Run duration](#run-duration)). Chart: `settings.stopReminder` |
+| `GITOPS_MANAGERS` | `argocd-controller,kustomize-controller,helm-controller` | Comma-separated field managers whose ownership of `spec.replicas` stops the `direct` actuator from scaling a workload (see [GitOps](gitops.md#direct-actuator)). Chart: `settings.gitopsManagers` |
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
 | `AUTHZ_CONFIG_PATH` | unset | Authorization policy file. Unset and no file at `/etc/workload-knocker/authz.yaml`: authorization is disabled and everyone may start and stop everything (one info log at startup). Set, or the default file exists: it must parse or startup fails (see [Authorization](#authorization)) |
@@ -77,7 +78,7 @@ clusters:
 | `controller.namespace` | yes | Namespace for the state ConfigMap |
 | `clusters[].env` | yes | Unique identifier (letters, digits, `-`, `_`, `.`); used as the `env` metric label and as the state key `state.<env>.json` in the `workload-state` ConfigMap. Several entries may point at the same cluster (for example with different actuators); each keeps its own key |
 | `clusters[].name` | yes | Cluster name; `eks:DescribeCluster` argument and `cluster` metric label |
-| `clusters[].actuator` | no | How workloads are discovered and started or stopped. `keda-prometheus` (default) manages `ScaledObject`s with a `workload_knocker_activation` Prometheus trigger and publishes that gauge. `keda-external` serves KEDA's external scaler gRPC protocol without Prometheus (see [KEDA external scaler](#keda-external-scaler)). Unknown values are rejected. Changing it hot reloads the cluster. See [GitOps](gitops.md) |
+| `clusters[].actuator` | no | How workloads are discovered and started or stopped. `keda-prometheus` (default) manages `ScaledObject`s with a `workload_knocker_activation` Prometheus trigger and publishes that gauge. `keda-external` serves KEDA's external scaler gRPC protocol without Prometheus (see [KEDA external scaler](#keda-external-scaler)). `direct` needs neither KEDA nor Prometheus (see [Direct actuator](#direct-actuator)). Unknown values are rejected. Changing it hot reloads the cluster. See [GitOps](gitops.md) |
 | `clusters[].provider.type` | yes | `eks` or `kubeconfig` |
 | `clusters[].provider.eks.region` | eks | AWS region |
 | `clusters[].provider.eks.assumeRoleArn` | no | Role to assume for cross-account clusters |
@@ -228,7 +229,7 @@ The chart renders `DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID` only when `discord.
 For EKS, run the controller with an IAM role (IRSA), register that role in the cluster's
 Access Entry with `kubernetes_groups: ["workload-knocker"]`, and apply
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml). The controller
-needs `get/list/watch` on `scaledobjects`, `get/list` on `deployments`, `statefulsets`, their
+needs (for `keda-prometheus`; `direct` has [its own list](#direct-actuator)) `get/list/watch` on `scaledobjects`, `get/list` on `deployments`, `statefulsets`, their
 `scale` subresources and `pods` (discovery and rollout progress), and `get/create/patch` (state is written per env key with a merge patch) on
 ConfigMaps in `controller.namespace`.
 
@@ -240,6 +241,49 @@ registered as stopped. Saved state always wins over the live replicas.
 
 ScaledObjects are re-listed every `RECONCILE_INTERVAL`: a new one gets its series within one
 interval and a deleted one loses it, without a chat command.
+
+## Direct actuator
+
+`actuator: direct` needs neither KEDA nor Prometheus. The controller manages the Deployments and
+StatefulSets of the cluster that carry these annotations (all namespaces):
+
+| Annotation | Default | Meaning |
+|---|---|---|
+| `workload-knocker.io/enabled` | unset | `"true"` opts the workload in |
+| `workload-knocker.io/replicas` | `1` | Replicas while running; a positive integer |
+
+The other `workload-knocker.io/*` annotations (run durations, ready message) work as for ScaledObjects.
+A start sets the scale subresource to the running replicas and a stop sets it to `0`; the workload
+object itself is never written. The initial state of a newly discovered workload is its current
+replicas (above 0 is running), and the previous state lives in the state ConfigMap.
+
+A workload is skipped, with one warning per change, when:
+
+- `workload-knocker.io/replicas` is not a positive integer.
+- A HorizontalPodAutoscaler targets it, because an HPA cannot scale to 0.
+- A field manager from `GITOPS_MANAGERS` owns its `spec.replicas` in `metadata.managedFields`. The
+  start or stop fails with `replicas is managed by <manager>; remove replicas from the manifest`,
+  a warning is logged and `workload_knocker_gitops_conflicts` is set to 1 (0 once resolved). See
+  [GitOps](gitops.md#direct-actuator).
+
+The failure is logged by the controller; chat and API replies do not show it yet.
+
+Example cluster entry (`example/config.example.yaml` has the full snippet):
+
+```yaml
+clusters:
+  - env: small
+    name: small-cluster
+    actuator: direct
+    provider:
+      type: kubeconfig
+      kubeconfig:
+        path: ~/.kube/config
+```
+
+Extra RBAC beyond the default rules, all in `example/managed-cluster-rbac.yaml`:
+`get/list/watch` on `deployments` and `statefulsets`, `get/update/patch` on `deployments/scale` and
+`statefulsets/scale`, and `list` on `horizontalpodautoscalers`. `scaledobjects` access is not needed.
 
 ## Rollout progress
 
@@ -536,6 +580,7 @@ Example: [`example/scaledobject-external.example.yaml`](../../example/scaledobje
 | `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
 | `workload_knocker_auto_stops_total` | counter | `env`, `cluster`, `result` (`success`, `error`) |
 | `workload_knocker_external_scaler_streams` | gauge | `cluster` (open `keda-external` push streams) |
+| `workload_knocker_gitops_conflicts` | gauge | `env`, `cluster`, `namespace`, `workload` (`direct` actuator only; 1 = a GitOps manager owns `spec.replicas`) |
 
 `operation` is `start`, `stop` or `stop_all`. `result` is `success`, `error` or `not_found`
 (`error` is only reported by `stop_all`). User IDs and workload names are never used as labels

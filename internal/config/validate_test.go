@@ -281,6 +281,7 @@ func TestValidate_Actuator(t *testing.T) {
 		{actuator: ""},
 		{actuator: ActuatorKEDAPrometheus},
 		{actuator: ActuatorKEDAExternal},
+		{actuator: ActuatorDirect},
 		{actuator: "nope", wantErr: `unsupported actuator "nope"`},
 	} {
 		cfg := validConfig()

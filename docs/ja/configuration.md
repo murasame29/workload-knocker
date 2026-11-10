@@ -15,6 +15,7 @@
 | `DEFAULT_RUN_DURATION` | `0` | 時間を指定しない start の自動停止までの時間。`0` は自動停止なし (従来の動作)。`0` か `15m` 以上で、`MAX_RUN_DURATION` を超えられません。Chart: `settings.defaultRunDuration` |
 | `MAX_RUN_DURATION` | `24h` | 実行時間、および延長後の残り時間の上限。`15m` 以上。Chart: `settings.maxRunDuration` |
 | `STOP_REMINDER` | `15m` | 自動停止の何分前にリマインドするか。`0` で無効。配信には通知チャンネルが必要です ([実行時間](#実行時間))。Chart: `settings.stopReminder` |
+| `GITOPS_MANAGERS` | `argocd-controller,kustomize-controller,helm-controller` | `spec.replicas` を所有していると `direct` actuator がスケールを見送る field manager のカンマ区切りリスト ([GitOps](gitops.md#direct-actuator) を参照)。Chart: `settings.gitopsManagers` |
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
 | `OPERATION_MODE` | `full` | `full` / `scheduled-stop` / `off`。それ以外は起動時エラー ([動作モード](#動作モードと夜間停止)) |
 | `AUTHZ_CONFIG_PATH` | 未設定 | 認可ポリシーファイル。未設定かつ `/etc/workload-knocker/authz.yaml` も無い場合は認可無効 (全員が全 workload を start/stop 可。起動時に info ログ 1 件)。設定時、または既定ファイルが存在する場合はパースできないと起動失敗 ([認可](#認可)) |
@@ -76,7 +77,7 @@ clusters:
 | `controller.namespace` | ◯ | state ConfigMap を置く namespace |
 | `clusters[].env` | ◯ | 一意の識別子 (英数字、`-`、`_`、`.`)。メトリクスの `env` ラベルと、`workload-state` ConfigMap の state キー `state.<env>.json` に使う。同じ cluster を指すエントリを複数置ける (actuator を変える場合など)。それぞれ別のキーに保存する |
 | `clusters[].name` | ◯ | cluster 名。`eks:DescribeCluster` の引数と `cluster` ラベル |
-| `clusters[].actuator` | | workload の検出と起動・停止の方式。`keda-prometheus` (既定) は `workload_knocker_activation` の Prometheus trigger を持つ `ScaledObject` を管理し、そのゲージを公開する。`keda-external` は Prometheus なしで KEDA の external scaler gRPC プロトコルを提供する ([KEDA external scaler](#keda-external-scaler) を参照)。未知の値は拒否される。変更するとその cluster をホットリロードする。[GitOps](gitops.md) を参照 |
+| `clusters[].actuator` | | workload の検出と起動・停止の方式。`keda-prometheus` (既定) は `workload_knocker_activation` の Prometheus trigger を持つ `ScaledObject` を管理し、そのゲージを公開する。`keda-external` は Prometheus なしで KEDA の external scaler gRPC プロトコルを提供する ([KEDA external scaler](#keda-external-scaler) を参照)。`direct` は KEDA も Prometheus も不要 ([direct actuator](#direct-actuator) を参照)。未知の値は拒否される。変更するとその cluster をホットリロードする。[GitOps](gitops.md) を参照 |
 | `clusters[].provider.type` | ◯ | `eks` または `kubeconfig` |
 | `clusters[].provider.eks.region` | eks | AWS リージョン |
 | `clusters[].provider.eks.assumeRoleArn` | | cross-account 時に AssumeRole する Role |
@@ -222,7 +223,7 @@ chart は `discord.secretName` を設定したときだけ `DISCORD_BOT_TOKEN` �
 EKS では controller に IAM Role (IRSA) を付与し、その Role を Access Entry に
 `kubernetes_groups: ["workload-knocker"]` で登録して、
 [`example/managed-cluster-rbac.yaml`](../../example/managed-cluster-rbac.yaml) を適用します。
-必要な権限は `scaledobjects` の `get/list/watch`、`deployments` / `statefulsets` とその `scale`
+必要な権限は (`keda-prometheus` の場合。`direct` は[専用の一覧](#direct-actuator)) `scaledobjects` の `get/list/watch`、`deployments` / `statefulsets` とその `scale`
 サブリソースおよび `pods` の `get/list` (検出と rollout の進捗表示)、`controller.namespace` の
 ConfigMap の `get/create/patch` です (state は env ごとのキーを merge patch で更新します)。
 
@@ -234,6 +235,47 @@ scale down させません。0 の場合や読み取りに失敗した場合 (wa
 
 ScaledObject は `RECONCILE_INTERVAL` ごとに再取得します。新規作成された ScaledObject は 1 interval 以内に
 series が作られ、削除されたものは series が消えます (チャットコマンド不要)。
+
+## direct actuator
+
+`actuator: direct` は KEDA も Prometheus も不要です。cluster 内 (全 namespace) の次のアノテーションを持つ
+Deployment / StatefulSet を管理します。
+
+| アノテーション | 既定 | 意味 |
+|---|---|---|
+| `workload-knocker.io/enabled` | 未設定 | `"true"` で管理対象にする |
+| `workload-knocker.io/replicas` | `1` | 起動中の replicas。正の整数 |
+
+そのほかの `workload-knocker.io/*` アノテーション (実行時間、ready メッセージ) は ScaledObject と同じく使えます。
+start は scale subresource を起動中の replicas に、stop は `0` にします。workload オブジェクト自体には書き込みません。
+新たに検出した workload の初期状態は現在の replicas (0 より大きければ running) で、以前の状態は state ConfigMap に保存されます。
+
+次の場合、workload は変更のたびに 1 回 warning を出して対象外になります。
+
+- `workload-knocker.io/replicas` が正の整数でない。
+- HorizontalPodAutoscaler が対象にしている (HPA は 0 にスケールできないため)。
+- `GITOPS_MANAGERS` の field manager が `metadata.managedFields` で `spec.replicas` を所有している。start / stop は
+  `replicas is managed by <manager>; remove replicas from the manifest` で失敗し、warning を出力して
+  `workload_knocker_gitops_conflicts` を 1 にします (解消後は 0)。[GitOps](gitops.md#direct-actuator) を参照。
+
+失敗はコントローラのログに出力され、チャットや API の応答にはまだ表示されません。
+
+cluster 設定の例 (全文は `example/config.example.yaml`):
+
+```yaml
+clusters:
+  - env: small
+    name: small-cluster
+    actuator: direct
+    provider:
+      type: kubeconfig
+      kubeconfig:
+        path: ~/.kube/config
+```
+
+既定のルールに加える RBAC は `example/managed-cluster-rbac.yaml` にあります。`deployments` / `statefulsets` の
+`get/list/watch`、`deployments/scale` / `statefulsets/scale` の `get/update/patch`、`horizontalpodautoscalers` の
+`list` です。`scaledobjects` へのアクセスは不要です。
 
 ## rollout の進捗
 
@@ -520,6 +562,7 @@ triggers:
 | `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
 | `workload_knocker_auto_stops_total` | counter | `env`, `cluster`, `result` (`success`, `error`) |
 | `workload_knocker_external_scaler_streams` | gauge | `cluster` (開いている `keda-external` push ストリーム数) |
+| `workload_knocker_gitops_conflicts` | gauge | `env`, `cluster`, `namespace`, `workload` (`direct` actuator のみ。1 = GitOps manager が `spec.replicas` を所有) |
 
 `operation` は `start`、`stop`、`stop_all` のいずれかです。`result` は `success`、`error`、`not_found` のいずれかです
 (`error` を返すのは `stop_all` のみ)。カーディナリティを抑えるため、ユーザー ID と workload 名はラベルに使いません。

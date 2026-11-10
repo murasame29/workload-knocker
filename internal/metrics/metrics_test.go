@@ -129,3 +129,23 @@ func TestManager_IncAutoStop(t *testing.T) {
 		t.Errorf("series = %d, want 2", got)
 	}
 }
+
+func TestManager_GitOpsConflict_SetAndDelete(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m.SetGitOpsConflict("stg", "c1", "ns", "app", 1)
+	m.SetGitOpsConflict("stg", "c2", "ns", "app", 1)
+	if got := testutil.ToFloat64(m.gitopsConfl.WithLabelValues("stg", "c1", "ns", "app")); got != 1 {
+		t.Fatalf("conflict = %v, want 1", got)
+	}
+	m.SetGitOpsConflict("stg", "c1", "ns", "app", 0)
+	if got := testutil.ToFloat64(m.gitopsConfl.WithLabelValues("stg", "c1", "ns", "app")); got != 0 {
+		t.Fatalf("conflict = %v, want 0", got)
+	}
+	m.DeleteGitOpsConflict("stg", "c1", "ns", "app")
+	m.DeleteCluster("stg", "c2")
+	if got := testutil.CollectAndCount(m.gitopsConfl, "workload_knocker_gitops_conflicts"); got != 0 {
+		t.Errorf("series left = %d, want 0", got)
+	}
+}
