@@ -50,7 +50,7 @@ func (m *MultiStore) Reload(ctx context.Context, next *config.Config, build Clus
 		case !ok:
 			res.Added = append(res.Added, c.Env)
 			todo = append(todo, c)
-		case !old.SameConnection(c):
+		case !old.SameBackend(c):
 			res.Changed = append(res.Changed, c.Env)
 			isChanged[c.Env] = true
 			todo = append(todo, c)
@@ -144,19 +144,21 @@ func (m *MultiStore) buildAll(ctx context.Context, clusters []config.Cluster, ns
 	return out
 }
 
-// dropStaleSeries removes the activation series old published that next no longer owns.
+// dropStaleSeries makes old forget the workloads next no longer owns, all of them when the actuator changed.
 func (m *MultiStore) dropStaleSeries(old, next *ClusterStore) {
 	if old.cluster.Name != next.cluster.Name {
 		m.metrics.DeleteCluster(old.cluster.Env, old.cluster.Name)
 		return
 	}
 	kept := map[string]struct{}{}
-	for _, w := range next.snapshot() {
-		kept[w.Namespace+"/"+w.Name] = struct{}{}
+	if old.cluster.ActuatorType() == next.cluster.ActuatorType() {
+		for _, w := range next.snapshot() {
+			kept[w.Namespace+"/"+w.Name] = struct{}{}
+		}
 	}
 	for _, w := range old.snapshot() {
 		if _, ok := kept[w.Namespace+"/"+w.Name]; !ok {
-			m.metrics.DeleteMetric(old.cluster.Env, old.cluster.Name, w.Namespace, w.Name)
+			old.forget(ref(&w))
 		}
 	}
 }

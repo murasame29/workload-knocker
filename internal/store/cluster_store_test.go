@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/murasame29/workload-knocker/internal/actuator/kedaprometheus"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
 	"github.com/murasame29/workload-knocker/internal/model"
@@ -131,12 +132,13 @@ func makeScaledObject(ns, name string) *kedav1alpha1.ScaledObject {
 // newTestStore is a helper that builds a ClusterStore from fake K8s clients.
 func newTestStore(t *testing.T, c config.Cluster, kc *fake.Clientset, kk *kedafake.Clientset, m *fakeMetrics) *ClusterStore {
 	t.Helper()
-	return NewClusterStore(
-		c,
-		k8s.NewKEDAScaledObjectLister(kk),
-		k8s.NewConfigMapStateRepository(kc, testControllerNs),
-		m,
-	)
+	return kedaStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m, nil)
+}
+
+// kedaStore builds a ClusterStore on the keda-prometheus actuator; targets may be nil.
+func kedaStore(c config.Cluster, lister k8s.ScaledObjectLister, state k8s.StateRepository, m *fakeMetrics, targets k8s.ScaleTargetReader) *ClusterStore {
+	be := kedaprometheus.New(c, lister, targets, m)
+	return NewClusterStore(c, be, be, state)
 }
 
 func TestClusterStore_Bootstrap_RegistersScaledObjects(t *testing.T) {

@@ -73,7 +73,7 @@ func buildMultiStoreFromFixture(t *rapid.T, clusterCount int) (*MultiStore, []co
 			makeScaledObject("ns-1", "wl-b"),
 			makeScaledObject("ns-2", "wl-a"),
 		)
-		stores[c.Env] = NewClusterStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m)
+		stores[c.Env] = kedaStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(kc, testControllerNs), m, nil)
 	}
 	ms, err := NewMultiStoreFromClusterStores(reg, m, stores, 10*time.Second)
 	if err != nil {

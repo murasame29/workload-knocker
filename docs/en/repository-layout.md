@@ -3,6 +3,7 @@
 | Path | Contents |
 |---|---|
 | `cmd/server/` | Entry point (`main.go`), including the `--version` flag |
+| `internal/actuator/` | `Discoverer` / `Actuator` interfaces, the `keda-prometheus` implementation, the per-cluster `factory` and the `actuatortest` contract suite |
 | `internal/api/` | REST handlers (`/api/v1/start`, `/api/v1/extend`, `/api/v1/stop-all`, `/api/v1/workloads`) and bearer auth middleware |
 | `internal/audit/` | Audit event schema and recorder (see [audit-log.md](audit-log.md)) |
 | `internal/autostop/` | Reconcile hook that stops expired workloads and calls the stop reminder |
@@ -10,7 +11,7 @@
 | `internal/config/` | Environment variables and the cluster registry |
 | `internal/container/` | Dependency wiring |
 | `internal/frontend/` | Chat-independent start/stop flow shared by Slack and Discord |
-| `internal/k8s/` | Cluster clients, EKS and kubeconfig auth, `ScaledObject` access, state ConfigMap |
+| `internal/k8s/` | Cluster clients, EKS and kubeconfig auth, `ScaledObject` and scale target access, state ConfigMap |
 | `internal/logging/` | slog setup: `timestamp` / `message` keys, `service.*` attributes |
 | `internal/metrics/` | Prometheus metrics, including `workload_knocker_activation` |
 | `internal/mode/` | `OPERATION_MODE` |

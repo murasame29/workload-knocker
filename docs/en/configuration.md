@@ -74,6 +74,7 @@ clusters:
 | `controller.namespace` | yes | Namespace for the state ConfigMap |
 | `clusters[].env` | yes | Unique identifier; used as the `env` metric label |
 | `clusters[].name` | yes | Cluster name; `eks:DescribeCluster` argument and `cluster` metric label |
+| `clusters[].actuator` | no | How workloads are discovered and started or stopped. `keda-prometheus` (default) is the only value so far: it manages `ScaledObject`s with a `workload_knocker_activation` Prometheus trigger and publishes that gauge. Unknown values are rejected. Changing it hot reloads the cluster. See [GitOps](gitops.md) |
 | `clusters[].provider.type` | yes | `eks` or `kubeconfig` |
 | `clusters[].provider.eks.region` | eks | AWS region |
 | `clusters[].provider.eks.assumeRoleArn` | no | Role to assume for cross-account clusters |

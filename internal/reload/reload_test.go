@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/murasame29/workload-knocker/internal/actuator/kedaprometheus"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
@@ -74,7 +75,8 @@ func scaledObject(ns, name string) *kedav1alpha1.ScaledObject {
 func fakeFactory(m metrics.MetricsManager) store.ClusterFactory {
 	return func(_ context.Context, c config.Cluster, ns string) (*store.ClusterStore, error) {
 		lister := k8s.NewKEDAScaledObjectLister(kedafake.NewSimpleClientset(scaledObject("ns", "w-"+c.Env)))
-		return store.NewClusterStore(c, lister, k8s.NewConfigMapStateRepository(fake.NewClientset(), ns), m), nil
+		be := kedaprometheus.New(c, lister, nil, m)
+		return store.NewClusterStore(c, be, be, k8s.NewConfigMapStateRepository(fake.NewClientset(), ns)), nil
 	}
 }
 

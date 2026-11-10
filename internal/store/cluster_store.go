@@ -1,31 +1,26 @@
 // Package store holds the domain logic of workload running state.
 //
-// K8s API access is confined to internal/k8s and used here via the ScaledObjectLister /
-// StateRepository interfaces. ClusterStore owns a single cluster; MultiStore orchestrates many.
+// Workload discovery and actuation go through the actuator.Discoverer / actuator.Actuator interfaces
+// and state persistence through k8s.StateRepository. ClusterStore owns a single cluster; MultiStore
+// orchestrates many.
 package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
-	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-
+	"github.com/murasame29/workload-knocker/internal/actuator"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
-	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
 	"github.com/murasame29/workload-knocker/internal/notify"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
-
-// activationTriggerMetric is the metric name that Prometheus trigger queries managed by
-// workload-knocker should contain.
-const activationTriggerMetric = "workload_knocker_activation"
 
 // ClusterStore manages workload state of a single managed cluster.
 // MultiStore aggregates them to form model.WorkloadStore.
@@ -34,39 +29,60 @@ const activationTriggerMetric = "workload_knocker_activation"
 //   - mu protects read/write of the workloads map (short-lived); never held across K8s API calls.
 //   - persistMu serializes state.Save; acquire it after releasing mu when calling from Start/Stop.
 type ClusterStore struct {
-	mu        sync.RWMutex
-	persistMu sync.Mutex
-	cluster   config.Cluster
-	scaledObj k8s.ScaledObjectLister
-	state     k8s.StateRepository
-	targets   k8s.ScaleTargetReader // nil: newly discovered workloads start as stopped
-	metrics   metrics.MetricsManager
-	now       func() time.Time
-	workloads map[string]*model.Workload // key: "namespace/name"
-}
-
-// ClusterStoreOption customizes a ClusterStore.
-type ClusterStoreOption func(*ClusterStore)
-
-// WithScaleTargetReader makes newly discovered workloads start as running when their scale target has replicas.
-func WithScaleTargetReader(r k8s.ScaleTargetReader) ClusterStoreOption {
-	return func(s *ClusterStore) { s.targets = r }
+	mu         sync.RWMutex
+	persistMu  sync.Mutex
+	cluster    config.Cluster
+	discoverer actuator.Discoverer
+	actuator   actuator.Actuator
+	state      k8s.StateRepository
+	now        func() time.Time
+	workloads  map[string]*model.Workload // key: "namespace/name"
 }
 
 // NewClusterStore creates a ClusterStore.
-func NewClusterStore(c config.Cluster, scaledObj k8s.ScaledObjectLister, state k8s.StateRepository, m metrics.MetricsManager, opts ...ClusterStoreOption) *ClusterStore {
-	s := &ClusterStore{
-		cluster:   c,
-		scaledObj: scaledObj,
-		state:     state,
-		metrics:   m,
-		now:       time.Now,
-		workloads: make(map[string]*model.Workload),
+func NewClusterStore(c config.Cluster, d actuator.Discoverer, a actuator.Actuator, state k8s.StateRepository) *ClusterStore {
+	return &ClusterStore{
+		cluster:    c,
+		discoverer: d,
+		actuator:   a,
+		state:      state,
+		now:        time.Now,
+		workloads:  make(map[string]*model.Workload),
 	}
-	for _, o := range opts {
-		o(s)
+}
+
+// ref returns the actuator identity of w.
+func ref(w *model.Workload) actuator.Workload {
+	return actuator.Workload{Namespace: w.Namespace, Name: w.Name, Kind: w.Kind}
+}
+
+// apply sends the desired state of w to the actuator; failures are logged, the in-memory state stays.
+func (s *ClusterStore) apply(w actuator.Workload, running bool) {
+	if err := s.actuator.Apply(context.Background(), w, running); err != nil {
+		slog.Warn("failed to apply workload state", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", w.Name), slog.String("namespace", w.Namespace), slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()), slog.String("operation", "apply-state"))
 	}
-	return s
+}
+
+func (s *ClusterStore) forget(w actuator.Workload) {
+	if err := s.actuator.Forget(context.Background(), w); err != nil {
+		slog.Warn("failed to forget workload", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", w.Name), slog.String("namespace", w.Namespace), slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()), slog.String("operation", "forget-state"))
+	}
+}
+
+// effect is an actuator call collected under mu and run after it is released.
+type effect struct {
+	w       actuator.Workload
+	running bool
+	forget  bool
+}
+
+func (s *ClusterStore) run(effects []effect) {
+	for _, e := range effects {
+		s.apply(e.w, e.running)
+		if e.forget {
+			s.forget(e.w)
+		}
+	}
 }
 
 // Namespaces returns all namespaces in the registry.
@@ -114,10 +130,11 @@ func (s *ClusterStore) Start(ns, name, user string, stopAt time.Time) bool {
 	w.StartedAt = s.now()
 	w.StopAt = stopAt
 	entries := s.snapshotEntriesLocked()
+	target := ref(w)
 	s.mu.Unlock()
 
 	s.persist(entries)
-	s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, 1)
+	s.apply(target, true)
 
 	return true
 }
@@ -151,10 +168,11 @@ func (s *ClusterStore) Stop(ns, name string) bool {
 	w.StartedAt = time.Time{}
 	w.StopAt = time.Time{}
 	entries := s.snapshotEntriesLocked()
+	target := ref(w)
 	s.mu.Unlock()
 
 	s.persist(entries)
-	s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, 0)
+	s.apply(target, false)
 
 	return true
 }
@@ -165,8 +183,7 @@ func (s *ClusterStore) StopAll(_ context.Context, allow func(namespace, workload
 	s.mu.Lock()
 	stopped := 0
 	var skipped []string
-	type meta struct{ ns, name string }
-	var changed []meta
+	var changed []effect
 	for _, w := range s.workloads {
 		if allow != nil && !allow(w.Namespace, w.Name) {
 			if w.Replicas > 0 {
@@ -181,16 +198,14 @@ func (s *ClusterStore) StopAll(_ context.Context, allow func(namespace, workload
 		w.StartedBy = ""
 		w.StartedAt = time.Time{}
 		w.StopAt = time.Time{}
-		changed = append(changed, meta{ns: w.Namespace, name: w.Name})
+		changed = append(changed, effect{w: ref(w)})
 	}
 	slices.Sort(skipped)
 	entries := s.snapshotEntriesLocked()
 	s.mu.Unlock()
 
 	s.persist(entries)
-	for _, mw := range changed {
-		s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, mw.ns, mw.name, 0)
-	}
+	s.run(changed)
 
 	return stopped, skipped, nil
 }
@@ -207,7 +222,7 @@ func (s *ClusterStore) snapshot() []model.Workload {
 }
 
 // Bootstrap is the one-time startup initialization.
-// It lists ScaledObjects to build the registry, then restores state from the ConfigMap.
+// It discovers workloads to build the registry, then restores state from the ConfigMap.
 func (s *ClusterStore) Bootstrap(ctx context.Context) error {
 	entries, err := s.state.Load(ctx)
 	loaded := err == nil
@@ -222,9 +237,11 @@ func (s *ClusterStore) Bootstrap(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
-	s.restoreLocked(entries)
+	restored := s.restoreLocked(entries)
 	snapshot := s.snapshotEntriesLocked()
 	s.mu.Unlock()
+	s.run(restored)
+	slog.Info("workload state restored", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env))
 
 	// Persist only on a successful load, otherwise the saved state would be overwritten.
 	if registered && loaded {
@@ -233,7 +250,7 @@ func (s *ClusterStore) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-// Reconcile lists ScaledObjects and refreshes the registry.
+// Reconcile re-discovers workloads and refreshes the registry.
 func (s *ClusterStore) Reconcile(ctx context.Context) error {
 	registered, err := s.sync(ctx, nil)
 	if err != nil {
@@ -248,31 +265,26 @@ func (s *ClusterStore) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-// sync refreshes the registry from the ScaledObject list. known keys (already in the state
-// ConfigMap) skip the scale target read. It reports whether a running workload was registered.
+// sync refreshes the registry from the discovered workloads. known keys (already in the state
+// ConfigMap) skip the replicas read. It reports whether a running workload was registered.
 func (s *ClusterStore) sync(ctx context.Context, known map[string]k8s.StateEntry) (bool, error) {
-	items, err := s.scaledObj.List(ctx)
+	items, err := s.discoverer.Discover(ctx)
 	if err != nil {
-		return false, fmt.Errorf("list ScaledObjects (cluster=%s): %w", s.cluster.Name, err)
+		return false, fmt.Errorf("discover workloads (cluster=%s): %w", s.cluster.Name, err)
 	}
 
 	seen := make(map[string]struct{}, len(items))
-	for i := range items {
-		so := &items[i]
-		if !hasActivationTrigger(so) {
-			continue
-		}
-		seen[so.Namespace+"/"+so.Spec.ScaleTargetRef.Name] = struct{}{}
+	for _, it := range items {
+		seen[it.Namespace+"/"+it.Name] = struct{}{}
 	}
 
 	initial := s.readInitialReplicas(ctx, items, known)
 
+	var effects []effect
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	registered := false
-	for i := range items {
-		if s.handleScaledObjectLocked(&items[i], initial) {
+	for _, it := range items {
+		if s.handleLocked(it, initial, &effects) {
 			registered = true
 		}
 	}
@@ -282,21 +294,19 @@ func (s *ClusterStore) sync(ctx context.Context, known map[string]k8s.StateEntry
 			continue
 		}
 		delete(s.workloads, key)
-		s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, w.Namespace, w.Name, 0)
-		s.metrics.DeleteMetric(s.cluster.Env, s.cluster.Name, w.Namespace, w.Name)
+		effects = append(effects, effect{w: ref(w), forget: true})
 		slog.Debug("ScaledObject removed (reconcile)", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", w.Name), slog.String("namespace", w.Namespace))
 	}
+	s.mu.Unlock()
 
+	s.run(effects)
 	return registered, nil
 }
 
-// readInitialReplicas reads the scale target of each newly discovered workload (no lock held).
-// Workloads whose target cannot be read are absent from the result and start as stopped.
-func (s *ClusterStore) readInitialReplicas(ctx context.Context, items []kedav1alpha1.ScaledObject, known map[string]k8s.StateEntry) map[string]int {
+// readInitialReplicas reads the replicas of each newly discovered workload (no lock held).
+// Workloads whose replicas cannot be read are absent from the result and start as stopped.
+func (s *ClusterStore) readInitialReplicas(ctx context.Context, items []actuator.Workload, known map[string]k8s.StateEntry) map[string]int {
 	out := map[string]int{}
-	if s.targets == nil {
-		return out
-	}
 	s.mu.RLock()
 	registered := make(map[string]struct{}, len(s.workloads))
 	for key := range s.workloads {
@@ -304,13 +314,8 @@ func (s *ClusterStore) readInitialReplicas(ctx context.Context, items []kedav1al
 	}
 	s.mu.RUnlock()
 
-	for i := range items {
-		so := &items[i]
-		if !hasActivationTrigger(so) {
-			continue
-		}
-		name := so.Spec.ScaleTargetRef.Name
-		key := so.Namespace + "/" + name
+	for _, it := range items {
+		key := it.Namespace + "/" + it.Name
 		if _, ok := registered[key]; ok {
 			continue
 		}
@@ -320,10 +325,12 @@ func (s *ClusterStore) readInitialReplicas(ctx context.Context, items []kedav1al
 		if _, ok := out[key]; ok {
 			continue
 		}
-		kind := scaleTargetKind(so)
-		replicas, err := s.targets.Replicas(ctx, kind, so.Namespace, name)
+		replicas, err := s.discoverer.Replicas(ctx, it)
+		if errors.Is(err, actuator.ErrReplicasUnknown) {
+			return out
+		}
 		if err != nil {
-			slog.Warn("failed to read scale target, registering as stopped", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", so.Namespace), slog.String("kind", kind), slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()), slog.String("operation", "read-scale-target"))
+			slog.Warn("failed to read scale target, registering as stopped", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", it.Name), slog.String("namespace", it.Namespace), slog.String("kind", it.Kind), slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()), slog.String("operation", "read-scale-target"))
 			continue
 		}
 		out[key] = int(replicas)
@@ -331,32 +338,13 @@ func (s *ClusterStore) readInitialReplicas(ctx context.Context, items []kedav1al
 	return out
 }
 
-func scaleTargetKind(so *kedav1alpha1.ScaledObject) string {
-	if k := so.Spec.ScaleTargetRef.Kind; k != "" {
-		return k
-	}
-	return "Deployment"
-}
-
-// handleScaledObjectLocked registers/updates/removes a ScaledObject in the registry. Requires mu.
+// handleLocked registers or updates a discovered workload in the registry. Requires mu.
 // initial holds the current replicas of new targets. It reports whether a running workload was registered.
-func (s *ClusterStore) handleScaledObjectLocked(so *kedav1alpha1.ScaledObject, initial map[string]int) bool {
-	ns := so.Namespace
-	name := so.Spec.ScaleTargetRef.Name
-	kind := scaleTargetKind(so)
+func (s *ClusterStore) handleLocked(it actuator.Workload, initial map[string]int, effects *[]effect) bool {
+	ns, name, kind := it.Namespace, it.Name, it.Kind
 	key := ns + "/" + name
 
-	if !hasActivationTrigger(so) {
-		if _, ok := s.workloads[key]; ok {
-			delete(s.workloads, key)
-			s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, 0)
-			s.metrics.DeleteMetric(s.cluster.Env, s.cluster.Name, ns, name)
-			slog.Debug("ScaledObject unregistered (trigger removed)", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns))
-		}
-		return false
-	}
-
-	def, maxDur, problems := runlimit.FromAnnotations(so.Annotations)
+	def, maxDur, problems := runlimit.FromAnnotations(it.Annotations)
 	if len(problems) > 0 {
 		slog.Warn("invalid run duration annotation ignored", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns), slog.Any("annotations", problems))
 	}
@@ -364,17 +352,15 @@ func (s *ClusterStore) handleScaledObjectLocked(so *kedav1alpha1.ScaledObject, i
 	if existing, ok := s.workloads[key]; ok {
 		existing.Kind = kind
 		existing.DefaultDuration, existing.MaxDuration = def, maxDur
-		s.setReadyMessage(existing, so, false)
+		s.setReadyMessage(existing, it.Annotations, false)
 		return false
 	}
 
 	replicas := 0
-	var activation float64
 	if initial[key] > 0 {
 		replicas = 1
-		activation = 1
 	}
-	s.workloads[key] = &model.Workload{
+	w := &model.Workload{
 		Env:       s.cluster.Env,
 		Name:      name,
 		Namespace: ns,
@@ -384,16 +370,17 @@ func (s *ClusterStore) handleScaledObjectLocked(so *kedav1alpha1.ScaledObject, i
 		DefaultDuration: def,
 		MaxDuration:     maxDur,
 	}
-	s.setReadyMessage(s.workloads[key], so, true)
-	s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, ns, name, activation)
+	s.workloads[key] = w
+	s.setReadyMessage(w, it.Annotations, true)
+	*effects = append(*effects, effect{w: ref(w), running: replicas > 0})
 
 	slog.Debug("ScaledObject registered", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns), slog.String("kind", kind), slog.Int("replicas", replicas))
 	return replicas > 0
 }
 
 // setReadyMessage copies the ready-message annotation to w and warns once per changed invalid template.
-func (s *ClusterStore) setReadyMessage(w *model.Workload, so *kedav1alpha1.ScaledObject, discovered bool) {
-	tmpl := so.Annotations[notify.ReadyMessageAnnotation]
+func (s *ClusterStore) setReadyMessage(w *model.Workload, annotations map[string]string, discovered bool) {
+	tmpl := annotations[notify.ReadyMessageAnnotation]
 	if !discovered && tmpl == w.ReadyMessage {
 		return
 	}
@@ -406,21 +393,9 @@ func (s *ClusterStore) setReadyMessage(w *model.Workload, so *kedav1alpha1.Scale
 	}
 }
 
-func hasActivationTrigger(so *kedav1alpha1.ScaledObject) bool {
-	for _, trigger := range so.Spec.Triggers {
-		if trigger.Type != "prometheus" {
-			continue
-		}
-		query, ok := trigger.Metadata["query"]
-		if ok && strings.Contains(query, activationTriggerMetric) {
-			return true
-		}
-	}
-	return false
-}
-
-// restoreLocked applies the loaded state entries to the registry. Requires mu.
-func (s *ClusterStore) restoreLocked(entries map[string]k8s.StateEntry) {
+// restoreLocked applies the loaded state entries to the registry and returns the actuator calls
+// that publish the restored state. Requires mu.
+func (s *ClusterStore) restoreLocked(entries map[string]k8s.StateEntry) []effect {
 	for key, entry := range entries {
 		w, ok := s.workloads[key]
 		if !ok {
@@ -433,15 +408,11 @@ func (s *ClusterStore) restoreLocked(entries map[string]k8s.StateEntry) {
 		w.StopAt = entry.StopAt
 	}
 
+	effects := make([]effect, 0, len(s.workloads))
 	for _, w := range s.workloads {
-		var val float64
-		if w.Replicas > 0 {
-			val = 1
-		}
-		s.metrics.SetActivation(s.cluster.Env, s.cluster.Name, w.Namespace, w.Name, val)
+		effects = append(effects, effect{w: ref(w), running: w.Replicas > 0})
 	}
-
-	slog.Info("workload state restored", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env))
+	return effects
 }
 
 // snapshotEntriesLocked returns a snapshot of the in-memory state. Requires mu (read or write).

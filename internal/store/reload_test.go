@@ -46,7 +46,7 @@ func (f *fakeBuilder) factory() ClusterFactory {
 				return true, nil, errors.New("api unreachable")
 			})
 		}
-		return NewClusterStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(fake.NewClientset(), ns), f.m), nil
+		return kedaStore(c, k8s.NewKEDAScaledObjectLister(kk), k8s.NewConfigMapStateRepository(fake.NewClientset(), ns), f.m, nil), nil
 	}
 }
 
@@ -291,5 +291,21 @@ func TestStopAll_FilterSkipsRunningWorkloads(t *testing.T) {
 		if w.Replicas != want {
 			t.Errorf("%s replicas = %d, want %d", w.Name, w.Replicas, want)
 		}
+	}
+}
+
+func TestReload_ExplicitDefaultActuatorKeepsStores(t *testing.T) {
+	t.Parallel()
+
+	ms, fb, _ := newReloadFixture(t, map[string][][2]string{"a": {{"ns", "w"}}}, "a")
+	c := testCluster("a")
+	c.Actuator = config.ActuatorKEDAPrometheus
+
+	res, err := ms.Reload(context.Background(), newFakeRegistry(t, c), fb.factory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Empty() || len(fb.builds) != 0 {
+		t.Errorf("result = %+v builds = %v, want no store churn", res, fb.builds)
 	}
 }
