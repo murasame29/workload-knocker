@@ -4,8 +4,8 @@ description: >-
   Slack and Discord driven on/off controller for KEDA-scaled Kubernetes
   workloads
 type: application
-version: 0.1.4
-appVersion: 0.1.4
+version: 0.1.5
+appVersion: 0.1.5
 home: https://github.com/murasame29/workload-knocker
 sources:
   - https://github.com/murasame29/workload-knocker
