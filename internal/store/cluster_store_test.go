@@ -93,6 +93,8 @@ func (f *fakeMetrics) IncConfigReload(string, string) {}
 func (f *fakeMetrics) IncReconcile(string, string)        {}
 func (f *fakeMetrics) IncAutoStop(string, string, string) {}
 
+func (f *fakeMetrics) SetExternalScalerStreams(string, int) {}
+
 func (f *fakeMetrics) Handler() http.Handler { return http.NotFoundHandler() }
 
 // testCluster returns a test Cluster fixture keyed by env. Cluster.Name is "<env>-cluster".

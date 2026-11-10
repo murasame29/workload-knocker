@@ -11,5 +11,11 @@ spec:
       port: {{ .Values.service.port }}
       targetPort: http
       protocol: TCP
+    {{- if .Values.externalScaler.enabled }}
+    - name: grpc
+      port: {{ .Values.externalScaler.port }}
+      targetPort: grpc
+      protocol: TCP
+    {{- end }}
   selector:
     {{- include "workload-knocker.selectorLabels" . | nindent 4 }}

@@ -135,3 +135,21 @@ clusters:
 		t.Fatal(err)
 	}
 }
+
+func TestNewExternalScaler_OnlyWhenAClusterUsesIt(t *testing.T) {
+	cfg := &config.Env{ExternalScalerPort: 9090, ExternalScalerAddressMatch: "workload-knocker"}
+	reg := func(actuator string) *config.Config {
+		return &config.Config{Clusters: []config.Cluster{{Env: "stg", Name: "c", Actuator: actuator}}}
+	}
+
+	if s, err := newExternalScaler(cfg, reg("")); err != nil || s != nil {
+		t.Errorf("default actuator: server = %v, err = %v, want none", s, err)
+	}
+	if s, err := newExternalScaler(cfg, reg(config.ActuatorKEDAExternal)); err != nil || s == nil {
+		t.Errorf("keda-external: server = %v, err = %v, want a server", s, err)
+	}
+	bad := &config.Env{ExternalScalerPort: 9090, ExternalScalerTLSCert: "c.pem"}
+	if _, err := newExternalScaler(bad, reg(config.ActuatorKEDAExternal)); err == nil {
+		t.Error("cert without key was accepted")
+	}
+}

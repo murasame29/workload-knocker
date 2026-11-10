@@ -12,7 +12,8 @@ the same policy, selected per cluster with `clusters[].actuator` (see [Configura
 
 The default `keda-prometheus` actuator writes nothing to the workloads: it only publishes the
 `workload_knocker_activation` gauge and KEDA scales the target. KEDA still changes `spec.replicas`,
-so the rule for manifests applies to it too.
+so the rule for manifests applies to it too. The `keda-external` actuator behaves the same, with a gRPC
+stream instead of the gauge.
 
 ## Why
 

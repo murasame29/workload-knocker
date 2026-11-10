@@ -46,9 +46,26 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.externalScaler.enabled }}
+            - name: grpc
+              containerPort: {{ .Values.externalScaler.port }}
+              protocol: TCP
+            {{- end }}
           env:
             - name: HTTP_PORT
               value: "8080"
+            {{- if .Values.externalScaler.enabled }}
+            - name: EXTERNAL_SCALER_PORT
+              value: {{ .Values.externalScaler.port | quote }}
+            - name: EXTERNAL_SCALER_ADDRESS_MATCH
+              value: {{ include "workload-knocker.fullname" . | quote }}
+            {{- with .Values.externalScaler.tls.secretName }}
+            - name: EXTERNAL_SCALER_TLS_CERT
+              value: /etc/workload-knocker-external-scaler-tls/tls.crt
+            - name: EXTERNAL_SCALER_TLS_KEY
+              value: /etc/workload-knocker-external-scaler-tls/tls.key
+            {{- end }}
+            {{- end }}
             - name: CLUSTER_CONFIG_PATH
               value: /etc/workload-knocker/config.yaml
             {{- if .Values.authz.enabled }}
@@ -126,6 +143,11 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if and .Values.externalScaler.enabled .Values.externalScaler.tls.secretName }}
+            - name: external-scaler-tls
+              mountPath: /etc/workload-knocker-external-scaler-tls
+              readOnly: true
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -149,6 +171,12 @@ spec:
               {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- if and .Values.externalScaler.enabled .Values.externalScaler.tls.secretName }}
+        - name: external-scaler-tls
+          secret:
+            secretName: {{ .Values.externalScaler.tls.secretName | quote }}
+            defaultMode: 0444
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

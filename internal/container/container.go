@@ -10,6 +10,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"go.uber.org/dig"
 
+	"github.com/murasame29/workload-knocker/internal/actuator/kedaexternal"
 	"github.com/murasame29/workload-knocker/internal/api"
 	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
@@ -132,9 +133,15 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 			return reconcile.New(ws, m, cfg.ReconcileInterval, cfg.ClusterReconcileTimeout, as)
 		},
 
+		// KEDA external scaler gRPC server; nil unless a cluster uses keda-external
+		newExternalScaler,
+
 		// Lifecycle Manager: single entry point to start and stop from main
-		func(cfg *config.Env, h *httpserver.Server, fs []frontend.Frontend, ws reload.Watchers, rl *reconcile.Loop) *server.Manager {
+		func(cfg *config.Env, h *httpserver.Server, fs []frontend.Frontend, ws reload.Watchers, rl *reconcile.Loop, ext *kedaexternal.Server) *server.Manager {
 			components := []server.Lifecycle{h, rl}
+			if ext != nil {
+				components = append(components, ext)
+			}
 			for _, f := range fs {
 				components = append(components, f)
 			}
@@ -174,6 +181,19 @@ func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *
 		fs = append(fs, b)
 	}
 	return fs, nil
+}
+
+// newExternalScaler configures the shared hub and returns the gRPC server, or nil when no cluster
+// uses keda-external at startup.
+func newExternalScaler(cfg *config.Env, reg *config.Config) (*kedaexternal.Server, error) {
+	hub := kedaexternal.Shared()
+	hub.SetAddressMatch(cfg.ExternalScalerAddressMatch)
+	for _, c := range reg.All() {
+		if c.ActuatorType() == config.ActuatorKEDAExternal {
+			return kedaexternal.NewServer(hub, cfg.ExternalScalerPort, cfg.ExternalScalerTLSCert, cfg.ExternalScalerTLSKey)
+		}
+	}
+	return nil, nil
 }
 
 func newAWSConfig() (aws.Config, error) {

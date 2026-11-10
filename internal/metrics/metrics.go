@@ -24,6 +24,8 @@ type MetricsManager interface {
 	IncReconcile(cluster, result string)
 	// IncAutoStop counts one automatic stop of an expired workload (result: success|error).
 	IncAutoStop(env, cluster, result string)
+	// SetExternalScalerStreams sets the number of open KEDA external scaler streams of a cluster.
+	SetExternalScalerStreams(cluster string, n int)
 	Handler() http.Handler
 }
 
@@ -36,6 +38,7 @@ type Manager struct {
 	configReload *prometheus.CounterVec
 	reconcile    *prometheus.CounterVec
 	autoStops    *prometheus.CounterVec
+	extStreams   *prometheus.GaugeVec
 	opDuration   *prometheus.HistogramVec
 	registry     *prometheus.Registry
 }
@@ -115,6 +118,14 @@ func New() *Manager {
 		[]string{"env", "cluster", "result"},
 	)
 
+	extStreams := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "workload_knocker_external_scaler_streams",
+			Help: "Number of open KEDA external scaler push streams, labeled by cluster",
+		},
+		[]string{"cluster"},
+	)
+
 	registry.MustRegister(activation)
 	registry.MustRegister(reachable)
 	registry.MustRegister(tokenRefresh)
@@ -123,6 +134,7 @@ func New() *Manager {
 	registry.MustRegister(configReload)
 	registry.MustRegister(reconcile)
 	registry.MustRegister(autoStops)
+	registry.MustRegister(extStreams)
 
 	return &Manager{
 		activation:   activation,
@@ -132,6 +144,7 @@ func New() *Manager {
 		configReload: configReload,
 		reconcile:    reconcile,
 		autoStops:    autoStops,
+		extStreams:   extStreams,
 		opDuration:   opDuration,
 		registry:     registry,
 	}
@@ -151,6 +164,12 @@ func (m *Manager) DeleteMetric(env, cluster, namespace, workload string) {
 func (m *Manager) DeleteCluster(env, cluster string) {
 	m.activation.DeletePartialMatch(prometheus.Labels{"env": env, "cluster": cluster})
 	m.reachable.DeleteLabelValues(cluster)
+	m.extStreams.DeleteLabelValues(cluster)
+}
+
+// SetExternalScalerStreams sets the open stream count of a cluster.
+func (m *Manager) SetExternalScalerStreams(cluster string, n int) {
+	m.extStreams.WithLabelValues(cluster).Set(float64(n))
 }
 
 // IncConfigReload counts one hot reload attempt.

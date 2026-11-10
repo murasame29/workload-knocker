@@ -32,6 +32,12 @@ slack:
 #   secretName: workload-knocker-discord
 #   guildId: "123456789012345678"
 
+# Serve KEDA's external scaler gRPC protocol for clusters with actuator: keda-external.
+# externalScaler:
+#   enabled: true
+#   tls:
+#     secretName: workload-knocker-grpc-tls   # optional kubernetes.io/tls Secret
+
 serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/workload-knocker

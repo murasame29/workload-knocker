@@ -264,7 +264,8 @@ func TestValidate_Actuator(t *testing.T) {
 	}{
 		{actuator: ""},
 		{actuator: ActuatorKEDAPrometheus},
-		{actuator: "nope", wantErr: `unsupported actuator "nope" (supported: keda-prometheus)`},
+		{actuator: ActuatorKEDAExternal},
+		{actuator: "nope", wantErr: `unsupported actuator "nope"`},
 	} {
 		cfg := validConfig()
 		cfg.Clusters[0].Actuator = tc.actuator

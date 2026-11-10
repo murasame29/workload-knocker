@@ -118,6 +118,30 @@ jobs:
             exit 1
           fi
 
+      - name: External scaler port
+        run: |
+          values=charts/workload-knocker/ci/test-values.yaml
+          render() { helm template workload-knocker charts/workload-knocker --values "${values}" "$@"; }
+          for flag in EXTERNAL_SCALER_PORT 'name: grpc' EXTERNAL_SCALER_TLS_CERT external-scaler-tls; do
+            if render | grep --fixed-strings --quiet "${flag}"; then
+              echo "${flag} rendered without externalScaler.enabled" >&2; exit 1
+            fi
+          done
+          enabled="$(render --set externalScaler.enabled=true --set externalScaler.port=9191)"
+          grep --fixed-strings --quiet 'name: EXTERNAL_SCALER_PORT' <<< "${enabled}"
+          grep --fixed-strings --quiet 'containerPort: 9191' <<< "${enabled}"
+          grep --fixed-strings --quiet 'targetPort: grpc' <<< "${enabled}"
+          if grep --fixed-strings --quiet 'EXTERNAL_SCALER_TLS_CERT' <<< "${enabled}"; then
+            echo 'external scaler TLS rendered without tls.secretName' >&2; exit 1
+          fi
+          tls="$(render --set externalScaler.enabled=true --set externalScaler.tls.secretName=knocker-tls)"
+          grep --fixed-strings --quiet 'name: EXTERNAL_SCALER_TLS_CERT' <<< "${tls}"
+          grep --fixed-strings --quiet 'secretName: "knocker-tls"' <<< "${tls}"
+          if helm lint charts/workload-knocker --strict --values "${values}" \
+            --set externalScaler.port=70000; then
+            echo 'invalid external scaler port was accepted' >&2; exit 1
+          fi
+
       - name: Reject invalid values
         run: |
           values=charts/workload-knocker/ci/test-values.yaml

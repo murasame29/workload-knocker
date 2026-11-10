@@ -23,6 +23,9 @@
 | `SLACK_BOT_TOKEN` | required with Slack | Slack bot token (`xoxb-...`); required only when a cluster configures `frontends.slack` |
 | `DISCORD_BOT_TOKEN` | required with Discord | Discord bot token; required only when a cluster configures `frontends.discord` |
 | `DISCORD_GUILD_ID` | empty | Guild (server) ID. Set: commands are registered for that guild and appear instantly. Empty: commands are registered globally (can take a while to propagate) |
+| `EXTERNAL_SCALER_PORT` | `9090` | gRPC port of the KEDA external scaler, served only while a cluster uses `actuator: keda-external`. Chart: `externalScaler.port` |
+| `EXTERNAL_SCALER_TLS_CERT` / `EXTERNAL_SCALER_TLS_KEY` | empty | Certificate and key paths that enable TLS on that port (both or neither; re-read on every handshake). Chart: `externalScaler.tls.secretName` |
+| `EXTERNAL_SCALER_ADDRESS_MATCH` | `workload-knocker` | A trigger is served when its `scalerAddress` contains this text. The chart sets it to the Service name |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs are JSON with `timestamp` / `message` keys; see [Audit log](audit-log.md) |
 
 `WORKLOAD_ENV` is deprecated and ignored (a warning is logged).
@@ -74,7 +77,7 @@ clusters:
 | `controller.namespace` | yes | Namespace for the state ConfigMap |
 | `clusters[].env` | yes | Unique identifier; used as the `env` metric label |
 | `clusters[].name` | yes | Cluster name; `eks:DescribeCluster` argument and `cluster` metric label |
-| `clusters[].actuator` | no | How workloads are discovered and started or stopped. `keda-prometheus` (default) is the only value so far: it manages `ScaledObject`s with a `workload_knocker_activation` Prometheus trigger and publishes that gauge. Unknown values are rejected. Changing it hot reloads the cluster. See [GitOps](gitops.md) |
+| `clusters[].actuator` | no | How workloads are discovered and started or stopped. `keda-prometheus` (default) manages `ScaledObject`s with a `workload_knocker_activation` Prometheus trigger and publishes that gauge. `keda-external` serves KEDA's external scaler gRPC protocol without Prometheus (see [KEDA external scaler](#keda-external-scaler)). Unknown values are rejected. Changing it hot reloads the cluster. See [GitOps](gitops.md) |
 | `clusters[].provider.type` | yes | `eks` or `kubeconfig` |
 | `clusters[].provider.eks.region` | eks | AWS region |
 | `clusters[].provider.eks.assumeRoleArn` | no | Role to assume for cross-account clusters |
@@ -487,6 +490,39 @@ per cluster and in `total_skipped`. Returns `200` with a per-cluster breakdown e
 `/livez` and `/healthz` return 200 once the process is up. `/readyz` returns 200 after the
 initial sync of all clusters.
 
+## KEDA external scaler
+
+`actuator: keda-external` removes Prometheus from the path: KEDA connects to the controller over gRPC and the
+controller pushes every start and stop immediately. One gRPC server serves all `keda-external` clusters.
+It starts with the controller when at least one cluster uses it, so adding the first such cluster by hot
+reload needs a restart. Enable the port in the chart with `externalScaler.enabled: true`
+(`externalScaler.port`, default `9090`).
+
+```yaml
+triggers:
+  - type: external-push
+    metadata:
+      scalerAddress: workload-knocker.workload-control.svc:9090
+      cluster: stg            # clusters[].env (required)
+      namespace: my-ns        # optional, defaults to the ScaledObject namespace
+      workload: my-app        # optional, defaults to the scale target name
+```
+
+- A `ScaledObject` is managed when it has an `external-push` (or `external`) trigger whose `scalerAddress`
+  contains `EXTERNAL_SCALER_ADDRESS_MATCH` and whose `cluster` equals `clusters[].env`.
+- The workload is active while it is desired running: `IsActive` and the stream report that state, and the
+  metric `workload_knocker_running` is `1` while running and `0` while stopped (target `1`).
+- `StreamIsActive` pushes on stream start, on every start or stop, and every 30 seconds as a keepalive.
+- The port has no authentication. Keep it cluster-internal (a ClusterIP Service). For TLS set
+  `externalScaler.tls.secretName` to a `kubernetes.io/tls` Secret (cert-manager works) and give KEDA the CA
+  with `caCert` (and `tlsClientCert` / `tlsClientKey` if you need them) in a `TriggerAuthentication`.
+- When the controller restarts, KEDA keeps the last state until the stream reconnects. A call for a workload
+  the controller does not know yet fails with `NotFound`, and KEDA applies the ScaledObject `fallback`.
+  Set `fallback` (`failureThreshold`, `replicas`) so a long outage settles on a replica count you choose.
+- The state still lives in the `workload-state` ConfigMap, so a restart restores it before the port opens.
+
+Example: [`example/scaledobject-external.example.yaml`](../../example/scaledobject-external.example.yaml).
+
 ## Metrics
 
 | Metric | Type | Labels |
@@ -499,6 +535,7 @@ initial sync of all clusters.
 | `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
 | `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
 | `workload_knocker_auto_stops_total` | counter | `env`, `cluster`, `result` (`success`, `error`) |
+| `workload_knocker_external_scaler_streams` | gauge | `cluster` (open `keda-external` push streams) |
 
 `operation` is `start`, `stop` or `stop_all`. `result` is `success`, `error` or `not_found`
 (`error` is only reported by `stop_all`). User IDs and workload names are never used as labels
