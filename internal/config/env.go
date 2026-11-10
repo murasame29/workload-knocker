@@ -75,6 +75,13 @@ type Env struct {
 	DiscordBotToken string `env:"DISCORD_BOT_TOKEN"`
 	DiscordGuildID  string `env:"DISCORD_GUILD_ID"`
 
+	// ExternalScalerPort is the KEDA external scaler gRPC port, served only while a cluster uses keda-external.
+	// TLS is enabled when both cert and key paths are set; the port should stay cluster-internal.
+	ExternalScalerPort         int    `env:"EXTERNAL_SCALER_PORT" envDefault:"9090"`
+	ExternalScalerTLSCert      string `env:"EXTERNAL_SCALER_TLS_CERT"`
+	ExternalScalerTLSKey       string `env:"EXTERNAL_SCALER_TLS_KEY"`
+	ExternalScalerAddressMatch string `env:"EXTERNAL_SCALER_ADDRESS_MATCH" envDefault:"workload-knocker"`
+
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
 }
 

@@ -67,6 +67,8 @@ func TestManager_DeleteCluster_DropsOnlyThatCluster(t *testing.T) {
 	m.SetActivation("dev", "c2", "ns", "api", 1)
 	m.SetReachable("c1", 1)
 	m.SetReachable("c2", 1)
+	m.SetExternalScalerStreams("c1", 2)
+	m.SetExternalScalerStreams("c2", 1)
 
 	m.DeleteCluster("stg", "c1")
 
@@ -75,6 +77,9 @@ func TestManager_DeleteCluster_DropsOnlyThatCluster(t *testing.T) {
 	}
 	if got := testutil.CollectAndCount(m.reachable); got != 1 {
 		t.Errorf("reachable series: got %d, want 1 (c2 only)", got)
+	}
+	if got := testutil.CollectAndCount(m.extStreams); got != 1 {
+		t.Errorf("external scaler stream series: got %d, want 1 (c2 only)", got)
 	}
 }
 

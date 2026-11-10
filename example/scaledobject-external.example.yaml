@@ -1,0 +1,23 @@
+# ScaledObject served by a cluster with `actuator: keda-external`; no Prometheus involved.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: my-app
+  namespace: my-ns
+spec:
+  scaleTargetRef:
+    name: my-app
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  # Settle on a chosen replica count if the controller is unreachable for a long time.
+  fallback:
+    failureThreshold: 6
+    replicas: 0
+  triggers:
+    - type: external-push
+      metadata:
+        scalerAddress: workload-knocker.workload-control.svc:9090
+        cluster: stg
+        # namespace: my-ns
+        # workload: my-app
+      # With TLS, reference a TriggerAuthentication that supplies caCert.

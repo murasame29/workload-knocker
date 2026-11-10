@@ -117,6 +117,14 @@ service:
   type: ClusterIP
   port: 8080
 
+# KEDA external scaler gRPC endpoint for clusters with actuator keda-external (see docs/en/configuration.md).
+# Keep the port cluster-internal; plaintext unless tls.secretName names a kubernetes.io/tls Secret.
+externalScaler:
+  enabled: false
+  port: 9090
+  tls:
+    secretName: ""
+
 serviceAccount:
   create: true
   # Use this for IRSA, e.g. eks.amazonaws.com/role-arn.

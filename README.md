@@ -40,7 +40,10 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
   extended. See [Run duration](docs/en/configuration.md#run-duration).
 - Every start and stop writes a structured audit event to stdout; see [Audit log](docs/en/audit-log.md).
 
-Your `ScaledObject` needs a Prometheus trigger such as:
+Without Prometheus, set `actuator: keda-external` on a cluster and use KEDA's `external-push` trigger; the
+controller pushes starts and stops over gRPC. See [KEDA external scaler](docs/en/configuration.md#keda-external-scaler).
+
+By default your `ScaledObject` needs a Prometheus trigger such as:
 
 ```yaml
 triggers:

@@ -23,6 +23,9 @@
 | `SLACK_BOT_TOKEN` | Slack 利用時のみ必須 | Slack Bot token (`xoxb-...`)。いずれかの cluster が `frontends.slack` を設定したときだけ必要 |
 | `DISCORD_BOT_TOKEN` | Discord 利用時のみ必須 | Discord Bot token。いずれかの cluster が `frontends.discord` を設定したときだけ必要 |
 | `DISCORD_GUILD_ID` | 空 | Guild (サーバー) ID。設定するとその guild にコマンドを登録し即時反映されます。空ならグローバル登録 (反映に時間がかかることがあります) |
+| `EXTERNAL_SCALER_PORT` | `9090` | KEDA external scaler の gRPC ポート。`actuator: keda-external` の cluster がある間だけ待ち受ける。Chart: `externalScaler.port` |
+| `EXTERNAL_SCALER_TLS_CERT` / `EXTERNAL_SCALER_TLS_KEY` | 空 | このポートで TLS を有効にする証明書と鍵のパス (両方指定するか、どちらも指定しない。ハンドシェイクごとに再読込)。Chart: `externalScaler.tls.secretName` |
+| `EXTERNAL_SCALER_ADDRESS_MATCH` | `workload-knocker` | trigger の `scalerAddress` にこの文字列を含むものを担当する。Chart は Service 名を設定する |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`。ログは `timestamp` / `message` キーの JSON です ([監査ログ](audit-log.md)) |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。
@@ -73,7 +76,7 @@ clusters:
 | `controller.namespace` | ◯ | state ConfigMap を置く namespace |
 | `clusters[].env` | ◯ | 一意の識別子。メトリクスの `env` ラベルに使う |
 | `clusters[].name` | ◯ | cluster 名。`eks:DescribeCluster` の引数と `cluster` ラベル |
-| `clusters[].actuator` | | workload の検出と起動・停止の方式。現時点では `keda-prometheus` (既定) のみ。`workload_knocker_activation` の Prometheus trigger を持つ `ScaledObject` を管理し、そのゲージを公開する。未知の値は拒否される。変更するとその cluster をホットリロードする。[GitOps](gitops.md) を参照 |
+| `clusters[].actuator` | | workload の検出と起動・停止の方式。`keda-prometheus` (既定) は `workload_knocker_activation` の Prometheus trigger を持つ `ScaledObject` を管理し、そのゲージを公開する。`keda-external` は Prometheus なしで KEDA の external scaler gRPC プロトコルを提供する ([KEDA external scaler](#keda-external-scaler) を参照)。未知の値は拒否される。変更するとその cluster をホットリロードする。[GitOps](gitops.md) を参照 |
 | `clusters[].provider.type` | ◯ | `eks` または `kubeconfig` |
 | `clusters[].provider.eks.region` | eks | AWS リージョン |
 | `clusters[].provider.eks.assumeRoleArn` | | cross-account 時に AssumeRole する Role |
@@ -472,6 +475,38 @@ cluster ごとの内訳を返します。
 
 `/livez` と `/healthz` はプロセス起動後に 200。`/readyz` は全 cluster の初期同期後に 200 になります。
 
+## KEDA external scaler
+
+`actuator: keda-external` は経路から Prometheus を外します。KEDA がコントローラへ gRPC で接続し、コントローラは start / stop を
+即座に push します。gRPC サーバーはプロセスに 1 つで、すべての `keda-external` cluster を担当します。
+いずれかの cluster が使っている場合にコントローラと一緒に起動するため、最初の `keda-external` cluster をホットリロードで
+追加した場合は再起動が必要です。Chart では `externalScaler.enabled: true` でポートを公開します (`externalScaler.port`、既定 `9090`)。
+
+```yaml
+triggers:
+  - type: external-push
+    metadata:
+      scalerAddress: workload-knocker.workload-control.svc:9090
+      cluster: stg            # clusters[].env (必須)
+      namespace: my-ns        # 任意。既定は ScaledObject の namespace
+      workload: my-app        # 任意。既定は scale target の名前
+```
+
+- `external-push` (または `external`) trigger を持ち、`scalerAddress` が `EXTERNAL_SCALER_ADDRESS_MATCH` を含み、`cluster` が
+  `clusters[].env` と一致する `ScaledObject` を管理します。
+- 起動すべき状態の間 active です。`IsActive` とストリームがその状態を返し、メトリクス `workload_knocker_running` は起動中 `1`、
+  停止中 `0` (target は `1`) です。
+- `StreamIsActive` はストリーム開始時、start / stop のたび、そして keepalive として 30 秒ごとに push します。
+- このポートに認証はありません。cluster 内部に留めてください (ClusterIP の Service)。TLS は `externalScaler.tls.secretName` に
+  `kubernetes.io/tls` Secret (cert-manager 可) を指定し、KEDA 側は `TriggerAuthentication` の `caCert` (必要なら
+  `tlsClientCert` / `tlsClientKey`) で CA を渡します。
+- コントローラの再起動中、KEDA はストリームが再接続するまで最後の状態を保ちます。コントローラがまだ知らない workload への
+  呼び出しは `NotFound` で失敗し、KEDA は ScaledObject の `fallback` を適用します。長い停止でも希望の台数に落ち着くよう
+  `fallback` (`failureThreshold`、`replicas`) を設定してください。
+- 状態は引き続き `workload-state` ConfigMap に保存され、再起動後はポートを開く前に復元されます。
+
+例: [`example/scaledobject-external.example.yaml`](../../example/scaledobject-external.example.yaml)
+
 ## メトリクス
 
 | メトリクス | 型 | ラベル |
@@ -484,6 +519,7 @@ cluster ごとの内訳を返します。
 | `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
 | `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
 | `workload_knocker_auto_stops_total` | counter | `env`, `cluster`, `result` (`success`, `error`) |
+| `workload_knocker_external_scaler_streams` | gauge | `cluster` (開いている `keda-external` push ストリーム数) |
 
 `operation` は `start`、`stop`、`stop_all` のいずれかです。`result` は `success`、`error`、`not_found` のいずれかです
 (`error` を返すのは `stop_all` のみ)。カーディナリティを抑えるため、ユーザー ID と workload 名はラベルに使いません。

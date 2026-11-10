@@ -11,7 +11,7 @@ workload-knocker は Argo CD / Flux のアプリケーションを OutOfSync に
 - workload のマニフェストは `spec.replicas` を省略するか、GitOps ツール側で無視する必要があります。
 
 既定の `keda-prometheus` actuator は workload には何も書かず、`workload_knocker_activation` ゲージを公開するだけで、
-スケールは KEDA が行います。それでも KEDA が `spec.replicas` を変更するため、マニフェストのルールは同様に適用されます。
+スケールは KEDA が行います。それでも KEDA が `spec.replicas` を変更するため、マニフェストのルールは同様に適用されます。`keda-external` actuator も、ゲージの代わりに gRPC ストリームを使う点以外は同じです。
 
 ## 理由
 

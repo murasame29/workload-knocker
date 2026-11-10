@@ -82,10 +82,11 @@ type ProviderKubeconfig struct {
 // Actuator identifiers. An empty Cluster.Actuator selects ActuatorKEDAPrometheus.
 const (
 	ActuatorKEDAPrometheus = "keda-prometheus"
+	ActuatorKEDAExternal   = "keda-external"
 )
 
 // ActuatorNames lists every supported actuator; add new ones here and in internal/actuator/factory.
-var ActuatorNames = []string{ActuatorKEDAPrometheus}
+var ActuatorNames = []string{ActuatorKEDAPrometheus, ActuatorKEDAExternal}
 
 // Frontend identifiers.
 const (
