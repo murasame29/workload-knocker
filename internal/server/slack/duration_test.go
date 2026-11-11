@@ -65,10 +65,10 @@ func TestScheduleLines(t *testing.T) {
 	t.Parallel()
 
 	stop := time.Date(2026, 11, 8, 14, 0, 0, 0, time.UTC)
-	if scheduleLines([]frontend.Schedule{{Name: "a"}}) != nil {
+	if markup.ScheduleLines([]frontend.Schedule{{Name: "a"}}) != nil {
 		t.Error("no auto-stop anywhere must add no line")
 	}
-	lines := scheduleLines([]frontend.Schedule{
+	lines := markup.ScheduleLines([]frontend.Schedule{
 		{Name: "a", Duration: 4 * time.Hour, StopAt: stop},
 		{Name: "b", Duration: 4 * time.Hour, StopAt: stop},
 		{Name: "c"},
@@ -83,7 +83,7 @@ func TestAppliedStopLines(t *testing.T) {
 	t.Parallel()
 
 	stop := time.Date(2026, 11, 8, 14, 0, 0, 0, time.UTC)
-	lines := appliedStopLines([]frontend.Applied{
+	lines := markup.AppliedStopLines([]frontend.Applied{
 		{Name: "a", Found: true, StopAt: stop},
 		{Name: "b", Found: true, StopAt: stop.Add(300 * time.Millisecond)},
 		{Name: "gone", Found: false, StopAt: stop},

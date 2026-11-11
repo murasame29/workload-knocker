@@ -216,57 +216,6 @@ func slackTime(t time.Time) string {
 	return fmt.Sprintf("<!date^%d^{date_short_pretty} {time}|%s>", t.Unix(), t.UTC().Format("2006-01-02 15:04 UTC"))
 }
 
-// scheduleLines groups the starts by run duration; nothing is shown when no start has an auto-stop.
-func scheduleLines(starts []frontend.Schedule) []string {
-	var scheduled bool
-	for _, s := range starts {
-		scheduled = scheduled || s.Duration > 0
-	}
-	if !scheduled {
-		return nil
-	}
-	var lines []string
-	done := map[time.Duration]bool{}
-	for _, s := range starts {
-		if done[s.Duration] {
-			continue
-		}
-		done[s.Duration] = true
-		var names []string
-		for _, o := range starts {
-			if o.Duration == s.Duration {
-				names = append(names, o.Name)
-			}
-		}
-		if s.Duration == 0 {
-			lines = append(lines, fmt.Sprintf("⏰ %s: no auto-stop", strings.Join(names, ", ")))
-		} else {
-			lines = append(lines, fmt.Sprintf("⏰ %s: auto-stop in %s (%s)", strings.Join(names, ", "), runlimit.FormatHours(s.Duration), slackTime(s.StopAt)))
-		}
-	}
-	return lines
-}
-
-// appliedStopLines groups the started workloads by their stop time.
-func appliedStopLines(applied []frontend.Applied) []string {
-	var lines []string
-	done := map[int64]bool{}
-	for _, a := range applied {
-		if !a.Found || a.StopAt.IsZero() || done[a.StopAt.Unix()] {
-			continue
-		}
-		done[a.StopAt.Unix()] = true
-		var names []string
-		for _, o := range applied {
-			if o.Found && o.StopAt.Unix() == a.StopAt.Unix() {
-				names = append(names, o.Name)
-			}
-		}
-		lines = append(lines, fmt.Sprintf("⏰ %s: auto-stop at %s", strings.Join(names, ", "), slackTime(a.StopAt)))
-	}
-	return lines
-}
-
 // durationErrors maps the duration input block to the first start whose duration is out of range.
 func durationErrors(starts []frontend.Schedule) map[string]string {
 	for _, s := range starts {
@@ -354,28 +303,6 @@ type previewMetadata struct {
 	Parts []previewPart `json:"parts,omitempty"`
 }
 
-// planLines renders the allowed plan changes for the preview modal.
-func planLines(plan frontend.Plan) []string {
-	lines := make([]string, 0, len(plan.Changes))
-	for _, c := range plan.Changes {
-		if c.Action == frontend.ActionStart {
-			lines = append(lines, fmt.Sprintf("🟢 %s: stopped → *start*", c.Label))
-		} else {
-			lines = append(lines, fmt.Sprintf("🔴 %s: running → *stop*", c.Label))
-		}
-	}
-	return lines
-}
-
-// rejectionLines renders refused changes with the reason.
-func rejectionLines(rejected []frontend.Rejection) []string {
-	lines := make([]string, 0, len(rejected))
-	for _, r := range rejected {
-		lines = append(lines, fmt.Sprintf("⛔ %s: %s", r.Label, r.Message()))
-	}
-	return lines
-}
-
 // applyLines renders the outcome of an apply, including entries refused at apply time.
 func applyLines(res frontend.ApplyResult) []string { return progressLines(res, nil, 0) }
 
@@ -397,8 +324,8 @@ func progressLines(res frontend.ApplyResult, snap rollout.Snapshot, timeout time
 			lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
 		}
 	}
-	lines = append(lines, appliedStopLines(res.Applied)...)
-	return append(lines, rejectionLines(res.Rejected)...)
+	lines = append(lines, markup.AppliedStopLines(res.Applied)...)
+	return append(lines, frontend.RejectionLines(res.Rejected)...)
 }
 
 // modalNote explains an empty list or a disabled chat stop; "" when there is nothing to say.
@@ -672,8 +599,8 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		return
 	}
 
-	previewLines := append(planLines(plan), scheduleLines(starts)...)
-	rejectedLines := rejectionLines(plan.Rejected)
+	previewLines := append(markup.PlanLines(plan.Changes), markup.ScheduleLines(starts)...)
+	rejectedLines := frontend.RejectionLines(plan.Rejected)
 
 	envUpper := strings.ToUpper(cl.Env)
 

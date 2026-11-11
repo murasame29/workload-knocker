@@ -124,7 +124,7 @@ func (b *Bot) workloadStatus(cl config.Cluster, st frontend.Status, notes []stri
 	for _, ns := range st.Namespaces {
 		body = append(body, "**"+ns.Name+"**")
 		for _, se := range ns.Entries {
-			body = append(body, statusLine(se))
+			body = append(body, markup.StatusLine(se))
 			pair := b.entryButtons(st.Env, ns.Name, se)
 			switch {
 			case len(pair) == 0:
@@ -141,24 +141,6 @@ func (b *Bot) workloadStatus(cl config.Cluster, st frontend.Status, notes []stri
 	}
 	lines = append(lines, body...)
 	return view{Content: fitLines(head, lines, contentMaxLen), Components: buttonRows(buttons)}
-}
-
-// statusLine renders one entry: its state label, then who started it, when, and its stop time.
-func statusLine(se frontend.StatusEntry) string {
-	line := se.Entry.Label()
-	if !se.Entry.AnyRunning() {
-		return line
-	}
-	if se.StartedBy != "" {
-		line += " · by " + displayStarter(se.StartedBy)
-	}
-	if !se.StartedAt.IsZero() {
-		line += " · started " + relativeTime(se.StartedAt)
-	}
-	if se.StopAt.IsZero() {
-		return line + " · no auto-stop"
-	}
-	return line + " · stops " + relativeTime(se.StopAt)
 }
 
 // displayStarter mentions Discord user IDs (the recorded starter of Discord starts); other values are shown as is.

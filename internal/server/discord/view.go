@@ -157,28 +157,6 @@ func workloadView(token string, cl config.Cluster, namespace string, entries []f
 	}}
 }
 
-// planLines renders plan changes in the same wording as the Slack preview.
-func planLines(changes []frontend.Change) []string {
-	lines := make([]string, 0, len(changes))
-	for _, c := range changes {
-		if c.Action == frontend.ActionStart {
-			lines = append(lines, fmt.Sprintf("🟢 %s: stopped → **start**", c.Label))
-		} else {
-			lines = append(lines, fmt.Sprintf("🔴 %s: running → **stop**", c.Label))
-		}
-	}
-	return lines
-}
-
-// rejectionLines renders refused changes with the reason.
-func rejectionLines(rejected []frontend.Rejection) []string {
-	lines := make([]string, 0, len(rejected))
-	for _, r := range rejected {
-		lines = append(lines, fmt.Sprintf("⛔ %s: %s", r.Label, r.Message()))
-	}
-	return lines
-}
-
 // maxDurationInputs is Discord's cap of inputs per modal.
 const maxDurationInputs = 5
 
@@ -206,9 +184,9 @@ func previewView(token string, cl config.Cluster, sections []section) view {
 		if len(sections) > 1 {
 			lines = append(lines, "**"+s.namespace+"**")
 		}
-		lines = append(lines, planLines(s.changes)...)
-		lines = append(lines, scheduleLines(s.starts)...)
-		lines = append(lines, rejectionLines(s.rejected)...)
+		lines = append(lines, markup.PlanLines(s.changes)...)
+		lines = append(lines, markup.ScheduleLines(s.starts)...)
+		lines = append(lines, frontend.RejectionLines(s.rejected)...)
 		starts += len(s.starts)
 	}
 	if starts > maxDurationInputs {
@@ -227,61 +205,6 @@ func previewView(token string, cl config.Cluster, sections []section) view {
 
 // stopTime renders t in each viewer's local time zone.
 func stopTime(t time.Time) string { return fmt.Sprintf("<t:%d:f>", t.Unix()) }
-
-// scheduleLines groups the starts by run duration; nothing is shown when no start has an auto-stop.
-func scheduleLines(starts []frontend.Schedule) []string {
-	var scheduled bool
-	for _, s := range starts {
-		scheduled = scheduled || s.Duration > 0
-	}
-	if !scheduled {
-		return nil
-	}
-	var lines []string
-	done := map[time.Duration]bool{}
-	for _, s := range starts {
-		if s.Err != nil {
-			lines = append(lines, fmt.Sprintf("⛔ %s: %v", s.Name, s.Err))
-			continue
-		}
-		if done[s.Duration] {
-			continue
-		}
-		done[s.Duration] = true
-		var names []string
-		for _, o := range starts {
-			if o.Err == nil && o.Duration == s.Duration {
-				names = append(names, o.Name)
-			}
-		}
-		if s.Duration == 0 {
-			lines = append(lines, fmt.Sprintf("⏰ %s: no auto-stop", strings.Join(names, ", ")))
-		} else {
-			lines = append(lines, fmt.Sprintf("⏰ %s: auto-stop in %s (%s)", strings.Join(names, ", "), runlimit.FormatHours(s.Duration), stopTime(s.StopAt)))
-		}
-	}
-	return lines
-}
-
-// appliedStopLines groups the started workloads by their stop time.
-func appliedStopLines(applied []frontend.Applied) []string {
-	var lines []string
-	done := map[int64]bool{}
-	for _, a := range applied {
-		if !a.Found || a.StopAt.IsZero() || done[a.StopAt.Unix()] {
-			continue
-		}
-		done[a.StopAt.Unix()] = true
-		var names []string
-		for _, o := range applied {
-			if o.Found && o.StopAt.Unix() == a.StopAt.Unix() {
-				names = append(names, o.Name)
-			}
-		}
-		lines = append(lines, fmt.Sprintf("⏰ %s: auto-stop at %s", strings.Join(names, ", "), stopTime(a.StopAt)))
-	}
-	return lines
-}
 
 // durationModal asks for the run duration in hours of each of the first starts. drafts hold the
 // raw inputs of a rejected submission and win over the current value.
@@ -375,8 +298,8 @@ func progressText(userID string, cl config.Cluster, results []applied, snap roll
 				lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
 			}
 		}
-		lines = append(lines, appliedStopLines(r.res.Applied)...)
-		lines = append(lines, rejectionLines(r.res.Rejected)...)
+		lines = append(lines, markup.AppliedStopLines(r.res.Applied)...)
+		lines = append(lines, frontend.RejectionLines(r.res.Rejected)...)
 	}
 	head := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)", userID, strings.ToUpper(cl.Env), cl.Name, strings.Join(names, ", "))
 	return fitLines(head, lines, contentMaxLen)

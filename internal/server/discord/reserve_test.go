@@ -143,8 +143,8 @@ func TestParseAt(t *testing.T) {
 func TestShortDuration(t *testing.T) {
 	t.Parallel()
 	for d, want := range map[time.Duration]string{5 * time.Minute: "5m", time.Hour: "1h", 90 * time.Minute: "1h30m", 30 * time.Second: "30s"} {
-		if got := shortDuration(d); got != want {
-			t.Errorf("shortDuration(%s) = %q, want %q", d, got, want)
+		if got := frontend.ShortDuration(d); got != want {
+			t.Errorf("frontend.ShortDuration(%s) = %q, want %q", d, got, want)
 		}
 	}
 }

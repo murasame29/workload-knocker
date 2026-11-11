@@ -193,9 +193,9 @@ func multiPreviewLines(plans []nsPlan) []string {
 		if shown > 1 {
 			lines = append(lines, "*"+p.plan.Namespace+"*")
 		}
-		lines = append(lines, planLines(p.plan)...)
-		lines = append(lines, scheduleLines(p.starts)...)
-		lines = append(lines, rejectionLines(p.plan.Rejected)...)
+		lines = append(lines, markup.PlanLines(p.plan.Changes)...)
+		lines = append(lines, markup.ScheduleLines(p.starts)...)
+		lines = append(lines, frontend.RejectionLines(p.plan.Rejected)...)
 	}
 	return lines
 }

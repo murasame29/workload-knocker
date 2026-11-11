@@ -3,7 +3,6 @@ package slackbot
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/reservation"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
@@ -202,38 +202,12 @@ func (b *Bot) createReservations(sub authz.Subject, cl config.Cluster, order []s
 		r, err := b.reservations.Create(ctx, reservation.CreateRequest{Env: cl.Env, Namespace: ns, Workloads: names, At: in.at, Duration: in.hours, Subject: sub, Source: audit.SourceSlack})
 		cancel()
 		if err != nil {
-			lines = append(lines, fmt.Sprintf("⛔ %s: %s", escapeMrkdwn(ns), reservationMessage(err)))
+			lines = append(lines, fmt.Sprintf("⛔ %s: %s", escapeMrkdwn(ns), escapeMrkdwn(frontend.ReservationError(err))))
 			continue
 		}
-		line := fmt.Sprintf("📅 %s / %s: ready by %s (starts %s earlier)", escapeMrkdwn(r.Namespace), escapeMrkdwn(strings.Join(r.Workloads, ", ")),
-			slackTime(r.At), shortDuration(b.reservations.Warmup(cl.Env, r.Namespace, r.Workloads)))
-		if r.Duration > 0 {
-			line += ", auto-stop " + runlimit.FormatHours(r.Duration) + " later"
-		}
-		lines = append(lines, line)
+		lines = append(lines, markup.ReservedLine(r, b.reservations.Warmup(cl.Env, r.Namespace, r.Workloads)))
 	}
 	return lines
-}
-
-// reservationMessage is the chat text of a reservation error; internal errors stay generic.
-func reservationMessage(err error) string {
-	if errors.Is(err, reservation.ErrInvalid) || errors.Is(err, reservation.ErrForbidden) || errors.Is(err, reservation.ErrNotFound) {
-		return escapeMrkdwn(err.Error())
-	}
-	slog.Error("reservation request failed", slog.String("error.message", err.Error()))
-	return "internal error, please try again"
-}
-
-// shortDuration renders d like "5m" or "1h30m".
-func shortDuration(d time.Duration) string {
-	s := d.String()
-	if strings.HasSuffix(s, "m0s") {
-		s = s[:len(s)-2]
-	}
-	if strings.HasSuffix(s, "h0m") {
-		s = s[:len(s)-2]
-	}
-	return s
 }
 
 // reservationRef is the value of a reservation Cancel button.
@@ -261,7 +235,7 @@ func reservationBlocks(env string, list []reservation.Reservation, free int) []s
 	lines := make([]string, 0, len(list))
 	var buttons []slack.BlockElement
 	for _, r := range list {
-		lines = append(lines, fmt.Sprintf("📅 %s / %s · ready by %s · by %s", escapeMrkdwn(r.Namespace), escapeMrkdwn(strings.Join(r.Workloads, ", ")), slackTime(r.At), r.Creator.Mention()))
+		lines = append(lines, markup.PendingLine(r))
 		value, _ := json.Marshal(reservationRef{Env: env, ID: r.ID})
 		label := truncateText("Cancel: "+r.Namespace+" "+r.At.UTC().Format("01-02 15:04")+" UTC", slackButtonTextMaxLen)
 		buttons = append(buttons, slack.NewButtonBlockElement(actionReservationStop, string(value), slack.NewTextBlockObject("plain_text", label, false, false)).WithStyle(slack.StyleDanger))
@@ -292,9 +266,9 @@ func (b *Bot) handleReservationCancel(callback slack.InteractionCallback, value 
 	ctx, cancel := context.WithTimeout(context.Background(), reservationCallTimeout)
 	r, err := b.reservations.Cancel(ctx, ref.Env, ref.ID, sub, audit.SourceSlack)
 	cancel()
-	note := fmt.Sprintf("🗑 Cancelled the reservation of %s / %s", escapeMrkdwn(r.Namespace), escapeMrkdwn(strings.Join(r.Workloads, ", ")))
+	note := markup.CancelledLine(r)
 	if err != nil {
-		note = "⛔ " + reservationMessage(err)
+		note = "⛔ " + escapeMrkdwn(frontend.ReservationError(err))
 	}
 	text, blocks := statusMessage(cl, b.svc.Status(sub, cl.Env), b.visibleReservations(sub, cl.Env), []string{note})
 	b.replaceOriginal(callback, text, blocks)

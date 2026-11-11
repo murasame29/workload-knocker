@@ -3,7 +3,6 @@ package discordbot
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -190,10 +189,10 @@ func (b *Bot) handleScheduleModal(m rawSubmit) {
 			r, err := b.reservations.Create(ctx, reservation.CreateRequest{Env: cl.Env, Namespace: p.namespace, Workloads: names, At: at, Duration: hours, Subject: sub, Source: audit.SourceDiscord})
 			cancel()
 			if err != nil {
-				lines = append(lines, fmt.Sprintf("⛔ %s: %s", p.namespace, reservationMessage(err)))
+				lines = append(lines, fmt.Sprintf("⛔ %s: %s", p.namespace, frontend.ReservationError(err)))
 				continue
 			}
-			lines = append(lines, reservedLine(r, b.reservations.Warmup(cl.Env, r.Namespace, r.Workloads)))
+			lines = append(lines, markup.ReservedLine(r, b.reservations.Warmup(cl.Env, r.Namespace, r.Workloads)))
 		}
 		if len(lines) == 0 {
 			return reply("ℹ No workloads were selected.")
@@ -213,35 +212,6 @@ func checkedNames(p *nsPart, values []string) []string {
 		names = append(names, p.entries[ei].Names()...)
 	}
 	return names
-}
-
-func reservedLine(r reservation.Reservation, warmup time.Duration) string {
-	line := fmt.Sprintf("📅 %s / %s: ready by %s (starts %s earlier)", r.Namespace, strings.Join(r.Workloads, ", "), stopTime(r.At), shortDuration(warmup))
-	if r.Duration > 0 {
-		line += fmt.Sprintf(", auto-stop %s later", runlimit.FormatHours(r.Duration))
-	}
-	return line
-}
-
-// shortDuration renders d like "5m" or "1h30m" (time.Duration without zero units).
-func shortDuration(d time.Duration) string {
-	s := d.String()
-	if strings.HasSuffix(s, "m0s") {
-		s = s[:len(s)-2]
-	}
-	if strings.HasSuffix(s, "h0m") {
-		s = s[:len(s)-2]
-	}
-	return s
-}
-
-// reservationMessage is the chat text of a reservation error; internal errors stay generic.
-func reservationMessage(err error) string {
-	if errors.Is(err, reservation.ErrInvalid) || errors.Is(err, reservation.ErrForbidden) || errors.Is(err, reservation.ErrNotFound) {
-		return err.Error()
-	}
-	slog.Error("reservation request failed", slog.String("error.message", err.Error()))
-	return "internal error, please try again"
 }
 
 // reservationRef is the payload of a reservation Cancel button.
@@ -265,7 +235,7 @@ func (b *Bot) reservationLines(sub authz.Subject, env string, free int) ([]strin
 	lines := []string{"**Reservations**"}
 	var buttons []discordgo.MessageComponent
 	for _, r := range list {
-		lines = append(lines, fmt.Sprintf("📅 %s / %s · ready by %s · by %s", r.Namespace, strings.Join(r.Workloads, ", "), stopTime(r.At), r.Creator.Mention()))
+		lines = append(lines, markup.PendingLine(r))
 		if len(buttons) >= free {
 			continue
 		}
@@ -302,9 +272,9 @@ func (b *Bot) handleReservationCancel(i *discordgo.Interaction, id customID) {
 	ctx, cancel := context.WithTimeout(context.Background(), reservationCallTimeout)
 	r, err := b.reservations.Cancel(ctx, ref.Env, ref.ID, sub, audit.SourceDiscord)
 	cancel()
-	note := fmt.Sprintf("🗑 Cancelled the reservation of %s / %s", r.Namespace, strings.Join(r.Workloads, ", "))
+	note := markup.CancelledLine(r)
 	if err != nil {
-		note = "⛔ " + reservationMessage(err)
+		note = "⛔ " + frontend.ReservationError(err)
 	}
 	b.edit(i, b.statusView(cl, sub, b.svc.Status(sub, cl.Env), []string{note}))
 }

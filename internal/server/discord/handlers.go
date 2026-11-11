@@ -354,7 +354,7 @@ func (b *Bot) previewPlan(token string, sub authz.Subject, f *flow, cl config.Cl
 	var lines []string
 	for _, p := range f.parts {
 		names = append(names, p.namespace)
-		lines = append(lines, rejectionLines(p.rejected)...)
+		lines = append(lines, frontend.RejectionLines(p.rejected)...)
 	}
 	return text(fitLines(fmt.Sprintf("ℹ %s — no changes", namespaceHead(cl, names)), lines, contentMaxLen))
 }

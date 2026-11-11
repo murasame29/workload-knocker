@@ -134,7 +134,7 @@ func workloadStatus(head string, st frontend.Status, notes []string) (string, []
 	for _, ns := range st.Namespaces {
 		lines = append(lines, "*"+escapeMrkdwn(ns.Name)+"*")
 		for _, se := range ns.Entries {
-			lines = append(lines, statusLine(se))
+			lines = append(lines, markup.StatusLine(se))
 		}
 	}
 	blocks := mrkdwnSections(head, lines)
@@ -157,24 +157,6 @@ func workloadStatus(head string, st frontend.Status, notes []string) (string, []
 			fmt.Sprintf("ℹ️ Slack limits a message to %d blocks; %d entries have no buttons. Use the start/stop form for those.", slackMessageMaxBlocks, skipped), false, false), nil, nil))
 	}
 	return head, blocks
-}
-
-// statusLine renders one entry: its state label, then who started it, when, and its stop time.
-func statusLine(se frontend.StatusEntry) string {
-	line := escapeMrkdwn(se.Entry.Label())
-	if !se.Entry.AnyRunning() {
-		return line
-	}
-	if se.StartedBy != "" {
-		line += " · by " + escapeMrkdwn(se.StartedBy)
-	}
-	if !se.StartedAt.IsZero() {
-		line += " · started " + slackTime(se.StartedAt)
-	}
-	if se.StopAt.IsZero() {
-		return line + " · no auto-stop"
-	}
-	return line + " · stops " + slackTime(se.StopAt)
 }
 
 // entryButtons returns the action row of an entry, or nil when the user may do neither action.
