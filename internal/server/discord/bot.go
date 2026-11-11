@@ -18,7 +18,6 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/model"
 )
 
 const (
@@ -119,7 +118,7 @@ type Bot struct {
 
 // New creates a Bot. cfg.DiscordGuildID empty registers commands globally.
 // registry is read on every request so hot reload applies; az is the live authorization policy.
-func New(cfg *config.Env, store model.WorkloadStore, registry registry, az *authz.Holder, m metrics.MetricsManager, opts ...frontend.Option) (*Bot, error) {
+func New(cfg *config.Env, store frontend.Store, registry registry, az *authz.Holder, m metrics.MetricsManager, opts ...frontend.Option) (*Bot, error) {
 	if cfg.DiscordBotToken == "" {
 		return nil, errors.New("discordbot.New: DISCORD_BOT_TOKEN is required")
 	}

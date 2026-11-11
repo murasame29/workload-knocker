@@ -100,9 +100,13 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		func(ws model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, d runlimit.Defaults, n *notify.Service, rt *rollout.Tracker) *api.StartHandler {
 			return api.NewStartHandler(ws, m, az, d, api.WithNotifier(n), api.WithTracker(rt))
 		},
-		api.NewExtendHandler,
+		func(ws model.WorkloadStore, az authz.Authorizer, d runlimit.Defaults) *api.ExtendHandler {
+			return api.NewExtendHandler(ws, az, d)
+		},
 		// GET /api/v1/workloads
-		api.NewWorkloadsHandler,
+		func(ws model.WorkloadStore, az authz.Authorizer) *api.WorkloadsHandler {
+			return api.NewWorkloadsHandler(ws, az)
+		},
 
 		// One-off reservations: executed by the background loop, created from chat and the API
 		newReservations,

@@ -7,7 +7,6 @@ import (
 	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/model"
 	"github.com/murasame29/workload-knocker/internal/notify"
 	"github.com/murasame29/workload-knocker/internal/rollout"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
@@ -41,7 +40,7 @@ const apiActor = "api"
 
 // newService builds the shared operation logic used by the API handlers; m may be nil (no
 // operation metrics, as for extend).
-func newService(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, defs runlimit.Defaults, rec audit.Recorder, now func() time.Time, s settings) *frontend.Service {
+func newService(store frontend.Store, m metrics.MetricsManager, az authz.Authorizer, defs runlimit.Defaults, rec audit.Recorder, now func() time.Time, s settings) *frontend.Service {
 	if m == nil {
 		m = metrics.New()
 	}

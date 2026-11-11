@@ -16,12 +16,12 @@ import (
 // WorkloadsHandler handles GET /api/v1/workloads: the workloads the api subject may start or stop,
 // read from the in-memory store (no cluster call).
 type WorkloadsHandler struct {
-	store model.WorkloadStore
+	store model.WorkloadReader
 	authz authz.Authorizer
 }
 
 // NewWorkloadsHandler constructs a WorkloadsHandler.
-func NewWorkloadsHandler(store model.WorkloadStore, az authz.Authorizer) *WorkloadsHandler {
+func NewWorkloadsHandler(store model.WorkloadReader, az authz.Authorizer) *WorkloadsHandler {
 	return &WorkloadsHandler{store: store, authz: az}
 }
 

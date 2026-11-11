@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,15 +20,21 @@ import (
 // StopAllHandler handles /api/v1/stop-all.
 // It fans out StopAll to every registered cluster and returns a per-cluster breakdown.
 type StopAllHandler struct {
-	store   model.WorkloadStore
+	store   stopAllStore
 	metrics metrics.MetricsManager
 	authz   authz.Authorizer
 	audit   audit.Recorder
 	opts    settings
 }
 
+// stopAllStore is the part of the workload store stop-all needs.
+type stopAllStore interface {
+	model.WorkloadReader
+	StopAll(ctx context.Context, allow model.StopFilter) model.StopAllResult
+}
+
 // New constructs a StopAllHandler; az decides which workloads the api subject may stop.
-func New(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, opts ...Option) *StopAllHandler {
+func New(store stopAllStore, m metrics.MetricsManager, az authz.Authorizer, opts ...Option) *StopAllHandler {
 	return &StopAllHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog(), opts: newSettings(opts)}
 }
 

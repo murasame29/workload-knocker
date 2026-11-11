@@ -155,7 +155,7 @@ type ApplyResult struct {
 
 // Service is the frontend-independent workload operation logic.
 type Service struct {
-	store            model.WorkloadStore
+	store            Store
 	metrics          metrics.MetricsManager
 	reconcileTimeout time.Duration
 	authz            authz.Authorizer
@@ -199,8 +199,15 @@ func WithExtender(e notify.Extender) Option { return func(s *Service) { s.extend
 // WithClusters sets the registry the default Extender resolves clusters from; without it the button answers "not available".
 func WithClusters(c config.Resolver) Option { return func(s *Service) { s.clusters = c } }
 
+// Store is the part of the workload store the service needs.
+type Store interface {
+	model.WorkloadReader
+	model.WorkloadOperator
+	Reconcile(ctx context.Context, env string) error
+}
+
 // NewService builds a Service. reconcileTimeout bounds each on-demand Reconcile.
-func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
+func NewService(store Store, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
 	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout, audit: audit.NewSlog(), now: time.Now, notifier: notify.Nop{}}
 	for _, o := range opts {
 		o(s)

@@ -412,13 +412,11 @@ func (s *ClusterStore) handleLocked(it actuator.Workload, initial map[string]int
 // warmup parses the warmup annotation of it; an invalid value is ignored with a debug log
 // (logged on every reconcile, so not a warning).
 func (s *ClusterStore) warmup(it actuator.Workload) time.Duration {
-	v, ok := it.Annotations[model.AnnotationWarmup]
+	d, ok := model.ParseWarmup(it.Annotations)
 	if !ok {
-		return 0
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 || d > model.MaxWarmup {
-		slog.Debug("invalid warmup annotation ignored", slog.String("cluster.env", s.cluster.Env), slog.String("namespace", it.Namespace), slog.String("workload", it.Name), slog.String("value", v))
+		if v, present := it.Annotations[model.AnnotationWarmup]; present {
+			slog.Debug("invalid warmup annotation ignored", slog.String("cluster.env", s.cluster.Env), slog.String("namespace", it.Namespace), slog.String("workload", it.Name), slog.String("value", v))
+		}
 		return 0
 	}
 	return d

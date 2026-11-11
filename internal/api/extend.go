@@ -19,7 +19,7 @@ import (
 // ExtendHandler handles /api/v1/extend: it moves the auto-stop of running workloads later.
 // Extending is authorized like a start and is allowed in every operation mode.
 type ExtendHandler struct {
-	store model.WorkloadStore
+	store frontend.Store
 	authz authz.Authorizer
 	audit audit.Recorder
 	defs  runlimit.Defaults
@@ -27,7 +27,7 @@ type ExtendHandler struct {
 }
 
 // NewExtendHandler constructs an ExtendHandler; az is checked per workload for the api subject.
-func NewExtendHandler(store model.WorkloadStore, az authz.Authorizer, defs runlimit.Defaults) *ExtendHandler {
+func NewExtendHandler(store frontend.Store, az authz.Authorizer, defs runlimit.Defaults) *ExtendHandler {
 	return &ExtendHandler{store: store, authz: az, audit: audit.NewSlog(), defs: defs, now: time.Now}
 }
 

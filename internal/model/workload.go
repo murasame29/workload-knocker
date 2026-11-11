@@ -71,15 +71,18 @@ type ClusterStopResult struct {
 // StopFilter reports whether a workload may be stopped by StopAll; nil allows every workload.
 type StopFilter func(env, namespace, workload string) bool
 
-// WorkloadStore is the interface for workload state operations across clusters.
-// Implemented by MultiStore in production and by an in-memory store in mocks.
-type WorkloadStore interface {
+// WorkloadReader lists clusters, namespaces and workloads from the in-memory state.
+type WorkloadReader interface {
 	// Clusters returns references to all registered clusters.
 	Clusters() []ClusterRef
 	// Namespaces returns the managed namespaces of the given env.
 	Namespaces(env string) []string
 	// WorkloadsByNamespace returns the workloads of the given env / namespace.
 	WorkloadsByNamespace(env, ns string) []*Workload
+}
+
+// WorkloadOperator changes the running state of single workloads.
+type WorkloadOperator interface {
 	// Start sets the workload to running (replicas=1, startedBy=user) and schedules its
 	// auto-stop at stopAt (zero = none). It returns ErrWorkloadNotFound or a *RefusedError.
 	Start(env, ns, name, user string, stopAt time.Time) error
@@ -88,11 +91,37 @@ type WorkloadStore interface {
 	// Stop sets the workload to stopped (replicas=0) and clears its auto-stop.
 	// It returns ErrWorkloadNotFound or a *RefusedError.
 	Stop(env, ns, name string) error
-	// StopAll stops the workloads allowed by the filter in all clusters in parallel.
-	// A failure in one cluster does not stop the others; it is recorded in the result.
-	StopAll(ctx context.Context, allow StopFilter) StopAllResult
-	// Reconcile refreshes the state of the given env (called on Slack commands).
+}
+
+// Reconciler refreshes the in-memory state from the clusters.
+type Reconciler interface {
+	// Reconcile refreshes the state of the given env (called on chat commands).
 	Reconcile(ctx context.Context, env string) error
 	// ReconcileAll reconciles all clusters in parallel (called at startup Bootstrap).
 	ReconcileAll(ctx context.Context) error
+}
+
+// WorkloadStore is every workload state operation across clusters, implemented by MultiStore.
+// Consumers depend on the smallest role they need (WorkloadReader, WorkloadOperator, ...).
+type WorkloadStore interface {
+	WorkloadReader
+	WorkloadOperator
+	Reconciler
+	// StopAll stops the workloads allowed by the filter in all clusters in parallel.
+	// A failure in one cluster does not stop the others; it is recorded in the result.
+	StopAll(ctx context.Context, allow StopFilter) StopAllResult
+}
+
+// ParseWarmup reads the AnnotationWarmup value; ok is false when it is absent or invalid
+// (not a positive Go duration up to MaxWarmup).
+func ParseWarmup(annotations map[string]string) (d time.Duration, ok bool) {
+	v, present := annotations[AnnotationWarmup]
+	if !present {
+		return 0, false
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 || d > MaxWarmup {
+		return 0, false
+	}
+	return d, true
 }

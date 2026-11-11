@@ -26,7 +26,7 @@ const defaultStartUser = "rest-api"
 // It sets workloads of the given env / namespace to running (replicas=1),
 // calling the same store.Start as the chat start flows.
 type StartHandler struct {
-	store   model.WorkloadStore
+	store   frontend.Store
 	metrics metrics.MetricsManager
 	authz   authz.Authorizer
 	audit   audit.Recorder
@@ -37,7 +37,7 @@ type StartHandler struct {
 
 // NewStartHandler constructs a StartHandler; az is checked per workload for the api subject.
 // defs are the controller-wide run duration settings.
-func NewStartHandler(store model.WorkloadStore, m metrics.MetricsManager, az authz.Authorizer, defs runlimit.Defaults, opts ...Option) *StartHandler {
+func NewStartHandler(store frontend.Store, m metrics.MetricsManager, az authz.Authorizer, defs runlimit.Defaults, opts ...Option) *StartHandler {
 	return &StartHandler{store: store, metrics: m, authz: az, audit: audit.NewSlog(), defs: defs, now: time.Now, opts: newSettings(opts)}
 }
 

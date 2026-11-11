@@ -16,7 +16,6 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/model"
 )
 
 const (
@@ -55,7 +54,7 @@ type Bot struct {
 // New creates a Bot.
 // registry resolves clusters from Slack slash commands on every request, so hot reload applies.
 // az is the live authorization policy.
-func New(cfg *config.Env, store model.WorkloadStore, registry config.Resolver, az *authz.Holder, m metrics.MetricsManager, opts ...frontend.Option) (*Bot, error) {
+func New(cfg *config.Env, store frontend.Store, registry config.Resolver, az *authz.Holder, m metrics.MetricsManager, opts ...frontend.Option) (*Bot, error) {
 	if cfg.SlackAppToken == "" || cfg.SlackBotToken == "" {
 		return nil, fmt.Errorf("slackbot.New: SLACK_APP_TOKEN and SLACK_BOT_TOKEN are required")
 	}
