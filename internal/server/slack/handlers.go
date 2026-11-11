@@ -75,6 +75,9 @@ func modalTitle(cl config.Cluster) string {
 // listLimits are the Slack Modal limits handed to the frontend service.
 var listLimits = frontend.Limits{PageSize: checkboxMaxOptions, MaxEntries: maxWorkloadOptions}
 
+// listLimitsAll lists every entry (resolving submitted values back to workloads).
+var listLimitsAll = frontend.Limits{}
+
 // truncateOptionText fits Slack option text within the character limit.
 func truncateOptionText(s string) string {
 	runes := []rune(s)
@@ -431,6 +434,9 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 	case argStatus:
 		b.handleStatus(cmd, cl)
 		return
+	case argSchedule:
+		b.handleSchedule(cmd, cl)
+		return
 	case argUnknown:
 		b.postUsage(cmd)
 		return
@@ -507,6 +513,8 @@ func (b *Bot) handleInteraction(callback slack.InteractionCallback) {
 				b.handleExtend(callback, action.Value)
 			case actionStatusExtend, actionStatusStop:
 				b.handleStatusAction(callback, action.ActionID, action.Value)
+			case actionReservationStop:
+				b.handleReservationCancel(callback, action.Value)
 			}
 		}
 	default:
@@ -525,6 +533,8 @@ func (b *Bot) handleViewSubmission(callback slack.InteractionCallback, req *sock
 		// Apply: close the modal with an empty Ack, then post the result to the channel
 		b.ack(*req)
 		b.handlePreviewConfirm(callback)
+	case callbackScheduleModal:
+		b.handleScheduleSubmit(callback, req)
 	default:
 		slog.Warn("unknown view submission callback id", slog.String("view.callback_id", callback.View.CallbackID))
 		b.ack(*req)

@@ -391,7 +391,7 @@ Notes:
 
 ## Slack workload modal
 
-`/<command>` without an argument opens this modal. `/<command> status` lists the workloads instead (see [Status](#status)); any other argument gets a short usage message.
+`/<command>` without an argument opens this modal. `/<command> status` lists the workloads instead (see [Status](#status)), `/<command> schedule` opens the [reservation](#reservations) form; any other argument gets a short usage message.
 
 - When every namespace the user may operate fits one modal (one checkbox block per 10 entries of
   each namespace, at most 97 blocks), the modal lists all namespaces at once, labelled by namespace,
@@ -464,7 +464,11 @@ is `workload.extend`; an expiry is `workload.auto_stop` with source `scheduler`.
 ## Reservations
 
 A one-off reservation makes workloads **Ready at a requested time**. Create one with `/<command> schedule` in
-Discord or [`POST /api/v1/reservations`](#apiv1reservations).
+Discord or Slack, or [`POST /api/v1/reservations`](#apiv1reservations).
+
+- **Slack form**: `/<slashCommand> schedule` opens a modal with one checkbox group per namespace (unchecked), a
+  date and time picker shown in the user's own Slack time zone (no setting needed), and the run duration in hours.
+  The modal holds every namespace when they fit Slack's block limit; otherwise use the API.
 
 - **Discord form**: one checkbox group per namespace (at most 3 namespaces of 10 entries; use the API beyond),
   **Ready at** (`21:00` means today, or tomorrow once passed; `2026-11-14 21:00` for another day) in
@@ -482,14 +486,13 @@ Discord or [`POST /api/v1/reservations`](#apiv1reservations).
   within `RESERVATION_GRACE` (default `15m`); later it is marked missed and the notify channel is told. The result is
   saved after the workloads start, so a controller that dies in between runs the reservation again on restart
   (starting a running workload changes nothing; the start message may be posted twice).
-- **List and cancel**: `/<command> status` lists the pending reservations with a **Cancel** button for the creator and
+- **List and cancel**: `/<command> status` (Discord and Slack) lists the pending reservations with a **Cancel** button for the creator and
   for anyone allowed to stop all of their workloads. Finished reservations stay in `GET /api/v1/reservations` for a day.
 - Audit events: `reservation.create`, `reservation.cancel` and one `reservation.execute` per workload, all with the
   reservation ID as `workload_knocker.request_id`.
 
-Recurring schedules, learned warmup and Slack reservations are tracked in
-[#75](https://github.com/murasame29/workload-knocker/issues/75), [#76](https://github.com/murasame29/workload-knocker/issues/76)
-and [#77](https://github.com/murasame29/workload-knocker/issues/77).
+Recurring schedules and learned warmup are tracked in
+[#75](https://github.com/murasame29/workload-knocker/issues/75) and [#76](https://github.com/murasame29/workload-knocker/issues/76).
 
 ## Operation modes and nightly stop
 

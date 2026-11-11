@@ -37,6 +37,8 @@ type Bot struct {
 	groups   *groupCache
 	// webhook posts to a response_url; replaced in tests.
 	webhook func(ctx context.Context, url string, msg *slack.WebhookMessage) error
+	// reservations backs the schedule argument and the reservation list in status; nil disables them.
+	reservations reservations
 
 	// sem is a semaphore limiting concurrent goroutines.
 	sem chan struct{}

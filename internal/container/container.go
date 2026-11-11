@@ -190,6 +190,7 @@ func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *
 		if err != nil {
 			return nil, err
 		}
+		b.SetReservations(rs)
 		n.AddPoster(b.Poster())
 		fs = append(fs, b)
 	}
