@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -309,5 +310,55 @@ func TestCluster_SameBackend(t *testing.T) {
 	}
 	if base.SameBackend(other) {
 		t.Error("a different actuator must be a different backend")
+	}
+	list := base
+	list.Actuators = []string{ActuatorKEDAExternal, ActuatorDirect}
+	reordered := base
+	reordered.Actuators = []string{ActuatorDirect, ActuatorKEDAExternal}
+	if list.SameBackend(reordered) {
+		t.Error("the actuator order is the priority, so a different order is a different backend")
+	}
+}
+
+func TestValidate_Actuators(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		actuator  string
+		actuators []string
+		wantErr   string
+	}{
+		{name: "list", actuators: []string{ActuatorKEDAExternal, ActuatorDirect}},
+		{name: "single in list", actuators: []string{ActuatorDirect}},
+		{name: "both fields", actuator: ActuatorDirect, actuators: []string{ActuatorKEDAExternal}, wantErr: "not both"},
+		{name: "unknown in list", actuators: []string{ActuatorDirect, "nope"}, wantErr: `unsupported actuator "nope"`},
+		{name: "duplicate", actuators: []string{ActuatorDirect, ActuatorDirect}, wantErr: "listed twice"},
+	} {
+		cfg := validConfig()
+		cfg.Clusters[0].Actuator = tc.actuator
+		cfg.Clusters[0].Actuators = tc.actuators
+		err := cfg.Validate()
+		switch {
+		case tc.wantErr == "" && err != nil:
+			t.Errorf("%s: %v", tc.name, err)
+		case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+			t.Errorf("%s: error = %v, want %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func TestCluster_ActuatorTypes(t *testing.T) {
+	t.Parallel()
+
+	if got := (Cluster{}).ActuatorTypes(); !slices.Equal(got, []string{ActuatorKEDAPrometheus}) {
+		t.Errorf("default = %v", got)
+	}
+	if got := (Cluster{Actuator: ActuatorDirect}).ActuatorTypes(); !slices.Equal(got, []string{ActuatorDirect}) {
+		t.Errorf("single = %v", got)
+	}
+	c := Cluster{Actuators: []string{ActuatorKEDAExternal, ActuatorDirect}}
+	if !c.UsesActuator(ActuatorDirect) || c.UsesActuator(ActuatorKEDAPrometheus) {
+		t.Errorf("UsesActuator wrong for %v", c.Actuators)
 	}
 }

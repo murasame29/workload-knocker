@@ -55,6 +55,9 @@ type Cluster struct {
 
 	// Actuator selects how workloads are discovered and started or stopped; empty means keda-prometheus.
 	Actuator string `yaml:"actuator,omitempty"`
+	// Actuators lists several actuators; each workload is driven by the one that discovered it.
+	// Mutually exclusive with Actuator.
+	Actuators []string `yaml:"actuators,omitempty"`
 
 	Provider  ClusterProvider  `yaml:"provider"`
 	Frontends ClusterFrontends `yaml:"frontends"`
@@ -151,17 +154,23 @@ func (c Cluster) NotifyChannel(frontend string) string {
 	return ""
 }
 
-// ActuatorType returns the configured actuator, or the default when unset.
-func (c Cluster) ActuatorType() string {
-	if c.Actuator == "" {
-		return ActuatorKEDAPrometheus
+// ActuatorTypes returns the configured actuators in priority order, or the default when unset.
+func (c Cluster) ActuatorTypes() []string {
+	switch {
+	case len(c.Actuators) > 0:
+		return slices.Clone(c.Actuators)
+	case c.Actuator != "":
+		return []string{c.Actuator}
 	}
-	return c.Actuator
+	return []string{ActuatorKEDAPrometheus}
 }
+
+// UsesActuator reports whether name is one of the cluster's actuators.
+func (c Cluster) UsesActuator(name string) bool { return slices.Contains(c.ActuatorTypes(), name) }
 
 // SameBackend reports whether o reaches the same cluster the same way (name, provider and actuator).
 func (c Cluster) SameBackend(o Cluster) bool {
-	return c.Name == o.Name && c.ActuatorType() == o.ActuatorType() && reflect.DeepEqual(c.Provider, o.Provider)
+	return c.Name == o.Name && slices.Equal(c.ActuatorTypes(), o.ActuatorTypes()) && reflect.DeepEqual(c.Provider, o.Provider)
 }
 
 // All returns a copy of all registered clusters.
@@ -186,7 +195,7 @@ func (c *Config) BySlashCommand(cmd string) (Cluster, bool) {
 //   - Controller.Namespace, Cluster.Env / Name are non-empty
 //   - at least one frontend is configured per cluster, and its required fields are set
 //   - the removed top-level slack key is rejected with a pointer to frontends.slack
-//   - Actuator, when set, is one of ActuatorNames
+//   - Actuator or Actuators (not both) name ActuatorNames, without duplicates
 //   - Provider.Type is eks or kubeconfig with its nested setting present (other providers must be nil)
 //   - Env and each frontend's command are unique in the registry
 func (c *Config) Validate() error {
@@ -233,8 +242,8 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("cluster[%d] %q: frontends.discord.notifyChannel: %w", i, cl.Env, err)
 			}
 		}
-		if !slices.Contains(append([]string{""}, ActuatorNames...), cl.Actuator) {
-			return fmt.Errorf("cluster[%d] %q: unsupported actuator %q (supported: %s)", i, cl.Env, cl.Actuator, strings.Join(ActuatorNames, ", "))
+		if err := validateActuators(cl); err != nil {
+			return fmt.Errorf("cluster[%d] %q: %w", i, cl.Env, err)
 		}
 		if err := validateProvider(cl); err != nil {
 			return fmt.Errorf("cluster[%d] %q: %w", i, cl.Env, err)
@@ -262,6 +271,23 @@ func (c *Config) Validate() error {
 	c.byEnv = byEnv
 	c.bySlashCommand = bySC
 	c.byDiscordCmd = byDC
+	return nil
+}
+
+func validateActuators(c Cluster) error {
+	if c.Actuator != "" && len(c.Actuators) > 0 {
+		return errors.New("set either actuator or actuators, not both")
+	}
+	seen := map[string]bool{}
+	for _, name := range c.ActuatorTypes() {
+		if !slices.Contains(ActuatorNames, name) {
+			return fmt.Errorf("unsupported actuator %q (supported: %s)", name, strings.Join(ActuatorNames, ", "))
+		}
+		if seen[name] {
+			return fmt.Errorf("actuator %q is listed twice", name)
+		}
+		seen[name] = true
+	}
 	return nil
 }
 

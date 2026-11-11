@@ -5,6 +5,7 @@ import (
 
 	"k8s.io/client-go/rest"
 
+	"github.com/murasame29/workload-knocker/internal/actuator/multi"
 	"github.com/murasame29/workload-knocker/internal/config"
 )
 
@@ -44,5 +45,21 @@ func TestNew_Direct(t *testing.T) {
 	d, a, err := New(config.Cluster{Env: "stg", Name: "c", Actuator: config.ActuatorDirect}, &rest.Config{Host: "https://example.invalid"}, nil)
 	if err != nil || d == nil || a == nil {
 		t.Fatalf("New = %v, %v, %v", d, a, err)
+	}
+}
+
+func TestNew_SeveralActuatorsAreCombined(t *testing.T) {
+	t.Parallel()
+
+	c := config.Cluster{Env: "stg", Name: "c", Actuators: []string{config.ActuatorKEDAPrometheus, config.ActuatorDirect}}
+	d, a, err := New(c, &rest.Config{Host: "https://example.invalid"}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, ok := d.(*multi.Backend); !ok {
+		t.Errorf("Discoverer = %T, want *multi.Backend", d)
+	}
+	if _, ok := a.(*multi.Backend); !ok {
+		t.Errorf("Actuator = %T, want *multi.Backend", a)
 	}
 }

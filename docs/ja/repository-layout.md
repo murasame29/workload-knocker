@@ -3,7 +3,7 @@
 | パス | 内容 |
 |---|---|
 | `cmd/server/` | エントリポイント (`main.go`)。`--version` フラグを含む |
-| `internal/actuator/` | `Discoverer` / `Actuator` インターフェース、`keda-prometheus` / `keda-external` / `direct` 実装、cluster ごとの `factory`、契約テスト `actuatortest` |
+| `internal/actuator/` | `Discoverer` / `Actuator` インターフェース、`keda-prometheus` / `keda-external` / `direct` 実装、複数 actuator を束ねる `multi`、cluster ごとの `factory`、契約テスト `actuatortest` |
 | `internal/api/` | REST ハンドラ (`/api/v1/start`、`/api/v1/extend`、`/api/v1/stop-all`、`/api/v1/workloads`) と Bearer 認証ミドルウェア |
 | `internal/audit/` | 監査イベントのスキーマと recorder ([audit-log.md](audit-log.md)) |
 | `internal/autostop/` | 期限切れの workload を停止し、停止リマインドを呼ぶ reconcile フック |

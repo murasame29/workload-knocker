@@ -1,7 +1,9 @@
 # GitOps
 
 workload-knocker must never make an Argo CD or Flux application OutOfSync. Every actuator follows
-the same policy, selected per cluster with `clusters[].actuator` (see [Configuration](configuration.md#cluster-registry)).
+the same policy, selected per cluster with `clusters[].actuator` or combined with `clusters[].actuators`
+(see [Configuration](configuration.md#cluster-registry)). With several actuators each workload follows the rules
+of the actuator that discovered it.
 
 ## Policy
 

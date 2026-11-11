@@ -1,4 +1,4 @@
-// Package factory builds the actuator selected by config.Cluster.Actuator.
+// Package factory builds the actuators selected by config.Cluster.Actuator or Actuators.
 package factory
 
 import (
@@ -13,6 +13,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/actuator/direct"
 	"github.com/murasame29/workload-knocker/internal/actuator/kedaexternal"
 	"github.com/murasame29/workload-knocker/internal/actuator/kedaprometheus"
+	"github.com/murasame29/workload-knocker/internal/actuator/multi"
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/k8s"
 	"github.com/murasame29/workload-knocker/internal/metrics"
@@ -28,13 +29,27 @@ var builders = map[string]builder{
 	config.ActuatorDirect:         buildDirect,
 }
 
-// New builds the Discoverer and Actuator of cluster c from its rest.Config.
+// New builds the Discoverer and Actuator of cluster c from its rest.Config. Several actuators are
+// combined so each workload is driven by the one that discovered it.
 func New(c config.Cluster, cfg *rest.Config, m metrics.MetricsManager) (actuator.Discoverer, actuator.Actuator, error) {
-	b, ok := builders[c.ActuatorType()]
-	if !ok {
-		return nil, nil, fmt.Errorf("unsupported actuator %q (supported: %s)", c.ActuatorType(), strings.Join(config.ActuatorNames, ", "))
+	names := c.ActuatorTypes()
+	members := make([]multi.Member, 0, len(names))
+	for _, name := range names {
+		b, ok := builders[name]
+		if !ok {
+			return nil, nil, fmt.Errorf("unsupported actuator %q (supported: %s)", name, strings.Join(config.ActuatorNames, ", "))
+		}
+		d, a, err := b(c, cfg, m)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if len(names) == 1 {
+			return d, a, nil
+		}
+		members = append(members, multi.Member{Name: name, Discoverer: d, Actuator: a})
 	}
-	return b(c, cfg, m)
+	be := multi.New(c.Env, members...)
+	return be, be, nil
 }
 
 func buildKEDAPrometheus(c config.Cluster, cfg *rest.Config, m metrics.MetricsManager) (actuator.Discoverer, actuator.Actuator, error) {

@@ -189,7 +189,7 @@ func newExternalScaler(cfg *config.Env, reg *config.Config) (*kedaexternal.Serve
 	hub := kedaexternal.Shared()
 	hub.SetAddressMatch(cfg.ExternalScalerAddressMatch)
 	for _, c := range reg.All() {
-		if c.ActuatorType() == config.ActuatorKEDAExternal {
+		if c.UsesActuator(config.ActuatorKEDAExternal) {
 			return kedaexternal.NewServer(hub, cfg.ExternalScalerPort, cfg.ExternalScalerTLSCert, cfg.ExternalScalerTLSKey)
 		}
 	}
