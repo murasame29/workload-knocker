@@ -295,8 +295,8 @@ func (s *Service) Tick(ctx context.Context, now time.Time) {
 					notes = append(notes, missedText(c.Env, r, s.settings.location(c.Env)))
 					s.count(c.Env, "missed")
 				default:
+					// Stays Pending until executed; see markDone.
 					runs = append(runs, r)
-					r.State, r.DoneAt = Started, now.UTC()
 				}
 				kept = append(kept, r)
 			}
@@ -310,15 +310,34 @@ func (s *Service) Tick(ctx context.Context, now time.Time) {
 			s.announce(ctx, c.Env, text)
 		}
 		for _, r := range runs {
-			s.execute(ctx, c, r)
+			state, note := s.execute(ctx, c, r)
+			s.markDone(ctx, c.Env, r.ID, state, note, now)
 		}
 		s.publish(c.Env)
 	}
 }
 
-// execute starts the workloads of r. The state was set to Started before, so a crash in between
-// cannot start them twice; a reservation where nothing started is rewritten to Failed.
-func (s *Service) execute(ctx context.Context, c model.ClusterRef, r Reservation) {
+// markDone records the outcome of an executed reservation. It runs after the starts, so a
+// controller that dies in between leaves the reservation Pending and the next one runs it again
+// within the grace period; starting an already started workload changes nothing.
+func (s *Service) markDone(ctx context.Context, env, id string, state State, note string, now time.Time) {
+	err := s.update(ctx, env, func(list []Reservation) ([]Reservation, error) {
+		for i := range list {
+			// A cancel that raced with the execution keeps its state.
+			if list[i].ID == id && list[i].State == Pending {
+				list[i].State, list[i].DoneAt, list[i].Note = state, now.UTC(), note
+			}
+		}
+		return list, nil
+	})
+	if err != nil {
+		slog.Warn("failed to record reservation result, it is retried on the next tick", slog.String("cluster.env", env), slog.String("reservation.id", id), slog.String("error.message", err.Error()))
+	}
+}
+
+// execute starts the workloads of r and returns the resulting state and note (the workloads
+// that could not start); it does not persist anything.
+func (s *Service) execute(ctx context.Context, c model.ClusterRef, r Reservation) (State, string) {
 	sub := r.Creator.Subject()
 	known := s.workloads(c.Env, r.Namespace)
 	var started []notify.Workload
@@ -366,26 +385,12 @@ func (s *Service) execute(ctx context.Context, c model.ClusterRef, r Reservation
 		result = "partial"
 	}
 	s.count(c.Env, result)
+	note := strings.Join(problems, "; ")
 	if len(problems) > 0 {
-		note := strings.Join(problems, "; ")
-		err := s.update(ctx, c.Env, func(list []Reservation) ([]Reservation, error) {
-			for i := range list {
-				if list[i].ID == r.ID {
-					list[i].Note = note
-					if len(started) == 0 {
-						list[i].State = Failed
-					}
-				}
-			}
-			return list, nil
-		})
-		if err != nil {
-			slog.Warn("failed to record reservation result", slog.String("cluster.env", c.Env), slog.String("reservation.id", r.ID), slog.String("error.message", err.Error()))
-		}
 		s.announce(ctx, c.Env, fmt.Sprintf("⚠ Reservation %s (%s / %s) could not start %s", r.ID, strings.ToUpper(c.Env), r.Namespace, note))
 	}
 	if len(started) == 0 {
-		return
+		return Failed, note
 	}
 	if s.notifier != nil {
 		s.notifier.Started(ctx, notify.Event{Kind: notify.KindStart, Env: c.Env, ClusterName: c.Name, Namespace: r.Namespace, Actor: "📅 reservation by " + r.Creator.Mention(), StartedBy: r.Creator.User, Workloads: started})
@@ -393,6 +398,7 @@ func (s *Service) execute(ctx context.Context, c model.ClusterRef, r Reservation
 	if s.watcher != nil {
 		go s.watcher.Watch(s.watchCtx, targets, func(rollout.Snapshot) {})
 	}
+	return Started, note
 }
 
 func kindOf(w *model.Workload) string {

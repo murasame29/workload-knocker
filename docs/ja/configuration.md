@@ -457,8 +457,10 @@ start には実行時間を付けられます。コントローラは workload �
   `RESERVATION_REMINDER` 前にリマインドも投稿します。
 - **認可**: 作成時と実行時の両方で確認します。実行時は作成者のユーザーと、作成時のインタラクションに含まれていたロールで判定します。
   実行時に拒否された workload (ポリシー、GitOps の衝突、削除済み) は予約のメモに残り、1 つも起動できなければ予約は失敗になります。
-- **再起動**: 予約は `workload-state` ConfigMap の `reservations.<env>.json` に保存します (RBAC の追加は不要)。controller が止まっている間に
-  起動時刻を過ぎた予約は、`RESERVATION_GRACE` (既定 `15m`) 以内なら実行し、過ぎていれば missed として通知チャンネルに知らせます。
+- **再起動**: 予約は `workload-state` ConfigMap の `reservations.<env>.json` に保存します (RBAC の追加は不要)。Pod が再起動しても残ります。
+  controller が止まっている間に起動時刻を過ぎた予約は、`RESERVATION_GRACE` (既定 `15m`) 以内なら実行し、過ぎていれば missed として
+  通知チャンネルに知らせます。結果は workload の起動後に保存するため、その間に controller が落ちても再起動後にもう一度実行します
+  (起動中の workload を起動しても変化はなく、起動メッセージが 2 回出ることがあります)。
 - **一覧と取り消し**: `/<command> status` に待機中の予約を並べ、作成者と、予約の workload をすべて停止できるユーザーに **Cancel** ボタンを出します。
   終わった予約も `GET /api/v1/reservations` に 1 日残ります。
 - 監査イベント: `reservation.create`、`reservation.cancel`、workload ごとの `reservation.execute`。いずれも予約 ID を
