@@ -102,6 +102,8 @@ type Bot struct {
 	flows      *flowStore
 	// noModal forces the message-based flow; tests use it to exercise the fallback.
 	noModal bool
+	// reservations backs the schedule subcommand; nil disables it.
+	reservations reservations
 
 	// watchCtx ends rollout watches on shutdown; watchers lets Shutdown wait for them.
 	watchCtx    context.Context

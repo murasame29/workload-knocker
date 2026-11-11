@@ -7,6 +7,7 @@
 | `internal/api/` | REST ハンドラ (`/api/v1/start`、`/api/v1/extend`、`/api/v1/stop-all`、`/api/v1/workloads`) と Bearer 認証ミドルウェア |
 | `internal/audit/` | 監査イベントのスキーマと recorder ([audit-log.md](audit-log.md)) |
 | `internal/autostop/` | 期限切れの workload を停止し、停止リマインドを呼ぶ reconcile フック |
+| `internal/reservation/` | 単発予約の作成・一覧・取り消しと、リマインド・実行・missed 判定を行う reconcile フック |
 | `internal/authz/` | 認可ポリシーのパースと評価 |
 | `internal/config/` | 環境変数と Cluster Registry |
 | `internal/container/` | 依存の組み立て |

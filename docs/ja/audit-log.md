@@ -17,7 +17,7 @@ start / stop の操作ごとに、ワークロード 1 件につき 1 つの監�
 
 | キー | 値 / 形式 |
 |---|---|
-| `event.name` | `workload.start`、`workload.stop`、`workload.stop_all`、`workload.extend`、`workload.auto_stop`。今後の機能用に予約: `reservation.create`、`reservation.cancel`、`reservation.execute` |
+| `event.name` | `workload.start`、`workload.stop`、`workload.stop_all`、`workload.extend`、`workload.auto_stop`、[予約](configuration.md#予約)の `reservation.create`、`reservation.cancel`、`reservation.execute` (workload ごと、source は `scheduler`。`workload_knocker.request_id` は予約 ID) |
 | `event.outcome` | `success`、`failure` (WARN。ワークロードが見つからない、クラスタが失敗した等)、`denied` (認可ポリシーまたは動作モードが拒否) |
 | `workload_knocker.source` | `discord`、`slack`、`api`、`nightly-stop`、`scheduler` (自動停止) |
 | `workload_knocker.request_id` | ランダムな 128 bit の 16 進数。チャットではプラン確認で生成され、Confirm で再利用されます。API ではリクエストごとに生成されます |

@@ -21,7 +21,7 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
 
 - The controller loads a cluster registry (YAML), hot reloads it on change, and lists every
   `ScaledObject` whose Prometheus trigger queries `workload_knocker_activation`.
-- The Discord slash command (`frontends.discord.command`) has two subcommands. `/<command> start` opens
+- The Discord slash command (`frontends.discord.command`) has the subcommands `start`, `status` and `schedule`. `/<command> start` opens
   a modal with one checkbox group per namespace (select menus beyond 5 namespaces or 10 entries) and a plan
   preview with Confirm/Cancel; see [Discord](docs/en/configuration.md#discord).
   The bare `/<command>` no longer works (breaking change).
@@ -40,6 +40,8 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
   See [HTTP API](docs/en/configuration.md#http-api).
 - A start can carry a run duration: the workload is stopped automatically (also across restarts) and can be
   extended. See [Run duration](docs/en/configuration.md#run-duration).
+- `/<command> schedule` (Discord) and `POST /api/v1/reservations` reserve workloads to be Ready at a time; they
+  start a few minutes earlier and survive restarts. See [Reservations](docs/en/configuration.md#reservations).
 - Every start and stop writes a structured audit event to stdout; see [Audit log](docs/en/audit-log.md).
 
 Without Prometheus, set `actuator: keda-external` on a cluster and use KEDA's `external-push` trigger; the

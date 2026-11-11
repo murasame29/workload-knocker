@@ -112,6 +112,12 @@ settings:
   maxRunDuration: 24h
   # Reminder before the auto-stop; "0" disables it.
   stopReminder: 15m
+  # One-off reservations: start this long before the requested time (workload-knocker.io/warmup overrides).
+  reservationWarmup: 5m
+  # Still run a reservation this long after its start time (controller was down); later it is missed.
+  reservationGrace: 15m
+  # Reminder in the notify channel before a reservation starts; "0" disables it.
+  reservationReminder: 15m
   # Field managers whose ownership of spec.replicas stops the direct actuator (GITOPS_MANAGERS).
   # Empty uses argocd-controller, kustomize-controller and helm-controller.
   gitopsManagers: []

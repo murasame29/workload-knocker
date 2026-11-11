@@ -26,6 +26,8 @@ const (
 	kindStatusStop      = "ss"  // Stop button of a status entry (Token keys the button payload)
 	kindNamespaces      = "nsl" // Other namespace button: back to the namespace menu, selections kept
 	kindSelectModal     = "sm"  // workload selection modal submission (one checkbox group per namespace)
+	kindScheduleModal   = "rm"  // reservation modal submission
+	kindReservationStop = "rc"  // Cancel button of a reservation in status (Token keys the button payload)
 )
 
 // customID is the decoded component identifier: wk1:<kind>:<token>:<arg>.

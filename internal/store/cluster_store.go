@@ -37,7 +37,12 @@ type ClusterStore struct {
 	state      k8s.StateRepository
 	now        func() time.Time
 	workloads  map[string]*model.Workload // key: "namespace/name"
+	// reservations persists the one-off reservations of the env; nil when not wired (tests).
+	reservations k8s.KeyStore
 }
+
+// SetReservationStore wires the persistence of the env's reservations.
+func (s *ClusterStore) SetReservationStore(r k8s.KeyStore) { s.reservations = r }
 
 // NewClusterStore creates a ClusterStore.
 func NewClusterStore(c config.Cluster, d actuator.Discoverer, a actuator.Actuator, state k8s.StateRepository) *ClusterStore {
@@ -371,9 +376,12 @@ func (s *ClusterStore) handleLocked(it actuator.Workload, initial map[string]int
 		slog.Warn("invalid run duration annotation ignored", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns), slog.Any("annotations", problems))
 	}
 
+	warmup := s.warmup(it)
+
 	if existing, ok := s.workloads[key]; ok {
 		existing.Kind = kind
 		existing.DefaultDuration, existing.MaxDuration = def, maxDur
+		existing.Warmup = warmup
 		s.setReadyMessage(existing, it.Annotations, false)
 		return false
 	}
@@ -391,6 +399,7 @@ func (s *ClusterStore) handleLocked(it actuator.Workload, initial map[string]int
 
 		DefaultDuration: def,
 		MaxDuration:     maxDur,
+		Warmup:          warmup,
 	}
 	s.workloads[key] = w
 	s.setReadyMessage(w, it.Annotations, true)
@@ -398,6 +407,21 @@ func (s *ClusterStore) handleLocked(it actuator.Workload, initial map[string]int
 
 	slog.Debug("ScaledObject registered", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", name), slog.String("namespace", ns), slog.String("kind", kind), slog.Int("replicas", replicas))
 	return replicas > 0
+}
+
+// warmup parses the warmup annotation of it; an invalid value is ignored with a debug log
+// (logged on every reconcile, so not a warning).
+func (s *ClusterStore) warmup(it actuator.Workload) time.Duration {
+	v, ok := it.Annotations[model.AnnotationWarmup]
+	if !ok {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 || d > model.MaxWarmup {
+		slog.Debug("invalid warmup annotation ignored", slog.String("cluster.env", s.cluster.Env), slog.String("namespace", it.Namespace), slog.String("workload", it.Name), slog.String("value", v))
+		return 0
+	}
+	return d
 }
 
 // setReadyMessage copies the ready-message annotation to w and warns once per changed invalid template.

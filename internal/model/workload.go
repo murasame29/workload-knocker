@@ -23,7 +23,15 @@ type Workload struct {
 	MaxDuration     time.Duration
 	// ReadyMessage is the raw workload-knocker.io/ready-message template of the ScaledObject; "" when unset.
 	ReadyMessage string
+	// Warmup is the AnnotationWarmup override of how early a reservation starts it (0 = default).
+	Warmup time.Duration
 }
+
+// AnnotationWarmup overrides how long before a reservation's time the workload is started.
+const AnnotationWarmup = "workload-knocker.io/warmup"
+
+// MaxWarmup bounds AnnotationWarmup.
+const MaxWarmup = 6 * time.Hour
 
 // ErrWorkloadNotFound is returned by Start / Stop when the store does not know the workload.
 var ErrWorkloadNotFound = errors.New("workload not found")

@@ -15,6 +15,9 @@
 | `DEFAULT_RUN_DURATION` | `0` | Auto-stop delay of a start that gives no duration. `0` means no auto-stop (the previous behavior). Must be `0` or at least `15m`, and not above `MAX_RUN_DURATION`. Chart: `settings.defaultRunDuration` |
 | `MAX_RUN_DURATION` | `24h` | Upper bound of a run duration and of the remaining run time after an extension. At least `15m`. Chart: `settings.maxRunDuration` |
 | `STOP_REMINDER` | `15m` | How long before the auto-stop the reminder fires. `0` disables it. Delivery needs a notify channel (see [Run duration](#run-duration)). Chart: `settings.stopReminder` |
+| `RESERVATION_WARMUP` | `5m` | How long before a [reservation](#reservations)'s time its workloads start; the `workload-knocker.io/warmup` annotation overrides it. Chart: `settings.reservationWarmup` |
+| `RESERVATION_GRACE` | `15m` | How long after its start time a reservation still runs when the controller was down; later it is marked missed. Chart: `settings.reservationGrace` |
+| `RESERVATION_REMINDER` | `15m` | How long before a reservation starts the reminder is posted to the notify channel. `0` disables it. Chart: `settings.reservationReminder` |
 | `GITOPS_MANAGERS` | `argocd-controller,kustomize-controller,helm-controller` | Comma-separated field managers whose ownership of `spec.replicas` stops the `direct` actuator from scaling a workload (see [GitOps](gitops.md#direct-actuator)). Chart: `settings.gitopsManagers` |
 | `SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout per component |
 | `OPERATION_MODE` | `full` | `full`, `scheduled-stop` or `off`; any other value fails at startup (see [Operation modes](#operation-modes-and-nightly-stop)) |
@@ -89,6 +92,7 @@ clusters:
 | `clusters[].frontends.discord.command` | one frontend | Unique Discord slash command name: 1-32 characters of `a-z`, `0-9`, `-`, `_`, without a leading slash |
 | `clusters[].frontends.slack.notifyChannel` | no | Slack channel ID (for example `C0123ABCD`; a channel name is rejected) that receives public start, ready and stop messages. See [Ready message and notify channel](#ready-message-and-notify-channel) |
 | `clusters[].frontends.discord.notifyChannel` | no | Discord channel ID (17-20 digits) that receives the same messages |
+| `clusters[].frontends.discord.timeZone` | no | IANA time zone (for example `Asia/Tokyo`) in which [reservation](#reservations) times are entered and shown in notify messages. Default `UTC`; unknown names are rejected |
 
 Each cluster must configure at least one entry under `frontends`. A frontend is enabled when at least
 one cluster configures it, and only enabled frontends are started.
@@ -210,7 +214,7 @@ Setup:
 
 On startup the controller bulk-overwrites the application commands of the chosen scope (guild or global) with the configured commands. Other commands of the same application in that scope are removed, so use a dedicated application. Startup fails with a clear error when registration fails (usually a missing `applications.commands` scope).
 
-The command has two subcommands, `start` and `status` (see [Status](#status)). Discord does not allow invoking a command that has subcommands without one ([Discord docs](https://discord.com/developers/docs/interactions/application-commands#subcommands-and-subcommand-groups)), so **`/<command>` alone no longer works: use `/<command> start`**. This is a breaking change for Discord users and runs through the same registration at startup, so no manual step is needed. A client that still sends the old bare command (a cached command shape) is treated as `start`.
+The command has three subcommands, `start`, `status` (see [Status](#status)) and `schedule` (see [Reservations](#reservations)). Discord does not allow invoking a command that has subcommands without one ([Discord docs](https://discord.com/developers/docs/interactions/application-commands#subcommands-and-subcommand-groups)), so **`/<command>` alone no longer works: use `/<command> start`**. This is a breaking change for Discord users and runs through the same registration at startup, so no manual step is needed. A client that still sends the old bare command (a cached command shape) is treated as `start`.
 
 Flow of `/<command> start` (every message is ephemeral and only the invoking user can use its components):
 
@@ -453,6 +457,34 @@ A default above the maximum is lowered to the maximum.
 Audit events: a start records `workload_knocker.duration_seconds` and `workload_knocker.stop_at`; an extension
 is `workload.extend`; an expiry is `workload.auto_stop` with source `scheduler`.
 
+## Reservations
+
+A one-off reservation makes workloads **Ready at a requested time**. Create one with `/<command> schedule` in
+Discord or [`POST /api/v1/reservations`](#apiv1reservations).
+
+- **Discord form**: one checkbox group per namespace (at most 3 namespaces of 10 entries; use the API beyond),
+  **Ready at** (`21:00` means today, or tomorrow once passed; `2026-11-14 21:00` for another day) in
+  `frontends.discord.timeZone`, and the run duration in hours (empty uses the workload default). One reservation is
+  created per namespace.
+- **Execution**: the background reconcile loop (`RECONCILE_INTERVAL`) starts the workloads `RESERVATION_WARMUP`
+  (default `5m`) before the time; `workload-knocker.io/warmup: "20m"` on a workload raises it (the largest one of the
+  reservation applies, up to `6h`). The auto-stop is the reserved time plus the run duration. The start posts the usual
+  start and ready messages to the notify channel, and `RESERVATION_REMINDER` before the start a reminder is posted.
+- **Authorization**: checked at creation and again at execution with the creator's user and the roles sent with the
+  creating interaction. A workload refused at execution (policy, GitOps conflict, removed) is listed in the
+  reservation's note; the reservation fails when none started.
+- **Restarts**: reservations are stored in the `workload-state` ConfigMap under `reservations.<env>.json` (no extra
+  RBAC). A reservation whose start passed while the controller was down still runs within `RESERVATION_GRACE`
+  (default `15m`); later it is marked missed and the notify channel is told.
+- **List and cancel**: `/<command> status` lists the pending reservations with a **Cancel** button for the creator and
+  for anyone allowed to stop all of their workloads. Finished reservations stay in `GET /api/v1/reservations` for a day.
+- Audit events: `reservation.create`, `reservation.cancel` and one `reservation.execute` per workload, all with the
+  reservation ID as `workload_knocker.request_id`.
+
+Recurring schedules, learned warmup and Slack reservations are tracked in
+[#75](https://github.com/murasame29/workload-knocker/issues/75), [#76](https://github.com/murasame29/workload-knocker/issues/76)
+and [#77](https://github.com/murasame29/workload-knocker/issues/77).
+
 ## Operation modes and nightly stop
 
 The Helm chart sets the controller's `OPERATION_MODE` and `API_TOKEN` environment variables.
@@ -561,6 +593,19 @@ the `api` subject. Returns `200` with `extended` (workload to new stop time), `n
 `404` for an unknown `env` or no matching workload, `409` when workloads exist but none could be extended, `400` for
 invalid input.
 
+### `/api/v1/reservations`
+
+```json
+{"env": "stg", "namespace": "games", "workloads": ["terraria"], "at": "2026-11-14T21:00:00+09:00", "duration": "3h"}
+```
+
+`POST` creates a [reservation](#reservations) as the `api` subject: `at` (RFC 3339, required) is when the workloads
+should be Ready, `duration` (optional Go duration) the run length after it. Returns `201` with the reservation (`id`,
+`state`, `at`, ...), `400` for invalid input (time in the past or more than 30 days ahead, duration out of range),
+`403` when the policy refuses a workload, `404` for an unknown `env` or workload. `GET /api/v1/reservations?env=stg`
+lists the reservations of an env (finished ones are kept for a day). `DELETE /api/v1/reservations/<id>?env=stg`
+cancels a pending one (`404` when there is none).
+
 ### `POST /api/v1/stop-all`
 
 Allowed only in `full` mode (`403` otherwise). Stops the workloads the `api` subject may stop in all managed
@@ -617,6 +662,8 @@ Example: [`example/scaledobject-external.example.yaml`](../../example/scaledobje
 | `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
 | `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
 | `workload_knocker_auto_stops_total` | counter | `env`, `cluster`, `result` (`success`, `error`) |
+| `workload_knocker_reservations` | gauge | `env`, `state` (`pending`, `started`, `failed`, `missed`, `cancelled`; finished ones are counted for a day) |
+| `workload_knocker_reservation_executions_total` | counter | `env`, `result` (`success`, `partial`, `failed`, `missed`) |
 | `workload_knocker_external_scaler_streams` | gauge | `cluster` (open `keda-external` push streams) |
 | `workload_knocker_gitops_conflicts` | gauge | `env`, `cluster`, `namespace`, `workload` (`direct` actuator only; 1 = a GitOps manager owns `spec.replicas`) |
 

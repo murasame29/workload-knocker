@@ -90,6 +90,12 @@ spec:
               value: {{ .Values.settings.maxRunDuration | quote }}
             - name: STOP_REMINDER
               value: {{ .Values.settings.stopReminder | quote }}
+            - name: RESERVATION_WARMUP
+              value: {{ .Values.settings.reservationWarmup | quote }}
+            - name: RESERVATION_GRACE
+              value: {{ .Values.settings.reservationGrace | quote }}
+            - name: RESERVATION_REMINDER
+              value: {{ .Values.settings.reservationReminder | quote }}
             {{- with .Values.settings.gitopsManagers }}
             - name: GITOPS_MANAGERS
               value: {{ join "," . | quote }}

@@ -17,7 +17,7 @@ Every start and stop emits one audit event per workload to stdout (JSON). The me
 
 | Key | Values / format |
 |---|---|
-| `event.name` | `workload.start`, `workload.stop`, `workload.stop_all`, `workload.extend`, `workload.auto_stop`. Reserved for upcoming features: `reservation.create`, `reservation.cancel`, `reservation.execute` |
+| `event.name` | `workload.start`, `workload.stop`, `workload.stop_all`, `workload.extend`, `workload.auto_stop`, and for [reservations](configuration.md#reservations) `reservation.create`, `reservation.cancel`, `reservation.execute` (one per workload, source `scheduler`; `workload_knocker.request_id` is the reservation ID) |
 | `event.outcome` | `success`; `failure` (WARN, e.g. the workload was not found or its cluster failed); `denied` (authorization policy or operation mode refused it) |
 | `workload_knocker.source` | `discord`, `slack`, `api`, `nightly-stop`, `scheduler` (auto-stop) |
 | `workload_knocker.request_id` | Random 128-bit hex. In chat it is created at the plan preview and reused by the confirm; for the API it is created per request |

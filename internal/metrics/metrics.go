@@ -29,6 +29,10 @@ type MetricsManager interface {
 	IncAutoStop(env, cluster, result string)
 	// SetExternalScalerStreams sets the number of open KEDA external scaler streams of a cluster.
 	SetExternalScalerStreams(cluster string, n int)
+	// SetReservations sets the number of reservations of env in a state.
+	SetReservations(env, state string, n int)
+	// IncReservationExecution counts one reservation run (result: success|partial|failed|missed).
+	IncReservationExecution(env, result string)
 	Handler() http.Handler
 }
 
@@ -43,8 +47,11 @@ type Manager struct {
 	reconcile    *prometheus.CounterVec
 	autoStops    *prometheus.CounterVec
 	extStreams   *prometheus.GaugeVec
-	opDuration   *prometheus.HistogramVec
-	registry     *prometheus.Registry
+	// reservations / reservationRuns are the reservation gauge and execution counter.
+	reservations    *prometheus.GaugeVec
+	reservationRuns *prometheus.CounterVec
+	opDuration      *prometheus.HistogramVec
+	registry        *prometheus.Registry
 }
 
 // New creates a Manager and registers each metric with the Prometheus registry
@@ -146,21 +153,41 @@ func New() *Manager {
 	registry.MustRegister(opDuration)
 	registry.MustRegister(configReload)
 	registry.MustRegister(reconcile)
+	reservations := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "workload_knocker_reservations",
+			Help: "Number of one-off reservations, labeled by env and state (pending, started, failed, missed, cancelled; finished ones are kept for a day)",
+		},
+		[]string{"env", "state"},
+	)
+
+	reservationRuns := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "workload_knocker_reservation_executions_total",
+			Help: "Total number of reservation runs, labeled by env and result (success, partial, failed, missed)",
+		},
+		[]string{"env", "result"},
+	)
+
 	registry.MustRegister(autoStops)
 	registry.MustRegister(extStreams)
+	registry.MustRegister(reservations)
+	registry.MustRegister(reservationRuns)
 
 	return &Manager{
-		activation:   activation,
-		gitopsConfl:  gitopsConflicts,
-		reachable:    reachable,
-		tokenRefresh: tokenRefresh,
-		operations:   operations,
-		configReload: configReload,
-		reconcile:    reconcile,
-		autoStops:    autoStops,
-		extStreams:   extStreams,
-		opDuration:   opDuration,
-		registry:     registry,
+		reservations:    reservations,
+		reservationRuns: reservationRuns,
+		activation:      activation,
+		gitopsConfl:     gitopsConflicts,
+		reachable:       reachable,
+		tokenRefresh:    tokenRefresh,
+		operations:      operations,
+		configReload:    configReload,
+		reconcile:       reconcile,
+		autoStops:       autoStops,
+		extStreams:      extStreams,
+		opDuration:      opDuration,
+		registry:        registry,
 	}
 }
 
@@ -190,6 +217,7 @@ func (m *Manager) DeleteCluster(env, cluster string) {
 	m.gitopsConfl.DeletePartialMatch(prometheus.Labels{"env": env, "cluster": cluster})
 	m.reachable.DeleteLabelValues(cluster)
 	m.extStreams.DeleteLabelValues(cluster)
+	m.reservations.DeletePartialMatch(prometheus.Labels{"env": env})
 }
 
 // SetExternalScalerStreams sets the open stream count of a cluster.
@@ -210,6 +238,16 @@ func (m *Manager) IncReconcile(cluster, result string) {
 // IncAutoStop counts one automatic stop.
 func (m *Manager) IncAutoStop(env, cluster, result string) {
 	m.autoStops.WithLabelValues(env, cluster, result).Inc()
+}
+
+// SetReservations sets the reservation count of env in a state.
+func (m *Manager) SetReservations(env, state string, n int) {
+	m.reservations.WithLabelValues(env, state).Set(float64(n))
+}
+
+// IncReservationExecution counts one reservation run.
+func (m *Manager) IncReservationExecution(env, result string) {
+	m.reservationRuns.WithLabelValues(env, result).Inc()
 }
 
 // SetReachable updates the reachability Gauge of the given cluster

@@ -61,6 +61,14 @@ type Env struct {
 	// StopReminder is how long before the auto-stop the reminder fires; 0 disables it.
 	StopReminder time.Duration `env:"STOP_REMINDER" envDefault:"15m"`
 
+	// ReservationWarmup is how long before a reservation's time its workloads start; the
+	// workload-knocker.io/warmup annotation overrides it per workload.
+	ReservationWarmup time.Duration `env:"RESERVATION_WARMUP" envDefault:"5m"`
+	// ReservationGrace is how long after its start time a reservation still runs (controller was down).
+	ReservationGrace time.Duration `env:"RESERVATION_GRACE" envDefault:"15m"`
+	// ReservationReminder is how long before a reservation starts the reminder is posted; 0 disables it.
+	ReservationReminder time.Duration `env:"RESERVATION_REMINDER" envDefault:"15m"`
+
 	// OperationMode is full | scheduled-stop | off; see internal/mode.
 	OperationMode mode.Mode `env:"OPERATION_MODE" envDefault:"full"`
 
@@ -117,6 +125,16 @@ func (e *Env) ValidateRunDuration() error {
 	return nil
 }
 
+// ValidateReservations checks the reservation settings.
+func (e *Env) ValidateReservations() error {
+	for name, d := range map[string]time.Duration{"RESERVATION_WARMUP": e.ReservationWarmup, "RESERVATION_GRACE": e.ReservationGrace, "RESERVATION_REMINDER": e.ReservationReminder} {
+		if d < 0 {
+			return fmt.Errorf("%s must not be negative, got %s", name, d)
+		}
+	}
+	return nil
+}
+
 // RunDefaults returns the controller-wide run duration settings.
 func (e *Env) RunDefaults() runlimit.Defaults {
 	return runlimit.Defaults{Default: e.DefaultRunDuration, Max: e.MaxRunDuration}
@@ -149,6 +167,9 @@ func LoadEnv() (*Env, error) {
 	if err := cfg.ValidateRunDuration(); err != nil {
 		return nil, fmt.Errorf("config.LoadEnv: %w", err)
 	}
+	if err := cfg.ValidateReservations(); err != nil {
+		return nil, fmt.Errorf("config.LoadEnv: %w", err)
+	}
 
 	if v := os.Getenv("WORKLOAD_ENV"); v != "" {
 		slog.Warn("WORKLOAD_ENV is deprecated. Configure cluster env in cluster registry config file.", slog.String("workload_env", v))
@@ -159,7 +180,7 @@ func LoadEnv() (*Env, error) {
 	}
 
 	if cfg.ReconcileInterval == 0 && (cfg.DefaultRunDuration > 0 || cfg.StopReminder > 0) {
-		slog.Warn("RECONCILE_INTERVAL is 0: run durations and reminders are stored but never fire, because the background loop drives the auto-stop")
+		slog.Warn("RECONCILE_INTERVAL is 0: run durations, reminders and reservations are stored but never fire, because the background loop drives them")
 	}
 
 	if cfg.APIToken == "" {

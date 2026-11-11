@@ -255,6 +255,13 @@ func (s *Service) Stopped(ctx context.Context, e Event) {
 	}
 }
 
+// Announce posts a plain text message to the notify channels of env (reservation reminders and misses).
+func (s *Service) Announce(ctx context.Context, env, text string) {
+	for _, t := range s.targets(env) {
+		s.post(ctx, t, Message{Text: text})
+	}
+}
+
 // StopReminder implements Notifier.
 func (s *Service) StopReminder(ctx context.Context, w model.Workload, stopAt time.Time) {
 	targets := s.targets(w.Env)

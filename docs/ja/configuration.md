@@ -15,6 +15,9 @@
 | `DEFAULT_RUN_DURATION` | `0` | 時間を指定しない start の自動停止までの時間。`0` は自動停止なし (従来の動作)。`0` か `15m` 以上で、`MAX_RUN_DURATION` を超えられません。Chart: `settings.defaultRunDuration` |
 | `MAX_RUN_DURATION` | `24h` | 実行時間、および延長後の残り時間の上限。`15m` 以上。Chart: `settings.maxRunDuration` |
 | `STOP_REMINDER` | `15m` | 自動停止の何分前にリマインドするか。`0` で無効。配信には通知チャンネルが必要です ([実行時間](#実行時間))。Chart: `settings.stopReminder` |
+| `RESERVATION_WARMUP` | `5m` | [予約](#予約)の時刻のどれだけ前に workload を起動するか。`workload-knocker.io/warmup` アノテーションで上書きできる。Chart: `settings.reservationWarmup` |
+| `RESERVATION_GRACE` | `15m` | controller が止まっていた場合に、起動時刻を過ぎた予約をどれだけ後まで実行するか。過ぎると missed。Chart: `settings.reservationGrace` |
+| `RESERVATION_REMINDER` | `15m` | 予約の起動のどれだけ前に通知チャンネルへリマインドするか。`0` で無効。Chart: `settings.reservationReminder` |
 | `GITOPS_MANAGERS` | `argocd-controller,kustomize-controller,helm-controller` | `spec.replicas` を所有していると `direct` actuator がスケールを見送る field manager のカンマ区切りリスト ([GitOps](gitops.md#direct-actuator) を参照)。Chart: `settings.gitopsManagers` |
 | `SHUTDOWN_TIMEOUT` | `5s` | コンポーネントごとの graceful shutdown タイムアウト |
 | `OPERATION_MODE` | `full` | `full` / `scheduled-stop` / `off`。それ以外は起動時エラー ([動作モード](#動作モードと夜間停止)) |
@@ -88,6 +91,7 @@ clusters:
 | `clusters[].frontends.discord.command` | frontend ごと | 一意の Discord slash command 名。1〜32 文字の `a-z` `0-9` `-` `_`、先頭の `/` なし |
 | `clusters[].frontends.slack.notifyChannel` | | start / ready / stop を公開メッセージで投稿する Slack チャンネル ID (例 `C0123ABCD`。チャンネル名は拒否)。[ready メッセージと通知チャンネル](#ready-メッセージと通知チャンネル)を参照 |
 | `clusters[].frontends.discord.notifyChannel` | | 同じメッセージを投稿する Discord チャンネル ID (17〜20 桁の数字) |
+| `clusters[].frontends.discord.timeZone` | | [予約](#予約)の時刻を入力し、通知メッセージに表示するタイムゾーン (IANA 名、例: `Asia/Tokyo`)。既定 `UTC`。未知の名前は拒否される |
 
 各 cluster は `frontends` 配下に少なくとも 1 つの frontend を設定する必要があります。いずれかの cluster が設定した
 frontend だけが有効になり、起動されます。
@@ -204,7 +208,7 @@ clusters:
 
 起動時に、対象スコープ (guild またはグローバル) の application command を設定済みコマンドで一括上書きします。同スコープの他のコマンドは削除されるため、専用の Application を使ってください。登録に失敗すると (多くは `applications.commands` scope の不足) エラーで起動に失敗します。
 
-コマンドには `start` と `status` の 2 つのサブコマンドがあります ([ステータス](#ステータス)参照)。Discord はサブコマンドを持つコマンドをサブコマンドなしで実行することを許可しないため ([Discord ドキュメント](https://discord.com/developers/docs/interactions/application-commands#subcommands-and-subcommand-groups))、**`/<command>` 単体は使えなくなり、`/<command> start` を使います**。Discord ユーザーにとっては破壊的変更ですが、起動時の登録で自動的に反映されるため手動作業は不要です。古いコマンド形状 (クライアントのキャッシュ) のまま送られた単体コマンドは `start` として扱います。
+コマンドには `start`、`status` ([ステータス](#ステータス)参照)、`schedule` ([予約](#予約)参照) の 3 つのサブコマンドがあります。Discord はサブコマンドを持つコマンドをサブコマンドなしで実行することを許可しないため ([Discord ドキュメント](https://discord.com/developers/docs/interactions/application-commands#subcommands-and-subcommand-groups))、**`/<command>` 単体は使えなくなり、`/<command> start` を使います**。Discord ユーザーにとっては破壊的変更ですが、起動時の登録で自動的に反映されるため手動作業は不要です。古いコマンド形状 (クライアントのキャッシュ) のまま送られた単体コマンドは `start` として扱います。
 
 `/<command> start` のフロー (すべて ephemeral メッセージで、コンポーネントは実行したユーザーのみ操作できます):
 
@@ -439,6 +443,30 @@ start には実行時間を付けられます。コントローラは workload �
 監査イベント: start は `workload_knocker.duration_seconds` と `workload_knocker.stop_at` を記録し、延長は `workload.extend`、
 期限切れの停止は source `scheduler` の `workload.auto_stop` です。
 
+## 予約
+
+単発の予約で、workload を**指定した時刻に Ready に**できます。Discord の `/<command> schedule` か
+[`POST /api/v1/reservations`](#apiv1reservations) で作ります。
+
+- **Discord のフォーム**: namespace ごとのチェックボックス (namespace 3 個、各 10 件まで。超える場合は API を使う)、
+  **Ready at** (`21:00` は今日、過ぎていれば明日。別の日は `2026-11-14 21:00`。`frontends.discord.timeZone` の時刻)、
+  稼働時間 (時間単位、空欄で workload の既定) を入力します。namespace ごとに 1 件の予約を作ります。
+- **実行**: バックグラウンドの reconcile ループ (`RECONCILE_INTERVAL`) が、時刻の `RESERVATION_WARMUP` (既定 `5m`) 前に起動します。
+  workload に `workload-knocker.io/warmup: "20m"` を付けると早めに起動します (予約内で最大の値、上限 `6h`)。
+  自動停止は予約時刻 + 稼働時間です。起動時は通知チャンネルに通常の起動・ready メッセージを投稿し、起動の
+  `RESERVATION_REMINDER` 前にリマインドも投稿します。
+- **認可**: 作成時と実行時の両方で確認します。実行時は作成者のユーザーと、作成時のインタラクションに含まれていたロールで判定します。
+  実行時に拒否された workload (ポリシー、GitOps の衝突、削除済み) は予約のメモに残り、1 つも起動できなければ予約は失敗になります。
+- **再起動**: 予約は `workload-state` ConfigMap の `reservations.<env>.json` に保存します (RBAC の追加は不要)。controller が止まっている間に
+  起動時刻を過ぎた予約は、`RESERVATION_GRACE` (既定 `15m`) 以内なら実行し、過ぎていれば missed として通知チャンネルに知らせます。
+- **一覧と取り消し**: `/<command> status` に待機中の予約を並べ、作成者と、予約の workload をすべて停止できるユーザーに **Cancel** ボタンを出します。
+  終わった予約も `GET /api/v1/reservations` に 1 日残ります。
+- 監査イベント: `reservation.create`、`reservation.cancel`、workload ごとの `reservation.execute`。いずれも予約 ID を
+  `workload_knocker.request_id` に入れます。
+
+定期予約、warmup の自動学習、Slack からの予約は [#75](https://github.com/murasame29/workload-knocker/issues/75)、
+[#76](https://github.com/murasame29/workload-knocker/issues/76)、[#77](https://github.com/murasame29/workload-knocker/issues/77) で扱います。
+
 ## 動作モードと夜間停止
 
 Helm chart は controller の環境変数 `OPERATION_MODE` と `API_TOKEN` を設定します。
@@ -542,6 +570,17 @@ curl -X POST "http://workload-knocker.workload-knocker.svc:8080/api/v1/start" \
 すべて拒否された場合は `403`、未登録の `env` または該当 workload なしは `404`、workload はあるが延長できなかった場合は `409`、
 入力不正は `400` です。
 
+### `/api/v1/reservations`
+
+```json
+{"env": "stg", "namespace": "games", "workloads": ["terraria"], "at": "2026-11-14T21:00:00+09:00", "duration": "3h"}
+```
+
+`POST` は `api` subject で[予約](#予約)を作ります。`at` (RFC 3339、必須) は workload を Ready にしたい時刻、`duration` (任意、Go duration)
+はそこからの稼働時間です。`201` で予約 (`id`、`state`、`at` など) を返し、入力不正 (過去の時刻、30 日より先、時間の範囲外) は `400`、
+ポリシーが workload を拒否した場合は `403`、未登録の `env` や workload は `404` です。`GET /api/v1/reservations?env=stg` は env の予約を
+一覧します (終わった予約も 1 日残ります)。`DELETE /api/v1/reservations/<id>?env=stg` は待機中の予約を取り消します (なければ `404`)。
+
 ### `POST /api/v1/stop-all`
 
 `full` モードのみ可 (それ以外は `403`)。全 managed cluster のうち `api` subject が stop できる workload を停止します (best effort)。
@@ -596,6 +635,8 @@ triggers:
 | `workload_knocker_config_reload_total` | counter | `target` (`registry`, `authz`), `result` (`success`, `error`) |
 | `workload_knocker_reconcile_total` | counter | `cluster`, `result` (`success`, `error`) |
 | `workload_knocker_auto_stops_total` | counter | `env`, `cluster`, `result` (`success`, `error`) |
+| `workload_knocker_reservations` | gauge | `env`, `state` (`pending`, `started`, `failed`, `missed`, `cancelled`。終わった予約は 1 日数える) |
+| `workload_knocker_reservation_executions_total` | counter | `env`, `result` (`success`, `partial`, `failed`, `missed`) |
 | `workload_knocker_external_scaler_streams` | gauge | `cluster` (開いている `keda-external` push ストリーム数) |
 | `workload_knocker_gitops_conflicts` | gauge | `env`, `cluster`, `namespace`, `workload` (`direct` actuator のみ。1 = GitOps manager が `spec.replicas` を所有) |
 

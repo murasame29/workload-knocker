@@ -19,6 +19,8 @@ clusters:
       #   command: workload-knocker-local
       #   # Optional channel ID for public messages (bot needs View Channel and Send Messages there).
       #   notifyChannel: "123456789012345678"
+      #   # Time zone of reservation times entered with /<command> schedule (default UTC).
+      #   timeZone: Asia/Tokyo
 
   # A cluster without KEDA and Prometheus: annotate a Deployment or StatefulSet with
   # workload-knocker.io/enabled: "true" (and workload-knocker.io/replicas: "2" if it is not 1).

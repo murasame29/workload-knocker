@@ -265,6 +265,9 @@ func (s *Service) List(sub authz.Subject, env, namespace string, limits Limits) 
 	return l
 }
 
+// Now is the service clock (WithClock in tests).
+func (s *Service) Now() time.Time { return s.now() }
+
 // ChatStopAllowed reports whether chat may stop workloads in the current operation mode.
 func (s *Service) ChatStopAllowed() bool { return s.mode.AllowChatStop() }
 

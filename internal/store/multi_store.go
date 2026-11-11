@@ -93,12 +93,28 @@ func NewClusterFactory(src RestConfigSource, m metrics.MetricsManager) ClusterFa
 		if err != nil {
 			return nil, fmt.Errorf("build state repository: %w", err)
 		}
+		reservations, err := k8s.NewReservationStoreForConfig(restCfg, controllerNs, c.Env)
+		if err != nil {
+			return nil, fmt.Errorf("build reservation store: %w", err)
+		}
 		d, a, err := factory.New(c, restCfg, m)
 		if err != nil {
 			return nil, err
 		}
-		return NewClusterStore(c, d, a, repo), nil
+		cs := NewClusterStore(c, d, a, repo)
+		cs.SetReservationStore(reservations)
+		return cs, nil
 	}
+}
+
+// ReservationStore returns the reservation persistence of env; false when the env is unknown
+// or has none wired.
+func (m *MultiStore) ReservationStore(env string) (k8s.KeyStore, bool) {
+	cs, ok := m.storeFor(env)
+	if !ok || cs.reservations == nil {
+		return nil, false
+	}
+	return cs.reservations, true
 }
 
 // NewMultiStoreFromClusterStores aggregates prebuilt ClusterStores (mainly for tests).

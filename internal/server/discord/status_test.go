@@ -342,7 +342,7 @@ func TestCommand_StartSubcommandOpensTheMenu(t *testing.T) {
 	}
 }
 
-func TestRegisterCommands_StartAndStatusSubcommands(t *testing.T) {
+func TestRegisterCommands_StartStatusAndScheduleSubcommands(t *testing.T) {
 	t.Parallel()
 
 	b, sess, _ := newTestBot(t, nil)
@@ -350,8 +350,8 @@ func TestRegisterCommands_StartAndStatusSubcommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := sess.overwrote[0].Options
-	if len(opts) != 2 || opts[0].Name != "start" || opts[1].Name != "status" {
-		t.Fatalf("options = %+v, want the start and status subcommands", opts)
+	if len(opts) != 3 || opts[0].Name != "start" || opts[1].Name != "status" || opts[2].Name != "schedule" {
+		t.Fatalf("options = %+v, want the start, status and schedule subcommands", opts)
 	}
 	for _, o := range opts {
 		if o.Type != discordgo.ApplicationCommandOptionSubCommand || o.Description == "" || len(o.Description) > 100 {

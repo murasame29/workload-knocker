@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"time"
+	_ "time/tzdata" // the runtime image may not ship a time zone database
 )
 
 const discordCommandMaxLen = 32
@@ -36,6 +38,31 @@ type DiscordFrontend struct {
 	Command string `yaml:"command"`
 	// NotifyChannel is an optional channel ID (snowflake) that receives public start, ready and stop messages.
 	NotifyChannel string `yaml:"notifyChannel,omitempty"`
+	// TimeZone is the IANA time zone in which reservation times are entered; empty means UTC.
+	TimeZone string `yaml:"timeZone,omitempty"`
+}
+
+// Location returns the time zone of reservation times entered in Discord; UTC when unset or invalid
+// (Validate rejects invalid names).
+func (d *DiscordFrontend) Location() *time.Location {
+	if d == nil || d.TimeZone == "" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(d.TimeZone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+func validateTimeZone(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, err := time.LoadLocation(name); err != nil {
+		return fmt.Errorf("unknown time zone %q (use an IANA name such as Asia/Tokyo)", name)
+	}
+	return nil
 }
 
 // ByDiscordCommand resolves the cluster of a Discord slash command name.
