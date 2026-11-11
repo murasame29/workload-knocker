@@ -32,3 +32,16 @@ clusters:
   #   frontends:
   #     slack:
   #       slashCommand: /workload-knocker-small
+
+  # Several actuators behind one command: each workload is driven by the actuator that discovered it
+  # (earlier entries win). Mutually exclusive with actuator.
+  # - env: home
+  #   name: home-cluster
+  #   actuators: [keda-external, direct]
+  #   provider:
+  #     type: kubeconfig
+  #     kubeconfig:
+  #       path: ~/.kube/config
+  #   frontends:
+  #     discord:
+  #       command: workload-knocker-home

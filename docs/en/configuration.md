@@ -76,9 +76,10 @@ clusters:
 | Field | Required | Description |
 |---|---|---|
 | `controller.namespace` | yes | Namespace for the state ConfigMap |
-| `clusters[].env` | yes | Unique identifier (letters, digits, `-`, `_`, `.`); used as the `env` metric label and as the state key `state.<env>.json` in the `workload-state` ConfigMap. Several entries may point at the same cluster (for example with different actuators); each keeps its own key |
+| `clusters[].env` | yes | Unique identifier (letters, digits, `-`, `_`, `.`); used as the `env` metric label and as the state key `state.<env>.json` in the `workload-state` ConfigMap. Several entries may point at the same cluster; each keeps its own key. To mix actuators behind one command, prefer `actuators` |
 | `clusters[].name` | yes | Cluster name; `eks:DescribeCluster` argument and `cluster` metric label |
 | `clusters[].actuator` | no | How workloads are discovered and started or stopped. `keda-prometheus` (default) manages `ScaledObject`s with a `workload_knocker_activation` Prometheus trigger and publishes that gauge. `keda-external` serves KEDA's external scaler gRPC protocol without Prometheus (see [KEDA external scaler](#keda-external-scaler)). `direct` needs neither KEDA nor Prometheus (see [Direct actuator](#direct-actuator)). Unknown values are rejected. Changing it hot reloads the cluster. See [GitOps](gitops.md) |
+| `clusters[].actuators` | no | List of actuators used together, for example `[keda-external, direct]`; each workload is driven by the actuator that discovered it, so one chat command covers all of them (see [Several actuators](#several-actuators)). Mutually exclusive with `actuator`; an entry may not repeat |
 | `clusters[].provider.type` | yes | `eks` or `kubeconfig` |
 | `clusters[].provider.eks.region` | eks | AWS region |
 | `clusters[].provider.eks.assumeRoleArn` | no | Role to assume for cross-account clusters |
@@ -284,6 +285,38 @@ clusters:
 Extra RBAC beyond the default rules, all in `example/managed-cluster-rbac.yaml`:
 `get/list/watch` on `deployments` and `statefulsets`, `get/update/patch` on `deployments/scale` and
 `statefulsets/scale`, and `list` on `horizontalpodautoscalers`. `scaledobjects` access is not needed.
+
+## Several actuators
+
+`actuators` lists several actuators for one cluster entry. Every actuator discovers its own
+workloads (ScaledObjects with its trigger, or annotated Deployments and StatefulSets for `direct`),
+the lists are merged, and start / stop / status go to the actuator that discovered the workload.
+Users see one command and one workload list.
+
+```yaml
+clusters:
+  - env: home
+    name: home-cluster
+    actuators: [keda-external, direct]
+    provider:
+      type: kubeconfig
+      kubeconfig:
+        path: ~/.kube/config
+    frontends:
+      discord:
+        command: workload-knocker
+```
+
+- Order is priority: when two actuators discover the same workload (for example a ScaledObject
+  target that also carries `workload-knocker.io/enabled`), the first one wins and a warning is
+  logged once.
+- When a workload moves to another actuator (for example its ScaledObject is removed and the
+  annotation is added), the previous actuator releases it on the next discovery.
+- If any actuator fails to discover, the whole discovery fails and the previous list is kept, so
+  workloads do not disappear from chat because of one actuator.
+- The RBAC and controller settings of every listed actuator are required (for example
+  `externalScaler.enabled` for `keda-external`).
+- `actuator: x` and `actuators: [x]` are equivalent. Changing the list hot reloads the cluster.
 
 ## Rollout progress
 

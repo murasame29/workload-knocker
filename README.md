@@ -43,6 +43,8 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
 
 Without Prometheus, set `actuator: keda-external` on a cluster and use KEDA's `external-push` trigger; the
 controller pushes starts and stops over gRPC. See [KEDA external scaler](docs/en/configuration.md#keda-external-scaler).
+`actuators: [keda-external, direct]` combines actuators behind one command; each workload uses the actuator that
+found it. See [Several actuators](docs/en/configuration.md#several-actuators).
 
 By default your `ScaledObject` needs a Prometheus trigger such as:
 

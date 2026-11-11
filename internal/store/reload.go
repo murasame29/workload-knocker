@@ -151,7 +151,7 @@ func (m *MultiStore) dropStaleSeries(old, next *ClusterStore) {
 		return
 	}
 	kept := map[string]struct{}{}
-	if old.cluster.ActuatorType() == next.cluster.ActuatorType() {
+	if slices.Equal(old.cluster.ActuatorTypes(), next.cluster.ActuatorTypes()) {
 		for _, w := range next.snapshot() {
 			kept[w.Namespace+"/"+w.Name] = struct{}{}
 		}

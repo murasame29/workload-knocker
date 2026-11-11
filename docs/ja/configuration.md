@@ -75,9 +75,10 @@ clusters:
 | フィールド | 必須 | 説明 |
 |---|---|---|
 | `controller.namespace` | ◯ | state ConfigMap を置く namespace |
-| `clusters[].env` | ◯ | 一意の識別子 (英数字、`-`、`_`、`.`)。メトリクスの `env` ラベルと、`workload-state` ConfigMap の state キー `state.<env>.json` に使う。同じ cluster を指すエントリを複数置ける (actuator を変える場合など)。それぞれ別のキーに保存する |
+| `clusters[].env` | ◯ | 一意の識別子 (英数字、`-`、`_`、`.`)。メトリクスの `env` ラベルと、`workload-state` ConfigMap の state キー `state.<env>.json` に使う。同じ cluster を指すエントリを複数置ける。それぞれ別のキーに保存する。1 つのコマンドで actuator を併用するなら `actuators` を使う |
 | `clusters[].name` | ◯ | cluster 名。`eks:DescribeCluster` の引数と `cluster` ラベル |
 | `clusters[].actuator` | | workload の検出と起動・停止の方式。`keda-prometheus` (既定) は `workload_knocker_activation` の Prometheus trigger を持つ `ScaledObject` を管理し、そのゲージを公開する。`keda-external` は Prometheus なしで KEDA の external scaler gRPC プロトコルを提供する ([KEDA external scaler](#keda-external-scaler) を参照)。`direct` は KEDA も Prometheus も不要 ([direct actuator](#direct-actuator) を参照)。未知の値は拒否される。変更するとその cluster をホットリロードする。[GitOps](gitops.md) を参照 |
+| `clusters[].actuators` | | 併用する actuator のリスト (例: `[keda-external, direct]`)。workload ごとに、それを検出した actuator で操作するため、1 つのチャットコマンドですべてを扱える ([複数の actuator](#複数の-actuator) を参照)。`actuator` とは同時に指定できない。同じ値を重複して書けない |
 | `clusters[].provider.type` | ◯ | `eks` または `kubeconfig` |
 | `clusters[].provider.eks.region` | eks | AWS リージョン |
 | `clusters[].provider.eks.assumeRoleArn` | | cross-account 時に AssumeRole する Role |
@@ -276,6 +277,36 @@ clusters:
 既定のルールに加える RBAC は `example/managed-cluster-rbac.yaml` にあります。`deployments` / `statefulsets` の
 `get/list/watch`、`deployments/scale` / `statefulsets/scale` の `get/update/patch`、`horizontalpodautoscalers` の
 `list` です。`scaledobjects` へのアクセスは不要です。
+
+## 複数の actuator
+
+`actuators` を使うと、1 つの cluster エントリで複数の actuator を併用できます。各 actuator が自分の workload
+(自分の trigger を持つ ScaledObject、`direct` ならアノテーション付きの Deployment / StatefulSet) を検出し、
+一覧をまとめます。start / stop / status は、その workload を検出した actuator が処理します。
+ユーザーから見えるのは 1 つのコマンドと 1 つの一覧です。
+
+```yaml
+clusters:
+  - env: home
+    name: home-cluster
+    actuators: [keda-external, direct]
+    provider:
+      type: kubeconfig
+      kubeconfig:
+        path: ~/.kube/config
+    frontends:
+      discord:
+        command: workload-knocker
+```
+
+- 並び順が優先順位です。同じ workload を 2 つの actuator が検出した場合 (ScaledObject の対象に
+  `workload-knocker.io/enabled` も付いている場合など) は先頭の actuator を使い、警告を 1 回出します。
+- workload の担当が別の actuator に移った場合 (ScaledObject を消してアノテーションを付けた場合など) は、
+  次の検出で旧 actuator がその workload を解放します。
+- どれか 1 つの actuator の検出が失敗すると検出全体を失敗とし、前回の一覧を保持します。1 つの actuator の
+  障害で workload がチャットから消えることはありません。
+- 列挙したすべての actuator の RBAC とコントローラ設定が必要です (`keda-external` なら `externalScaler.enabled` など)。
+- `actuator: x` と `actuators: [x]` は同じ意味です。一覧を変更するとその cluster をホットリロードします。
 
 ## rollout の進捗
 

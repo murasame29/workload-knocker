@@ -1,7 +1,8 @@
 # GitOps
 
 workload-knocker は Argo CD / Flux のアプリケーションを OutOfSync にしてはいけません。この方針はすべての actuator に共通で、
-`clusters[].actuator` で cluster ごとに選びます ([設定](configuration.md#cluster-registry)を参照)。
+`clusters[].actuator` で cluster ごとに選ぶか、`clusters[].actuators` で併用します ([設定](configuration.md#cluster-registry)を参照)。
+併用時は、workload ごとにそれを検出した actuator のルールに従います。
 
 ## 方針
 
