@@ -40,7 +40,7 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
   See [HTTP API](docs/en/configuration.md#http-api).
 - A start can carry a run duration: the workload is stopped automatically (also across restarts) and can be
   extended. See [Run duration](docs/en/configuration.md#run-duration).
-- `/<command> schedule` (Discord) and `POST /api/v1/reservations` reserve workloads to be Ready at a time; they
+- `/<command> schedule` (Discord and Slack) and `POST /api/v1/reservations` reserve workloads to be Ready at a time; they
   start a few minutes earlier and survive restarts. See [Reservations](docs/en/configuration.md#reservations).
 - Every start and stop writes a structured audit event to stdout; see [Audit log](docs/en/audit-log.md).
 

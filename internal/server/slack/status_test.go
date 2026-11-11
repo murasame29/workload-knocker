@@ -192,7 +192,7 @@ func TestStatusMessage_ListsEntriesWithTimes(t *testing.T) {
 	stopAt := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	b, store, _, _ := newStatusBot(t, []*model.Workload{runningWL("shop-api", stopAt), stoppedWL("shop-app"), runningWL("batch", time.Time{}), stoppedWL("idle")}, "", mode.Full)
 
-	text, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil)
+	text, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil, nil)
 
 	body := blockTexts(blocks)
 	for _, want := range []string{
@@ -226,7 +226,7 @@ rules:
 	hostile.StartedBy = "<!channel> & co"
 	b, _, _, _ := newStatusBot(t, []*model.Workload{hostile, runningWL("secret", time.Time{})}, policy, mode.Full)
 
-	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil)
+	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil, nil)
 	body := blockTexts(blocks)
 	if !strings.Contains(body, "batch") || strings.Contains(body, "secret") {
 		t.Errorf("only batch may be listed:\n%s", body)
@@ -236,7 +236,7 @@ rules:
 	}
 
 	other := authz.Subject{Platform: authz.PlatformSlack, User: "UOTHER1111"}
-	_, blocks = statusMessage(statusCluster, b.svc.Status(other, "stg"), nil)
+	_, blocks = statusMessage(statusCluster, b.svc.Status(other, "stg"), nil, nil)
 	if body := blockTexts(blocks); !strings.Contains(body, "No workloads you may operate") || strings.Contains(body, "batch") || len(actionButtons(blocks)) != 0 {
 		t.Errorf("a user without permission sees nothing:\n%s", body)
 	}
@@ -251,7 +251,7 @@ func TestStatusMessage_ButtonsFollowModeAndStopTime(t *testing.T) {
 	}
 
 	b, _, _, _ := newStatusBot(t, ws(), "", mode.Full)
-	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil)
+	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil, nil)
 	got := actionButtons(blocks)
 	if len(got) != 3 || got["Extend 1h: timed"] == nil || got["Stop: timed"] == nil || got["Stop: forever"] == nil {
 		t.Errorf("full mode buttons = %v", got)
@@ -261,7 +261,7 @@ func TestStatusMessage_ButtonsFollowModeAndStopTime(t *testing.T) {
 	}
 
 	b, _, _, _ = newStatusBot(t, ws(), "", mode.ScheduledStop)
-	_, blocks = statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil)
+	_, blocks = statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil, nil)
 	got = actionButtons(blocks)
 	if len(got) != 1 || got["Extend 1h: timed"] == nil {
 		t.Errorf("scheduled-stop buttons = %v, want only Extend", got)
@@ -278,7 +278,7 @@ func TestStatusMessage_StaysWithinSlackLimits(t *testing.T) {
 	}
 	b, _, _, _ := newStatusBot(t, ws, "", mode.Full)
 
-	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil)
+	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil, nil)
 
 	if len(blocks) > slackMessageMaxBlocks {
 		t.Errorf("%d blocks, Slack allows %d", len(blocks), slackMessageMaxBlocks)
@@ -305,7 +305,7 @@ func TestStatusAction_ExtendReplacesTheListAndAudits(t *testing.T) {
 
 	stopAt := time.Now().Add(time.Hour).Truncate(time.Second)
 	b, store, rec, out := newStatusBot(t, []*model.Workload{runningWL("web", stopAt)}, "", mode.Full)
-	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil)
+	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil, nil)
 	btn := actionButtons(blocks)["Extend 1h: web"]
 
 	cb := actionCallback(slackUser.User, btn.ActionID, btn.Value)
@@ -329,7 +329,7 @@ func TestStatusAction_StopStopsAndAudits(t *testing.T) {
 	t.Parallel()
 
 	b, store, rec, out := newStatusBot(t, []*model.Workload{runningWL("web", time.Now().Add(time.Hour))}, "", mode.Full)
-	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil)
+	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), nil, nil)
 	btn := actionButtons(blocks)["Stop: web"]
 
 	cb := actionCallback(slackUser.User, btn.ActionID, btn.Value)

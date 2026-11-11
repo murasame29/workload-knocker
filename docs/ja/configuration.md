@@ -381,7 +381,7 @@ metadata:
 
 ## Slack の workload モーダル
 
-引数なしの `/<command>` でこのモーダルを開きます。`/<command> status` は代わりに workload 一覧を表示します ([ステータス](#ステータス)参照)。その他の引数には短い使い方を返します。
+引数なしの `/<command>` でこのモーダルを開きます。`/<command> status` は代わりに workload 一覧を表示し ([ステータス](#ステータス)参照)、`/<command> schedule` は[予約](#予約)のフォームを開きます。その他の引数には短い使い方を返します。
 
 - 操作できる namespace がすべて 1 つのモーダルに収まる場合 (各 namespace の 10 件ごとに 1 ブロック、
   合計 97 ブロックまで)、全 namespace をまとめて並べます。ラベルは namespace 名で、起動中のエントリはチェック済みです。
@@ -449,8 +449,11 @@ start には実行時間を付けられます。コントローラは workload �
 
 ## 予約
 
-単発の予約で、workload を**指定した時刻に Ready に**できます。Discord の `/<command> schedule` か
+単発の予約で、workload を**指定した時刻に Ready に**できます。Discord / Slack の `/<command> schedule` か
 [`POST /api/v1/reservations`](#apiv1reservations) で作ります。
+
+- **Slack のフォーム**: `/<slashCommand> schedule` で、namespace ごとのチェックボックス (未チェック)、日時ピッカー (各ユーザーの Slack の
+  タイムゾーンで表示されるため設定は不要)、稼働時間 (時間単位) のモーダルを開きます。Slack のブロック上限に収まらない場合は API を使います。
 
 - **Discord のフォーム**: namespace ごとのチェックボックス (namespace 3 個、各 10 件まで。超える場合は API を使う)、
   **Ready at** (`21:00` は今日、過ぎていれば明日。別の日は `2026-11-14 21:00`。`frontends.discord.timeZone` の時刻)、
@@ -465,13 +468,13 @@ start には実行時間を付けられます。コントローラは workload �
   controller が止まっている間に起動時刻を過ぎた予約は、`RESERVATION_GRACE` (既定 `15m`) 以内なら実行し、過ぎていれば missed として
   通知チャンネルに知らせます。結果は workload の起動後に保存するため、その間に controller が落ちても再起動後にもう一度実行します
   (起動中の workload を起動しても変化はなく、起動メッセージが 2 回出ることがあります)。
-- **一覧と取り消し**: `/<command> status` に待機中の予約を並べ、作成者と、予約の workload をすべて停止できるユーザーに **Cancel** ボタンを出します。
+- **一覧と取り消し**: `/<command> status` (Discord / Slack) に待機中の予約を並べ、作成者と、予約の workload をすべて停止できるユーザーに **Cancel** ボタンを出します。
   終わった予約も `GET /api/v1/reservations` に 1 日残ります。
 - 監査イベント: `reservation.create`、`reservation.cancel`、workload ごとの `reservation.execute`。いずれも予約 ID を
   `workload_knocker.request_id` に入れます。
 
-定期予約、warmup の自動学習、Slack からの予約は [#75](https://github.com/murasame29/workload-knocker/issues/75)、
-[#76](https://github.com/murasame29/workload-knocker/issues/76)、[#77](https://github.com/murasame29/workload-knocker/issues/77) で扱います。
+定期予約と warmup の自動学習は [#75](https://github.com/murasame29/workload-knocker/issues/75) と
+[#76](https://github.com/murasame29/workload-knocker/issues/76) で扱います。
 
 ## 動作モードと夜間停止
 
