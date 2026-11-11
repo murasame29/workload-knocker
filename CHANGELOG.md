@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/murasame29/workload-knocker/compare/v0.1.6...v0.1.7) (2026-11-11)
+
+
+### Features
+
+* combine several actuators per cluster ([#66](https://github.com/murasame29/workload-knocker/issues/66)) ([47a263d](https://github.com/murasame29/workload-knocker/commit/47a263d7984e5b5150f15eacf86b94843f0a1a56)), closes [#65](https://github.com/murasame29/workload-knocker/issues/65)
+
 ## [0.1.6](https://github.com/murasame29/workload-knocker/compare/v0.1.5...v0.1.6) (2026-11-10)
 
 
