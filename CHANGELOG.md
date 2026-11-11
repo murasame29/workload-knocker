@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/murasame29/workload-knocker/compare/v0.1.8...v0.1.9) (2026-11-11)
+
+
+### Features
+
+* **discord:** select workloads in a modal across namespaces ([#73](https://github.com/murasame29/workload-knocker/issues/73)) ([029a953](https://github.com/murasame29/workload-knocker/commit/029a95340e2e36bb2b8fdc3c8740a24c8ca62b32)), closes [#32](https://github.com/murasame29/workload-knocker/issues/32)
+
 ## [0.1.8](https://github.com/murasame29/workload-knocker/compare/v0.1.7...v0.1.8) (2026-11-11)
 
 
