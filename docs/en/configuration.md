@@ -393,6 +393,10 @@ Notes:
 
 `/<command>` without an argument opens this modal. `/<command> status` lists the workloads instead (see [Status](#status)); any other argument gets a short usage message.
 
+- When every namespace the user may operate fits one modal (one checkbox block per 10 entries of
+  each namespace, at most 97 blocks), the modal lists all namespaces at once, labelled by namespace,
+  with running entries checked. **Plan** previews every namespace with changes and **Apply** applies
+  one request per namespace. Otherwise the modal starts with a namespace select.
 - Namespaces and workloads are sorted a to z.
 - `foo-api`, `foo-app` and `foo-worker` are merged into one `foo` checkbox when at least two of
   those suffixes exist. A partially running group is shown as 🟡 and checked.

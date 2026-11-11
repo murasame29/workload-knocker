@@ -3,6 +3,7 @@ package slackbot
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -94,7 +95,7 @@ func TestModalMetadata_RoundTrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 
-	if got != original {
+	if !reflect.DeepEqual(got, original) {
 		t.Errorf("round trip mismatch: got %+v, want %+v", got, original)
 	}
 }
