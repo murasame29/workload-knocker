@@ -250,17 +250,17 @@ func (f *fakeStore) Namespaces(string) []string { return []string{"labs"} }
 func (f *fakeStore) WorkloadsByNamespace(string, string) []*model.Workload {
 	return f.workloads
 }
-func (f *fakeStore) Start(_, _, name, user string, _ time.Time) bool {
+func (f *fakeStore) Start(_, _, name, user string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "start:"+name+":"+user)
-	return true
+	return nil
 }
-func (f *fakeStore) Stop(_, _, name string) bool {
+func (f *fakeStore) Stop(_, _, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "stop:"+name)
-	return true
+	return nil
 }
 func (f *fakeStore) Reconcile(context.Context, string) error { return nil }
 

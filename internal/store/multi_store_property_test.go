@@ -107,7 +107,7 @@ func TestProperty_ClusterIsolation_Start(t *testing.T) {
 			return
 		}
 
-		if !ms.Start(target.Env, nsName, wlName, "user1", time.Time{}) {
+		if ms.Start(target.Env, nsName, wlName, "user1", time.Time{}) != nil {
 			t.Fatalf("Start(%s, %s, %s) returned false", target.Env, nsName, wlName)
 		}
 
@@ -150,7 +150,7 @@ func TestProperty_StartIdempotent(t *testing.T) {
 		repeats := rapid.IntRange(2, 5).Draw(t, "repeats")
 
 		for i := 0; i < repeats; i++ {
-			if !ms.Start(c.Env, "ns-1", "wl-a", "alice", time.Time{}) {
+			if ms.Start(c.Env, "ns-1", "wl-a", "alice", time.Time{}) != nil {
 				t.Fatalf("Start iter %d: false", i)
 			}
 		}

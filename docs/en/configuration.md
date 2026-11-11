@@ -267,7 +267,9 @@ A workload is skipped, with one warning per change, when:
   a warning is logged and `workload_knocker_gitops_conflicts` is set to 1 (0 once resolved). See
   [GitOps](gitops.md#direct-actuator).
 
-The failure is logged by the controller; chat and API replies do not show it yet.
+If one of these is found at start or stop (for example an HPA added after the last discovery), the operation is
+refused and the state is left as it was. Chat shows `⛔ <workload>: <reason>`, the `POST /api/v1/start` response lists
+it under `refused`, and the audit event is a failure. A refused auto-stop is retried every reconcile and recorded once.
 
 Example cluster entry (`example/config.example.yaml` has the full snippet):
 
@@ -539,10 +541,11 @@ A request refused with `401` or `503` is not written to the audit log, because t
 
 `user` is optional (default `rest-api`). `duration` is optional (a Go duration such as `"3h"` or `"90m"`; empty
 uses the workload default) and must be between `15m` and the workload's maximum, otherwise nothing is started and the
-status is `400`. Returns `200` with `started`, `not_found` and `forbidden` lists and `stop_at` (RFC 3339 per started
-workload with an auto-stop),
+status is `400`. Returns `200` with `started`, `not_found` and `forbidden` lists, `stop_at` (RFC 3339 per started
+workload with an auto-stop) and `refused` (workload to reason, for example a [GitOps conflict](#direct-actuator)),
 `400` for invalid input, `403` when every requested workload is refused by the [authorization policy](#authorization),
-`404` for an unknown `env` or when no workload was found.
+`404` for an unknown `env` or when no workload was found, `409` when nothing started and the remaining workloads
+were refused by the actuator.
 
 ### `POST /api/v1/extend`
 

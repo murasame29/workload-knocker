@@ -71,17 +71,17 @@ func (s *statusStore) Reconcile(context.Context, string) error {
 	return nil
 }
 
-func (s *statusStore) Stop(_, _, name string) bool {
+func (s *statusStore) Stop(_, _, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, w := range s.workloads {
 		if w.Name == name {
 			w.Replicas, w.StopAt = 0, time.Time{}
 			s.stops = append(s.stops, name)
-			return true
+			return nil
 		}
 	}
-	return false
+	return model.ErrWorkloadNotFound
 }
 
 func (s *statusStore) SetStopAt(_, _, name string, at time.Time) bool {

@@ -109,7 +109,7 @@ func TestMultiStore_Start_ScopedToCluster(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	if !ms.Start("a", "ns-1", "wl-x", "alice", time.Time{}) {
+	if ms.Start("a", "ns-1", "wl-x", "alice", time.Time{}) != nil {
 		t.Fatalf("Start(a, ns-1, wl-x): false")
 	}
 
@@ -149,10 +149,10 @@ func TestMultiStore_Start_UnknownClusterReturnsFalse(t *testing.T) {
 	kks := map[string]*kedafake.Clientset{"a": kedafake.NewSimpleClientset()}
 	ms := newTestMultiStore(t, reg, kcs, kks, &fakeMetrics{})
 
-	if ms.Start("nonexistent", "ns", "wl", "alice", time.Time{}) {
+	if ms.Start("nonexistent", "ns", "wl", "alice", time.Time{}) == nil {
 		t.Errorf("Start(nonexistent): got true, want false")
 	}
-	if ms.Stop("nonexistent", "ns", "wl") {
+	if ms.Stop("nonexistent", "ns", "wl") == nil {
 		t.Errorf("Stop(nonexistent): got true, want false")
 	}
 	if ns := ms.Namespaces("nonexistent"); len(ns) != 0 {

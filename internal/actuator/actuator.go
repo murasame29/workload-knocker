@@ -22,6 +22,28 @@ type Workload struct {
 // current replicas; the workload then starts as stopped without a warning.
 var ErrReplicasUnknown = errors.New("current replicas unknown")
 
+// Refusal is implemented by Apply errors caused by the workload's own configuration (for example a
+// GitOps manager owning spec.replicas). The message is shown to the user and the state is not kept.
+type Refusal interface {
+	error
+	Refused()
+}
+
+// RefusedError is a Refusal with a plain reason.
+type RefusedError struct{ Reason string }
+
+func (e *RefusedError) Error() string { return e.Reason }
+
+// Refused marks e as a Refusal.
+func (*RefusedError) Refused() {}
+
+// AsRefusal returns the Refusal in err's chain, if any.
+func AsRefusal(err error) (Refusal, bool) {
+	var r Refusal
+	ok := errors.As(err, &r)
+	return r, ok
+}
+
 // Discoverer finds the workloads of one cluster that workload-knocker manages.
 type Discoverer interface {
 	// Discover lists every managed workload. A workload absent from the result is unmanaged.

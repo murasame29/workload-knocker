@@ -80,6 +80,8 @@ const (
 	ReasonChatStopDisabled Reason = "chat-stop-disabled"
 	// ReasonInvalidDuration: the requested run duration is out of range; see Rejection.Detail.
 	ReasonInvalidDuration Reason = "invalid-duration"
+	// ReasonRefused: the actuator refused the change (for example a GitOps conflict); see Rejection.Detail.
+	ReasonRefused Reason = "refused"
 )
 
 // Rejection is a plan or apply line that was refused; Label is the display target.
@@ -88,7 +90,7 @@ type Rejection struct {
 	Label  string
 	Names  []string
 	Reason Reason
-	// Detail explains ReasonInvalidDuration.
+	// Detail explains ReasonInvalidDuration and ReasonRefused.
 	Detail string
 }
 
@@ -97,7 +99,7 @@ func (r Rejection) Message() string {
 	switch r.Reason {
 	case ReasonChatStopDisabled:
 		return "stopping from chat is disabled (OPERATION_MODE=scheduled-stop); workloads are stopped by the nightly job"
-	case ReasonInvalidDuration:
+	case ReasonInvalidDuration, ReasonRefused:
 		return r.Detail
 	}
 	return "you are not authorized to " + string(r.Action) + " this"
@@ -390,10 +392,13 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 			continue
 		}
 		begin := time.Now()
-		ok := s.store.Start(cl.Env, req.Namespace, name, req.User, sch.StopAt)
-		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStart), resultLabel(ok), time.Since(begin))
-		res.Applied = append(res.Applied, Applied{Action: ActionStart, Name: name, Found: ok, StopAt: sch.StopAt})
-		s.recordApplied(req, ActionStart, name, ok, withSchedule(sch))
+		err := s.store.Start(cl.Env, req.Namespace, name, req.User, sch.StopAt)
+		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStart), resultLabel(err), time.Since(begin))
+		if s.rejectRefused(&res, req, ActionStart, name, err) {
+			continue
+		}
+		res.Applied = append(res.Applied, Applied{Action: ActionStart, Name: name, Found: err == nil, StopAt: sch.StopAt})
+		s.recordApplied(req, ActionStart, name, err == nil, withSchedule(sch))
 	}
 
 	for _, name := range req.ToStop {
@@ -404,10 +409,13 @@ func (s *Service) Apply(req ApplyRequest) ApplyResult {
 			continue
 		}
 		begin := time.Now()
-		ok := s.store.Stop(cl.Env, req.Namespace, name)
-		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStop), resultLabel(ok), time.Since(begin))
-		res.Applied = append(res.Applied, Applied{Action: ActionStop, Name: name, Found: ok})
-		s.recordApplied(req, ActionStop, name, ok)
+		err := s.store.Stop(cl.Env, req.Namespace, name)
+		s.metrics.ObserveOperation(cl.Env, cl.Name, string(ActionStop), resultLabel(err), time.Since(begin))
+		if s.rejectRefused(&res, req, ActionStop, name, err) {
+			continue
+		}
+		res.Applied = append(res.Applied, Applied{Action: ActionStop, Name: name, Found: err == nil})
+		s.recordApplied(req, ActionStop, name, err == nil)
 	}
 
 	s.notifyApplied(req, res)
@@ -539,12 +547,26 @@ func withSchedule(sch Schedule) func(*audit.Record) {
 	return func(r *audit.Record) { r.Duration, r.StopAt = sch.Duration, sch.StopAt }
 }
 
-// resultLabel maps a store outcome to the metrics result label.
-func resultLabel(ok bool) string {
-	if ok {
-		return "success"
+// rejectRefused records an actuator refusal of the store call as a rejection.
+func (s *Service) rejectRefused(res *ApplyResult, req ApplyRequest, a Action, name string, err error) bool {
+	r, ok := model.AsRefused(err)
+	if !ok {
+		return false
 	}
-	return "not_found"
+	res.Rejected = append(res.Rejected, Rejection{Action: a, Label: name, Names: []string{name}, Reason: ReasonRefused, Detail: r.Reason})
+	s.record(req.Subject, req.Cluster, req.Namespace, name, a, audit.Failure, req.RequestID, err)
+	return true
+}
+
+// resultLabel maps a store outcome to the metrics result label.
+func resultLabel(err error) string {
+	switch {
+	case err == nil:
+		return "success"
+	case errors.Is(err, model.ErrWorkloadNotFound):
+		return "not_found"
+	}
+	return "error"
 }
 
 // RolloutEnabled reports whether rollout progress is tracked after Apply.
