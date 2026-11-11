@@ -7,6 +7,7 @@
 | `internal/api/` | REST handlers (`/api/v1/start`, `/api/v1/extend`, `/api/v1/stop-all`, `/api/v1/workloads`) and bearer auth middleware |
 | `internal/audit/` | Audit event schema and recorder (see [audit-log.md](audit-log.md)) |
 | `internal/autostop/` | Reconcile hook that stops expired workloads and calls the stop reminder |
+| `internal/reservation/` | One-off reservations: create, list, cancel, and the reconcile hook that reminds, executes and marks missed |
 | `internal/authz/` | Authorization policy parsing and evaluation |
 | `internal/config/` | Environment variables and the cluster registry |
 | `internal/container/` | Dependency wiring |

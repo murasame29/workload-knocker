@@ -98,7 +98,9 @@ func (f *fakeMetrics) IncConfigReload(string, string) {}
 func (f *fakeMetrics) IncReconcile(string, string)        {}
 func (f *fakeMetrics) IncAutoStop(string, string, string) {}
 
-func (f *fakeMetrics) SetExternalScalerStreams(string, int) {}
+func (f *fakeMetrics) SetExternalScalerStreams(string, int)   {}
+func (f *fakeMetrics) SetReservations(string, string, int)    {}
+func (f *fakeMetrics) IncReservationExecution(string, string) {}
 
 func (f *fakeMetrics) Handler() http.Handler { return http.NotFoundHandler() }
 

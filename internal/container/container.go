@@ -25,6 +25,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/notify"
 	"github.com/murasame29/workload-knocker/internal/reconcile"
 	"github.com/murasame29/workload-knocker/internal/reload"
+	"github.com/murasame29/workload-knocker/internal/reservation"
 	"github.com/murasame29/workload-knocker/internal/rollout"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
 	"github.com/murasame29/workload-knocker/internal/server"
@@ -103,14 +104,19 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		// GET /api/v1/workloads
 		api.NewWorkloadsHandler,
 
+		// One-off reservations: executed by the background loop, created from chat and the API
+		newReservations,
+		func(r *reservation.Service) *api.ReservationsHandler { return api.NewReservationsHandler(r) },
+
 		// HTTP Server (server.Lifecycle)
-		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler, extend *api.ExtendHandler, workloads *api.WorkloadsHandler) *httpserver.Server {
+		func(cfg *config.Env, m metrics.MetricsManager, stopAll *api.StopAllHandler, start *api.StartHandler, extend *api.ExtendHandler, workloads *api.WorkloadsHandler, reservations *api.ReservationsHandler) *httpserver.Server {
 			rec := audit.NewSlog()
 			return httpserver.New(cfg.HTTPPort, m.Handler(),
 				api.Authenticate(cfg.APIToken, rec, api.RequireStop(cfg.OperationMode, rec, stopAll)),
 				api.Authenticate(cfg.APIToken, rec, start),
 				api.Authenticate(cfg.APIToken, rec, extend),
-				api.Authenticate(cfg.APIToken, rec, workloads))
+				api.Authenticate(cfg.APIToken, rec, workloads),
+				api.Authenticate(cfg.APIToken, rec, reservations))
 		},
 		// Rollout progress after Confirm: per-cluster readers and the tracker
 		func(mux *k8sauth.Multiplexer, live *config.Holder) *rollout.Readers {
@@ -129,8 +135,8 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 		},
 
 		// Background reconcile (per-tick hooks for other features are passed here)
-		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager, as *autostop.Hook) *reconcile.Loop {
-			return reconcile.New(ws, m, cfg.ReconcileInterval, cfg.ClusterReconcileTimeout, as)
+		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager, as *autostop.Hook, rs *reservation.Service) *reconcile.Loop {
+			return reconcile.New(ws, m, cfg.ReconcileInterval, cfg.ClusterReconcileTimeout, as, rs)
 		},
 
 		// KEDA external scaler gRPC server; nil unless a cluster uses keda-external
@@ -161,7 +167,22 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 	return c, nil
 }
 
-func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *authz.Holder, ws model.WorkloadStore, m metrics.MetricsManager, rt *rollout.Tracker, n *notify.Service) ([]frontend.Frontend, error) {
+// newReservations builds the reservation service; times in notify messages use the cluster's
+// Discord time zone.
+func newReservations(cfg *config.Env, ms *store.MultiStore, az authz.Authorizer, m metrics.MetricsManager, n *notify.Service, rt *rollout.Tracker, live *config.Holder) *reservation.Service {
+	settings := reservation.Settings{
+		Warmup: cfg.ReservationWarmup, Grace: cfg.ReservationGrace, Reminder: cfg.ReservationReminder, Run: cfg.RunDefaults(),
+		Location: func(env string) *time.Location {
+			if c, ok := live.ByEnv(env); ok {
+				return c.Frontends.Discord.Location()
+			}
+			return nil
+		},
+	}
+	return reservation.New(ms, az, settings, reservation.WithNotifier(n), reservation.WithWatcher(rt), reservation.WithMetrics(m))
+}
+
+func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *authz.Holder, ws model.WorkloadStore, m metrics.MetricsManager, rt *rollout.Tracker, n *notify.Service, rs *reservation.Service) ([]frontend.Frontend, error) {
 	var fs []frontend.Frontend
 	opts := []frontend.Option{frontend.WithRollout(rt), frontend.WithNotifier(n), frontend.WithRunDefaults(cfg.RunDefaults()), frontend.WithClusters(live)}
 	if reg.FrontendEnabled(config.FrontendSlack) {
@@ -177,6 +198,7 @@ func newFrontends(cfg *config.Env, reg *config.Config, live *config.Holder, az *
 		if err != nil {
 			return nil, err
 		}
+		b.SetReservations(rs)
 		n.AddPoster(b.Poster())
 		fs = append(fs, b)
 	}

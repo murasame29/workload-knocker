@@ -132,31 +132,82 @@ func selectionModalResponse(token string, cl config.Cluster, parts []*nsPart, ch
 	}
 }
 
+// textInput is a Text Input (type 4) placed inside a Label, which carries the label text.
+type textInput struct {
+	CustomID    string
+	Placeholder string
+	Required    bool
+	MaxLength   int
+}
+
+func (textInput) Type() discordgo.ComponentType { return discordgo.TextInputComponent }
+
+func (t textInput) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Type        discordgo.ComponentType  `json:"type"`
+		CustomID    string                   `json:"custom_id"`
+		Style       discordgo.TextInputStyle `json:"style"`
+		Placeholder string                   `json:"placeholder,omitempty"`
+		Required    bool                     `json:"required"`
+		MaxLength   int                      `json:"max_length,omitempty"`
+	}{discordgo.TextInputComponent, t.CustomID, discordgo.TextInputShort, t.Placeholder, t.Required, t.MaxLength})
+}
+
 // rawComponent is the part of a submitted modal component this package reads.
 type rawComponent struct {
 	Type       discordgo.ComponentType `json:"type"`
 	CustomID   string                  `json:"custom_id"`
 	Values     []string                `json:"values"`
+	Value      string                  `json:"value"`
 	Component  *rawComponent           `json:"component"`
 	Components []rawComponent          `json:"components"`
 }
 
-// checkboxValues maps each submitted Checkbox Group custom_id to its checked values.
-func checkboxValues(components []rawComponent, out map[string][]string) {
+// modalValues collects the checked values of each Checkbox Group and the text of each Text
+// Input of a submitted modal, by custom_id.
+func modalValues(components []rawComponent, checked map[string][]string, texts map[string]string) {
 	for _, c := range components {
-		if c.Type == componentCheckboxGroup {
-			out[c.CustomID] = c.Values
+		switch c.Type {
+		case componentCheckboxGroup:
+			checked[c.CustomID] = c.Values
+		case discordgo.TextInputComponent:
+			texts[c.CustomID] = c.Value
 		}
 		if c.Component != nil {
-			checkboxValues([]rawComponent{*c.Component}, out)
+			modalValues([]rawComponent{*c.Component}, checked, texts)
 		}
-		checkboxValues(c.Components, out)
+		modalValues(c.Components, checked, texts)
 	}
 }
 
-// parseSelectionSubmit decodes a selection modal submission from a raw INTERACTION_CREATE
-// payload. ok is false for anything else, which the typed handler answers.
+// rawSubmit is a decoded submission of a modal that discordgo cannot decode.
+type rawSubmit struct {
+	i       *discordgo.Interaction
+	id      customID
+	checked map[string][]string
+	texts   map[string]string
+}
+
+// parseModalSubmit decodes a selection or schedule modal submission from a raw
+// INTERACTION_CREATE payload. ok is false for anything else, which the typed handler answers.
+func parseModalSubmit(raw []byte) (rawSubmit, bool) {
+	i, id, checked, texts, ok := parseRawModal(raw)
+	return rawSubmit{i: i, id: id, checked: checked, texts: texts}, ok
+}
+
+// parseSelectionSubmit is parseModalSubmit for the selection modal only.
 func parseSelectionSubmit(raw []byte) (i *discordgo.Interaction, id customID, values map[string][]string, ok bool) {
+	i, id, values, _, ok = parseRawModal(raw)
+	if !ok || id.Kind != kindSelectModal {
+		return nil, customID{}, nil, false
+	}
+	return i, id, values, true
+}
+
+// rawModalKinds are the modals whose submissions are decoded from the raw gateway event.
+var rawModalKinds = map[string]bool{kindSelectModal: true, kindScheduleModal: true}
+
+func parseRawModal(raw []byte) (i *discordgo.Interaction, id customID, checked map[string][]string, texts map[string]string, ok bool) {
 	var in struct {
 		ID        string                    `json:"id"`
 		AppID     string                    `json:"application_id"`
@@ -172,32 +223,38 @@ func parseSelectionSubmit(raw []byte) (i *discordgo.Interaction, id customID, va
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &in); err != nil || in.Type != discordgo.InteractionModalSubmit {
-		return nil, customID{}, nil, false
+		return nil, customID{}, nil, nil, false
 	}
 	id, err := parseCustomID(in.Data.CustomID)
-	if err != nil || id.Kind != kindSelectModal {
-		return nil, customID{}, nil, false
+	if err != nil || !rawModalKinds[id.Kind] {
+		return nil, customID{}, nil, nil, false
 	}
-	values = map[string][]string{}
-	checkboxValues(in.Data.Components, values)
+	checked, texts = map[string][]string{}, map[string]string{}
+	modalValues(in.Data.Components, checked, texts)
 	i = &discordgo.Interaction{
 		ID: in.ID, AppID: in.AppID, Type: in.Type, Token: in.Token,
 		GuildID: in.GuildID, ChannelID: in.ChannelID, Member: in.Member, User: in.User,
 	}
-	return i, id, values, true
+	return i, id, checked, texts, true
 }
 
-// handleRawEvent answers selection modal submissions, which discordgo v0.29.0 fails to decode
-// (the typed InteractionCreate then arrives without Data and is ignored).
+// handleRawEvent answers selection and schedule modal submissions, which discordgo v0.29.0 fails
+// to decode (the typed InteractionCreate then arrives without Data and is ignored).
 func (b *Bot) handleRawEvent(e *discordgo.Event) {
 	if e == nil || e.Type != "INTERACTION_CREATE" {
 		return
 	}
-	i, id, values, ok := parseSelectionSubmit(e.RawData)
+	m, ok := parseModalSubmit(e.RawData)
 	if !ok {
 		return
 	}
-	b.guard(func() { b.handleSelectModal(i, id, values) })
+	b.guard(func() {
+		if m.id.Kind == kindScheduleModal {
+			b.handleScheduleModal(m)
+			return
+		}
+		b.handleSelectModal(m.i, m.id, m.checked)
+	})
 }
 
 // handleSelectModal applies the checked entries of each namespace and answers with the plan

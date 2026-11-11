@@ -241,6 +241,9 @@ func (c *Config) Validate() error {
 			if err := validateDiscordChannel(cl.Frontends.Discord.NotifyChannel); err != nil {
 				return fmt.Errorf("cluster[%d] %q: frontends.discord.notifyChannel: %w", i, cl.Env, err)
 			}
+			if err := validateTimeZone(cl.Frontends.Discord.TimeZone); err != nil {
+				return fmt.Errorf("cluster[%d] %q: frontends.discord.timeZone: %w", i, cl.Env, err)
+			}
 		}
 		if err := validateActuators(cl); err != nil {
 			return fmt.Errorf("cluster[%d] %q: %w", i, cl.Env, err)

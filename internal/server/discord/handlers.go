@@ -110,8 +110,12 @@ func (b *Bot) handleCommand(i *discordgo.Interaction) {
 	sub := subcommandOf(data)
 	slog.Info("slash command received", slog.String("user.id", userID), slog.String("user.name", userName), slog.String("command", data.Name), slog.String("subcommand", sub), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env))
 
-	if sub == subcommandStatus {
+	switch sub {
+	case subcommandStatus:
 		b.handleStatus(i, cl)
+		return
+	case subcommandSchedule:
+		b.handleSchedule(i, cl, userID)
 		return
 	}
 
@@ -170,6 +174,8 @@ func (b *Bot) handleComponent(i *discordgo.Interaction) {
 		b.handleExtend(i, id)
 	case kindStatusExtend, kindStatusStop:
 		b.handleStatusAction(i, id, userID)
+	case kindReservationStop:
+		b.handleReservationCancel(i, id)
 	case kindNamespacePage, kindNamespaceSelect, kindNamespaces, kindWorkloadPage, kindWorkloadSelect, kindPlan, kindCancel:
 		b.withFlow(i, id, userID, func(f *flow, cl config.Cluster) view {
 			return b.step(id, data.Values, subject(i), f, cl)
@@ -415,7 +421,7 @@ func (b *Bot) handleModal(i *discordgo.Interaction) {
 		return
 	}
 	id, err := parseCustomID(data.CustomID)
-	if err == nil && id.Kind == kindSelectModal {
+	if err == nil && rawModalKinds[id.Kind] {
 		return // decoded and handled from the raw gateway event (see handleRawEvent)
 	}
 	userID, _ := interactionUser(i)
