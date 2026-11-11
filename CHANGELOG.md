@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/murasame29/workload-knocker/compare/v0.1.9...v0.1.10) (2026-11-11)
+
+
+### Features
+
+* one-off reservations that are ready at the requested time ([#78](https://github.com/murasame29/workload-knocker/issues/78)) ([ac4d221](https://github.com/murasame29/workload-knocker/commit/ac4d2215c111824b35eeb889cb05bbcee08cc6b9)), closes [#39](https://github.com/murasame29/workload-knocker/issues/39)
+
 ## [0.1.9](https://github.com/murasame29/workload-knocker/compare/v0.1.8...v0.1.9) (2026-11-11)
 
 
