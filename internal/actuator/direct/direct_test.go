@@ -369,6 +369,9 @@ func TestApply_GitOpsGuard(t *testing.T) {
 			if !errors.As(err, &ce) || ce.Manager != tt.wantConflict {
 				t.Fatalf("Apply error = %v, want ConflictError for %s", err, tt.wantConflict)
 			}
+			if _, ok := actuator.AsRefusal(err); !ok {
+				t.Errorf("ConflictError is not a refusal: %v", err)
+			}
 			if e.replicasOf(kindDeployment, "ns", "web") != 0 || len(e.updates) != 0 {
 				t.Errorf("workload was scaled despite the conflict: %v", e.updates)
 			}
@@ -424,17 +427,37 @@ func TestApply_LeavesUnmanagedWorkloadsAlone(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(defaultManagers)
 	e.add(kindDeployment, "ns", "unannotated", nil, 3)
-	e.add(kindDeployment, "ns", "hpa", enabled(), 3)
-	e.add(kindDeployment, "ns", "invalid", enabled(AnnotationReplicas, "0"), 3)
-	e.addHPA("ns", "h", kindDeployment, "hpa")
 
-	for _, name := range []string{"unannotated", "hpa", "invalid", "gone"} {
+	for _, name := range []string{"unannotated", "gone"} {
 		if err := e.be.Apply(ctx, actuator.Workload{Namespace: "ns", Name: name, Kind: kindDeployment}, false); err != nil {
 			t.Errorf("Apply(%s) = %v, want nil", name, err)
 		}
 	}
 	if len(e.updates) != 0 {
 		t.Errorf("unmanaged workloads were patched: %v", e.updates)
+	}
+}
+
+func TestApply_RefusesSkippedWorkloads(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	e := newEnv(defaultManagers)
+	e.add(kindDeployment, "ns", "hpa", enabled(), 3)
+	e.add(kindDeployment, "ns", "invalid", enabled(AnnotationReplicas, "0"), 3)
+	e.addHPA("ns", "h", kindDeployment, "hpa")
+
+	want := map[string]string{
+		"hpa":     "targeted by HorizontalPodAutoscaler h, which cannot scale to 0",
+		"invalid": `annotation workload-knocker.io/replicas must be a positive integer, got "0"`,
+	}
+	for name, reason := range want {
+		err := e.be.Apply(ctx, actuator.Workload{Namespace: "ns", Name: name, Kind: kindDeployment}, false)
+		if r, ok := actuator.AsRefusal(err); !ok || r.Error() != reason {
+			t.Errorf("Apply(%s) = %v, want refusal %q", name, err, reason)
+		}
+	}
+	if len(e.updates) != 0 {
+		t.Errorf("refused workloads were patched: %v", e.updates)
 	}
 }
 

@@ -56,11 +56,17 @@ func ref(w *model.Workload) actuator.Workload {
 	return actuator.Workload{Namespace: w.Namespace, Name: w.Name, Kind: w.Kind}
 }
 
-// apply sends the desired state of w to the actuator; failures are logged, the in-memory state stays.
-func (s *ClusterStore) apply(w actuator.Workload, running bool) {
-	if err := s.actuator.Apply(context.Background(), w, running); err != nil {
+// apply sends the desired state of w to the actuator. A refusal is returned as *model.RefusedError;
+// other failures are logged and the in-memory state stays, so a later reconcile retries.
+func (s *ClusterStore) apply(w actuator.Workload, running bool) error {
+	err := s.actuator.Apply(context.Background(), w, running)
+	if r, ok := actuator.AsRefusal(err); ok {
+		return &model.RefusedError{Reason: r.Error()}
+	}
+	if err != nil {
 		slog.Warn("failed to apply workload state", slog.String("cluster.name", s.cluster.Name), slog.String("cluster.env", s.cluster.Env), slog.String("workload", w.Name), slog.String("namespace", w.Namespace), slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()), slog.String("operation", "apply-state"))
 	}
+	return nil
 }
 
 func (s *ClusterStore) forget(w actuator.Workload) {
@@ -78,7 +84,8 @@ type effect struct {
 
 func (s *ClusterStore) run(effects []effect) {
 	for _, e := range effects {
-		s.apply(e.w, e.running)
+		// The actuator reports its own refusals (for example the GitOps conflict gauge).
+		_ = s.apply(e.w, e.running)
 		if e.forget {
 			s.forget(e.w)
 		}
@@ -118,25 +125,56 @@ func (s *ClusterStore) WorkloadsByNamespace(ns string) []*model.Workload {
 
 // Start sets the workload to running: in-memory update, then persist, then metrics.
 // Persisting (a K8s API call) runs under persistMu after releasing mu.
-func (s *ClusterStore) Start(ns, name, user string, stopAt time.Time) bool {
+// A refusal from the actuator puts the previous state back.
+func (s *ClusterStore) Start(ns, name, user string, stopAt time.Time) error {
+	return s.change(ns+"/"+name, true, runState{replicas: 1, startedBy: user, startedAt: s.now(), stopAt: stopAt})
+}
+
+// runState is the part of a workload that Start and Stop change.
+type runState struct {
+	replicas  int
+	startedBy string
+	startedAt time.Time
+	stopAt    time.Time
+}
+
+func stateOf(w *model.Workload) runState {
+	return runState{replicas: w.Replicas, startedBy: w.StartedBy, startedAt: w.StartedAt, stopAt: w.StopAt}
+}
+
+func (r runState) setOn(w *model.Workload) {
+	w.Replicas, w.StartedBy, w.StartedAt, w.StopAt = r.replicas, r.startedBy, r.startedAt, r.stopAt
+}
+
+// change sets the run state of key, persists it and applies it; a refusal restores the previous
+// state unless another operation changed it meanwhile.
+func (s *ClusterStore) change(key string, running bool, next runState) error {
 	s.mu.Lock()
-	w, ok := s.workloads[ns+"/"+name]
+	w, ok := s.workloads[key]
 	if !ok {
 		s.mu.Unlock()
-		return false
+		return model.ErrWorkloadNotFound
 	}
-	w.Replicas = 1
-	w.StartedBy = user
-	w.StartedAt = s.now()
-	w.StopAt = stopAt
+	prev := stateOf(w)
+	next.setOn(w)
 	entries := s.snapshotEntriesLocked()
 	target := ref(w)
 	s.mu.Unlock()
 
 	s.persist(entries)
-	s.apply(target, true)
+	err := s.apply(target, running)
+	if err == nil {
+		return nil
+	}
 
-	return true
+	s.mu.Lock()
+	if w, ok := s.workloads[key]; ok && stateOf(w) == next {
+		prev.setOn(w)
+	}
+	entries = s.snapshotEntriesLocked()
+	s.mu.Unlock()
+	s.persist(entries)
+	return err
 }
 
 // SetStopAt moves the auto-stop of a running workload.
@@ -156,25 +194,9 @@ func (s *ClusterStore) SetStopAt(ns, name string, stopAt time.Time) bool {
 }
 
 // Stop sets the workload to stopped.
-func (s *ClusterStore) Stop(ns, name string) bool {
-	s.mu.Lock()
-	w, ok := s.workloads[ns+"/"+name]
-	if !ok {
-		s.mu.Unlock()
-		return false
-	}
-	w.Replicas = 0
-	w.StartedBy = ""
-	w.StartedAt = time.Time{}
-	w.StopAt = time.Time{}
-	entries := s.snapshotEntriesLocked()
-	target := ref(w)
-	s.mu.Unlock()
-
-	s.persist(entries)
-	s.apply(target, false)
-
-	return true
+// A refusal from the actuator puts the previous state back.
+func (s *ClusterStore) Stop(ns, name string) error {
+	return s.change(ns+"/"+name, false, runState{})
 }
 
 // StopAll stops the workloads allow accepts (nil = all). It returns the number stopped and the

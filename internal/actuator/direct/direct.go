@@ -41,6 +41,9 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("replicas is managed by %s; remove replicas from the manifest", e.Manager)
 }
 
+// Refused marks the conflict as an actuator.Refusal shown to the user.
+func (*ConflictError) Refused() {}
+
 // Backend implements actuator.Discoverer and actuator.Actuator for one cluster.
 type Backend struct {
 	cluster  config.Cluster
@@ -137,17 +140,15 @@ func (b *Backend) Apply(ctx context.Context, w actuator.Workload, running bool) 
 	if o.meta.Annotations[AnnotationEnabled] != "true" {
 		return nil
 	}
-	target, valid := parseReplicas(o.meta.Annotations)
-	if !valid {
-		return nil
-	}
 	hpas, err := b.hpaTargets(ctx, w.Namespace)
 	if err != nil {
 		return err
 	}
-	if _, ok := hpas[w.Namespace+"/"+hpaKey(w.Kind, w.Name)]; ok {
-		return nil
+	// Discover skips these too; this covers a change made after the last discovery.
+	if reason := skipReason(o, hpas); reason != "" {
+		return &actuator.RefusedError{Reason: reason}
 	}
+	target, _ := parseReplicas(o.meta.Annotations)
 
 	if owner := b.gitopsOwner(o.meta.ManagedFields); owner != "" {
 		b.metrics.SetGitOpsConflict(b.cluster.Env, b.cluster.Name, w.Namespace, w.Name, 1)

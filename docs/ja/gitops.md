@@ -21,7 +21,7 @@ workload-knocker は Argo CD / Flux のアプリケーションを OutOfSync に
 - 書き込むのは scale subresource (`deployments/scale`, `statefulsets/scale`) だけで、workload 自体には書きません。
 - `metadata.managedFields` を読み、`GITOPS_MANAGERS` (既定は `argocd-controller`、`kustomize-controller`、
   `helm-controller`) の manager が `spec.replicas` を所有していれば Git を優先します。workload はスケールされず、
-  操作は `replicas is managed by <manager>; remove replicas from the manifest` で失敗し、warning を出力して
+  操作は `replicas is managed by <manager>; remove replicas from the manifest` で失敗し (チャットと API の応答にも表示)、warning を出力して
   `workload_knocker_gitops_conflicts` が 1 になります。マニフェストから `replicas` を省く (または下記のように除外する) と、
   次の操作でメトリクスが 0 に戻ります。
 - それ以外の manager は影響しません。方針に沿った workload にある HPA や `kube-controller-manager` のエントリ、

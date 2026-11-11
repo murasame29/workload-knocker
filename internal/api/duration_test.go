@@ -46,14 +46,15 @@ func (s *durStore) WorkloadsByNamespace(string, string) []*model.Workload {
 	return out
 }
 
-func (s *durStore) Start(_, _, name, _ string, stopAt time.Time) bool {
+func (s *durStore) Start(_, _, name, _ string, stopAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, ok := s.ws[name]
-	if ok {
-		w.Replicas, w.StopAt = 1, stopAt
+	if !ok {
+		return model.ErrWorkloadNotFound
 	}
-	return ok
+	w.Replicas, w.StopAt = 1, stopAt
+	return nil
 }
 
 func (s *durStore) SetStopAt(_, _, name string, stopAt time.Time) bool {

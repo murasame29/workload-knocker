@@ -23,9 +23,15 @@ func (s *startStore) Clusters() []model.ClusterRef {
 	return []model.ClusterRef{{Env: "stg", Name: "stg-cluster"}}
 }
 
-func (s *startStore) Start(_, _, name, _ string, _ time.Time) bool {
+func (s *startStore) Start(_, _, name, _ string, _ time.Time) error {
 	s.started = append(s.started, name)
-	return name == "ok" || name == "ok2"
+	switch name {
+	case "ok", "ok2":
+		return nil
+	case "conflict":
+		return &model.RefusedError{Reason: "replicas is managed by argocd-controller; remove replicas from the manifest"}
+	}
+	return model.ErrWorkloadNotFound
 }
 
 func TestStartHandler_ObservesSuccessAndNotFound(t *testing.T) {
@@ -43,6 +49,23 @@ func TestStartHandler_ObservesSuccessAndNotFound(t *testing.T) {
 	want := []string{"stg/stg-cluster/start/success", "stg/stg-cluster/start/not_found"}
 	if len(m.ops) != len(want) || m.ops[0] != want[0] || m.ops[1] != want[1] {
 		t.Fatalf("observations: got %v, want %v", m.ops, want)
+	}
+}
+
+func TestStartHandler_ReportsActuatorRefusals(t *testing.T) {
+	t.Parallel()
+
+	reason := "replicas is managed by argocd-controller; remove replicas from the manifest"
+	h := NewStartHandler(&startStore{}, &fakeMetrics{}, allowAll{}, runlimit.Defaults{})
+
+	rec, resp := postStart(t, h, `{"env":"stg","namespace":"ns","workloads":["ok","conflict"]}`)
+	if rec.Code != http.StatusOK || !slices.Equal(resp.Started, []string{"ok"}) || resp.Refused["conflict"] != reason {
+		t.Errorf("mixed: status=%d resp=%+v", rec.Code, resp)
+	}
+
+	rec, resp = postStart(t, h, `{"env":"stg","namespace":"ns","workloads":["conflict"]}`)
+	if rec.Code != http.StatusConflict || len(resp.Started) != 0 || resp.Refused["conflict"] != reason {
+		t.Errorf("refused only: status=%d resp=%+v, want 409", rec.Code, resp)
 	}
 }
 

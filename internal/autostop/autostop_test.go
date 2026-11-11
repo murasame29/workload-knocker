@@ -17,6 +17,13 @@ type fakeStore struct {
 	workloads map[string]*model.Workload
 	stopped   []string
 	failStop  bool
+	refuse    bool
+}
+
+func (f *fakeStore) setRefuse(v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refuse = v
 }
 
 func (f *fakeStore) Clusters() []model.ClusterRef {
@@ -33,16 +40,19 @@ func (f *fakeStore) WorkloadsByNamespace(string, string) []*model.Workload {
 	}
 	return out
 }
-func (f *fakeStore) Stop(_, _, name string) bool {
+func (f *fakeStore) Stop(_, _, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failStop {
-		return false
+		return model.ErrWorkloadNotFound
+	}
+	if f.refuse {
+		return &model.RefusedError{Reason: "replicas is managed by argocd-controller; remove replicas from the manifest"}
 	}
 	f.stopped = append(f.stopped, name)
 	f.workloads[name].Replicas = 0
 	f.workloads[name].StopAt = time.Time{}
-	return true
+	return nil
 }
 func (f *fakeStore) extend(name string, stopAt time.Time) {
 	f.mu.Lock()
@@ -122,6 +132,29 @@ func TestTick_SurvivesRestartBecauseStateIsPersisted(t *testing.T) {
 	New(s, &recMetrics{}, 0).Tick(context.Background(), t0.Add(time.Hour+time.Second))
 	if !slices.Equal(s.stopped, []string{"w"}) {
 		t.Errorf("stopped = %v", s.stopped)
+	}
+}
+
+func TestTick_RefusedStopIsRetriedButRecordedOnce(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeStore{refuse: true, workloads: map[string]*model.Workload{"w": running("w", t0)}}
+	m, a := &recMetrics{}, &recAudit{}
+	h := New(s, m, 0, WithRecorder(a))
+
+	h.Tick(context.Background(), t0)
+	h.Tick(context.Background(), t0.Add(time.Minute))
+	if len(a.recs) != 1 || a.recs[0].Outcome != audit.Failure || a.recs[0].Err == nil {
+		t.Fatalf("audit records = %+v, want one failure", a.recs)
+	}
+
+	s.setRefuse(false)
+	h.Tick(context.Background(), t0.Add(2*time.Minute))
+	if !slices.Equal(s.stopped, []string{"w"}) || len(a.recs) != 2 || a.recs[1].Outcome != audit.Success {
+		t.Errorf("after resolution: stopped = %v, audit = %+v", s.stopped, a.recs)
+	}
+	if !slices.Equal(m.results, []string{"stg/stg-cluster/error", "stg/stg-cluster/success"}) {
+		t.Errorf("metrics = %v", m.results)
 	}
 }
 

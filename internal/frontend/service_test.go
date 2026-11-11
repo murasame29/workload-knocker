@@ -38,13 +38,27 @@ func (f *fakeStore) Namespaces(string) []string { return []string{"zeta", "alpha
 func (f *fakeStore) WorkloadsByNamespace(string, string) []*model.Workload {
 	return f.workloads
 }
-func (f *fakeStore) Start(env, ns, name, user string, _ time.Time) bool {
+func (f *fakeStore) Start(env, ns, name, user string, _ time.Time) error {
 	f.calls = append(f.calls, "start:"+name+":"+user)
-	return name != "missing"
+	return f.result(name)
 }
-func (f *fakeStore) Stop(env, ns, name string) bool {
+
+// result maps the test workload names to store outcomes.
+func (f *fakeStore) result(name string) error {
+	switch name {
+	case "missing":
+		return model.ErrWorkloadNotFound
+	case "conflict":
+		return &model.RefusedError{Reason: "replicas is managed by argocd-controller; remove replicas from the manifest"}
+	}
+	return nil
+}
+func (f *fakeStore) Stop(env, ns, name string) error {
 	f.calls = append(f.calls, "stop:"+name)
-	return true
+	if name == "conflict" {
+		return f.result(name)
+	}
+	return nil
 }
 func (f *fakeStore) Reconcile(context.Context, string) error { return nil }
 
@@ -158,6 +172,33 @@ func TestService_Apply_CallsStoreInOrder(t *testing.T) {
 	}
 	if len(res.Applied) != 3 || res.Applied[1].Found || !res.Applied[2].Found || res.Applied[2].Action != ActionStop {
 		t.Errorf("Applied = %+v", res.Applied)
+	}
+}
+
+func TestService_Apply_ShowsActuatorRefusals(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(&fakeStore{}, metrics.New(), 0, WithAuthorizer(allowAll))
+	res := svc.Apply(ApplyRequest{
+		Cluster: config.Cluster{Env: "stg", Name: "c"}, Namespace: "labs", User: "u", Subject: alice,
+		ToStart: []string{"conflict", "a"}, ToStop: []string{"conflict"},
+	})
+
+	if len(res.Applied) != 1 || res.Applied[0].Name != "a" || !res.Applied[0].Found {
+		t.Errorf("Applied = %+v, want only a", res.Applied)
+	}
+	want := "replicas is managed by argocd-controller; remove replicas from the manifest"
+	if len(res.Rejected) != 2 {
+		t.Fatalf("Rejected = %+v, want the refused start and stop", res.Rejected)
+	}
+	for i, a := range []Action{ActionStart, ActionStop} {
+		r := res.Rejected[i]
+		if r.Action != a || r.Label != "conflict" || r.Reason != ReasonRefused || r.Message() != want {
+			t.Errorf("Rejected[%d] = %+v (message %q), want %s refusal %q", i, r, r.Message(), a, want)
+		}
+	}
+	if lines := res.StopLines(); !slices.Contains(lines, "⛔ conflict: "+want) {
+		t.Errorf("StopLines = %v, want the refusal line", lines)
 	}
 }
 

@@ -228,7 +228,7 @@ func TestClusterStore_Start_UpdatesConfigMap(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	if !store.Start("ns-a", "wl-1", "alice", time.Time{}) {
+	if store.Start("ns-a", "wl-1", "alice", time.Time{}) != nil {
 		t.Fatalf("Start(ns-a, wl-1, alice) = false, want true")
 	}
 
@@ -257,10 +257,10 @@ func TestClusterStore_Stop_ClearsReplicas(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	if !store.Start("ns-a", "wl-1", "alice", time.Time{}) {
+	if store.Start("ns-a", "wl-1", "alice", time.Time{}) != nil {
 		t.Fatalf("Start: false")
 	}
-	if !store.Stop("ns-a", "wl-1") {
+	if store.Stop("ns-a", "wl-1") != nil {
 		t.Fatalf("Stop: false")
 	}
 
@@ -298,10 +298,10 @@ func TestClusterStore_StopAll_ReturnsCount(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	if !store.Start("ns-a", "wl-1", "alice", time.Time{}) {
+	if store.Start("ns-a", "wl-1", "alice", time.Time{}) != nil {
 		t.Fatalf("Start wl-1: false")
 	}
-	if !store.Start("ns-a", "wl-2", "bob", time.Time{}) {
+	if store.Start("ns-a", "wl-2", "bob", time.Time{}) != nil {
 		t.Fatalf("Start wl-2: false")
 	}
 
@@ -376,7 +376,7 @@ func TestClusterStore_StopAt_PersistsAcrossRestartAndClearsOnStop(t *testing.T) 
 	if err := first.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	if !first.Start("ns-a", "wl-1", "alice", stopAt) {
+	if first.Start("ns-a", "wl-1", "alice", stopAt) != nil {
 		t.Fatal("Start = false")
 	}
 
@@ -396,7 +396,7 @@ func TestClusterStore_StopAt_PersistsAcrossRestartAndClearsOnStop(t *testing.T) 
 		t.Errorf("StopAt after SetStopAt = %v, want %v", got, later)
 	}
 
-	if !second.Stop("ns-a", "wl-1") {
+	if second.Stop("ns-a", "wl-1") != nil {
 		t.Fatal("Stop = false")
 	}
 	if !second.WorkloadsByNamespace("ns-a")[0].StopAt.IsZero() {

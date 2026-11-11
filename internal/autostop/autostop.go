@@ -5,7 +5,6 @@ package autostop
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -19,7 +18,7 @@ type Store interface {
 	Clusters() []model.ClusterRef
 	Namespaces(env string) []string
 	WorkloadsByNamespace(env, ns string) []*model.Workload
-	Stop(env, ns, name string) bool
+	Stop(env, ns, name string) error
 }
 
 // StopReminder is called once per workload and stop time shortly before the auto-stop.
@@ -43,6 +42,8 @@ type Hook struct {
 
 	mu       sync.Mutex
 	reminded map[remindKey]struct{}
+	// refused holds the auto-stops the actuator refused; they are retried every tick but recorded once.
+	refused map[remindKey]struct{}
 }
 
 type remindKey struct {
@@ -67,18 +68,18 @@ func WithRecorder(r audit.Recorder) Option { return func(h *Hook) { h.audit = r 
 
 // New builds the hook; lead is how long before the stop the reminder fires (0 disables it).
 func New(s Store, m metrics.MetricsManager, lead time.Duration, opts ...Option) *Hook {
-	h := &Hook{store: s, metrics: m, lead: lead, audit: audit.NewSlog(), reminder: noopReminder{}, reminded: map[remindKey]struct{}{}}
+	h := &Hook{store: s, metrics: m, lead: lead, audit: audit.NewSlog(), reminder: noopReminder{}, reminded: map[remindKey]struct{}{}, refused: map[remindKey]struct{}{}}
 	for _, o := range opts {
 		o(h)
 	}
 	return h
 }
 
-var errStopFailed = errors.New("workload not found")
-
 // Tick stops the workloads whose stop time passed and reminds those about to stop.
 func (h *Hook) Tick(ctx context.Context, now time.Time) {
 	live := map[remindKey]struct{}{}
+	due := map[remindKey]struct{}{}
+	defer h.forgetRefused(due)
 	for _, c := range h.store.Clusters() {
 		for _, ns := range h.store.Namespaces(c.Env) {
 			for _, w := range h.store.WorkloadsByNamespace(c.Env, ns) {
@@ -86,11 +87,12 @@ func (h *Hook) Tick(ctx context.Context, now time.Time) {
 					continue
 				}
 				w.Env = c.Env
+				k := remindKey{c.Env, w.Namespace, w.Name, w.StopAt.Unix()}
 				if !now.Before(w.StopAt) {
-					h.stop(ctx, c, w)
+					due[k] = struct{}{}
+					h.stop(ctx, c, w, k)
 					continue
 				}
-				k := remindKey{c.Env, w.Namespace, w.Name, w.StopAt.Unix()}
 				live[k] = struct{}{}
 				h.remind(ctx, k, w, now)
 			}
@@ -99,8 +101,17 @@ func (h *Hook) Tick(ctx context.Context, now time.Time) {
 	h.forget(live)
 }
 
-func (h *Hook) stop(ctx context.Context, c model.ClusterRef, w *model.Workload) {
-	ok := h.store.Stop(c.Env, w.Namespace, w.Name)
+func (h *Hook) stop(ctx context.Context, c model.ClusterRef, w *model.Workload, k remindKey) {
+	err := h.store.Stop(c.Env, w.Namespace, w.Name)
+	if _, refused := model.AsRefused(err); refused {
+		h.mu.Lock()
+		_, seen := h.refused[k]
+		h.refused[k] = struct{}{}
+		h.mu.Unlock()
+		if seen {
+			return
+		}
+	}
 	rec := audit.Record{
 		Event: audit.WorkloadAutoStop, Outcome: audit.Success, Source: audit.SourceScheduler,
 		RequestID: audit.NewRequestID(), EndUser: audit.EndUser(audit.SourceScheduler, ""),
@@ -108,8 +119,8 @@ func (h *Hook) stop(ctx context.Context, c model.ClusterRef, w *model.Workload) 
 		StopAt: w.StopAt,
 	}
 	result := "success"
-	if !ok {
-		rec.Outcome, rec.Err = audit.Failure, errStopFailed
+	if err != nil {
+		rec.Outcome, rec.Err = audit.Failure, err
 		result = "error"
 	}
 	h.metrics.IncAutoStop(c.Env, c.Name, result)
@@ -136,6 +147,17 @@ func (h *Hook) forget(live map[remindKey]struct{}) {
 	for k := range h.reminded {
 		if _, ok := live[k]; !ok {
 			delete(h.reminded, k)
+		}
+	}
+}
+
+// forgetRefused drops refusals that are no longer due (stopped, extended or removed).
+func (h *Hook) forgetRefused(due map[remindKey]struct{}) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for k := range h.refused {
+		if _, ok := due[k]; !ok {
+			delete(h.refused, k)
 		}
 	}
 }

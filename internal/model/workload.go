@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -22,6 +23,22 @@ type Workload struct {
 	MaxDuration     time.Duration
 	// ReadyMessage is the raw workload-knocker.io/ready-message template of the ScaledObject; "" when unset.
 	ReadyMessage string
+}
+
+// ErrWorkloadNotFound is returned by Start / Stop when the store does not know the workload.
+var ErrWorkloadNotFound = errors.New("workload not found")
+
+// RefusedError is returned by Start / Stop when the actuator refused the change; the state is
+// unchanged. Reason is safe to show in a chat.
+type RefusedError struct{ Reason string }
+
+func (e *RefusedError) Error() string { return e.Reason }
+
+// AsRefused returns the *RefusedError in err's chain, if any.
+func AsRefused(err error) (*RefusedError, bool) {
+	var r *RefusedError
+	ok := errors.As(err, &r)
+	return r, ok
 }
 
 // ClusterRef is a lightweight DTO for the Bot / API layer to reference a Cluster
@@ -56,12 +73,13 @@ type WorkloadStore interface {
 	// WorkloadsByNamespace returns the workloads of the given env / namespace.
 	WorkloadsByNamespace(env, ns string) []*Workload
 	// Start sets the workload to running (replicas=1, startedBy=user) and schedules its
-	// auto-stop at stopAt (zero = none).
-	Start(env, ns, name, user string, stopAt time.Time) bool
+	// auto-stop at stopAt (zero = none). It returns ErrWorkloadNotFound or a *RefusedError.
+	Start(env, ns, name, user string, stopAt time.Time) error
 	// SetStopAt moves the auto-stop of a running workload; false when it is unknown or stopped.
 	SetStopAt(env, ns, name string, stopAt time.Time) bool
 	// Stop sets the workload to stopped (replicas=0) and clears its auto-stop.
-	Stop(env, ns, name string) bool
+	// It returns ErrWorkloadNotFound or a *RefusedError.
+	Stop(env, ns, name string) error
 	// StopAll stops the workloads allowed by the filter in all clusters in parallel.
 	// A failure in one cluster does not stop the others; it is recorded in the result.
 	StopAll(ctx context.Context, allow StopFilter) StopAllResult

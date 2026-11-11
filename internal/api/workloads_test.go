@@ -45,9 +45,9 @@ func (s *listStore) ReconcileAll(context.Context) error {
 	return nil
 }
 
-func (s *listStore) Start(string, string, string, string, time.Time) bool {
+func (s *listStore) Start(string, string, string, string, time.Time) error {
 	s.t.Error("GET /api/v1/workloads must not start")
-	return false
+	return model.ErrWorkloadNotFound
 }
 
 func (s *listStore) SetStopAt(string, string, string, time.Time) bool {
@@ -55,9 +55,9 @@ func (s *listStore) SetStopAt(string, string, string, time.Time) bool {
 	return false
 }
 
-func (s *listStore) Stop(string, string, string) bool {
+func (s *listStore) Stop(string, string, string) error {
 	s.t.Error("GET /api/v1/workloads must not stop")
-	return false
+	return model.ErrWorkloadNotFound
 }
 
 func (s *listStore) StopAll(context.Context, model.StopFilter) model.StopAllResult {

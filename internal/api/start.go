@@ -64,6 +64,8 @@ type startResponse struct {
 	NotFound     []string `json:"not_found"`
 	// Forbidden lists workloads the authorization policy does not let the API start.
 	Forbidden []string `json:"forbidden"`
+	// Refused maps workloads the actuator refused to start (for example a GitOps conflict) to the reason.
+	Refused map[string]string `json:"refused,omitempty"`
 	// StopAt maps each started workload with an auto-stop to its stop time (RFC 3339).
 	StopAt  map[string]time.Time `json:"stop_at,omitempty"`
 	Message string               `json:"message"`
@@ -76,6 +78,7 @@ type startResponse struct {
 //   - 400: JSON parse failure, missing env / namespace / workloads, or an invalid duration
 //   - 403: every requested workload is refused by the authorization policy
 //   - 404: env not in the Cluster Registry, or none of the workloads found
+//   - 409: none started and every remaining workload was refused by the actuator (see refused)
 //   - 200: at least one started (workloads not found are listed in not_found)
 func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -153,6 +156,7 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	started := make([]string, 0, len(req.Workloads))
 	notFound := make([]string, 0)
 	forbidden := make([]string, 0)
+	refused := map[string]string{}
 	for _, name := range req.Workloads {
 		// Authorize before touching the store so a refusal never reveals whether the workload exists.
 		if !h.authz.Allowed(authz.APISubject, req.Env, req.Namespace, name, authz.ActionStart) {
@@ -162,8 +166,14 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		d, stopAt := h.schedule(req.Env, req.Namespace, name, requested)
 		begin := time.Now()
-		ok := h.store.Start(req.Env, req.Namespace, name, user, stopAt)
-		if ok {
+		err := h.store.Start(req.Env, req.Namespace, name, user, stopAt)
+		if refusal, isRefusal := model.AsRefused(err); isRefusal {
+			h.metrics.ObserveOperation(req.Env, cluster, "start", "error", time.Since(begin))
+			refused[name] = refusal.Reason
+			record(name, audit.Failure, err)
+			continue
+		}
+		if err == nil {
 			h.metrics.ObserveOperation(req.Env, cluster, "start", "success", time.Since(begin))
 			started = append(started, name)
 			if !stopAt.IsZero() {
@@ -182,6 +192,9 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 	message := "workloads started"
 	switch {
+	case len(started) == 0 && len(refused) > 0 && len(notFound) == 0:
+		status = http.StatusConflict
+		message = "the requested workloads cannot be started; see refused"
 	case len(started) == 0 && len(forbidden) > 0 && len(notFound) == 0:
 		status = http.StatusForbidden
 		message = "not authorized to start the requested workloads"
@@ -189,8 +202,8 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// None of the specified workloads were found (wrong namespace / name).
 		status = http.StatusNotFound
 		message = "no matching workloads were found"
-	case len(notFound) > 0 || len(forbidden) > 0:
-		message = "some workloads were started; others were not found or not authorized"
+	case len(notFound) > 0 || len(forbidden) > 0 || len(refused) > 0:
+		message = "some workloads were started; others were not found, not authorized or refused"
 	}
 
 	resp := startResponse{
@@ -200,6 +213,7 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Started:      started,
 		NotFound:     notFound,
 		Forbidden:    forbidden,
+		Refused:      refused,
 		StopAt:       stopAts,
 		Message:      message,
 	}

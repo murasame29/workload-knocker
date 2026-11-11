@@ -180,10 +180,10 @@ func (m *MultiStore) WorkloadsByNamespace(env, ns string) []*model.Workload {
 }
 
 // Start sets the workload of the given cluster / ns / name to running.
-func (m *MultiStore) Start(env, ns, name, user string, stopAt time.Time) bool {
+func (m *MultiStore) Start(env, ns, name, user string, stopAt time.Time) error {
 	cs, ok := m.storeFor(env)
 	if !ok {
-		return false
+		return model.ErrWorkloadNotFound
 	}
 	return cs.Start(ns, name, user, stopAt)
 }
@@ -198,10 +198,10 @@ func (m *MultiStore) SetStopAt(env, ns, name string, stopAt time.Time) bool {
 }
 
 // Stop sets the workload of the given cluster / ns / name to stopped.
-func (m *MultiStore) Stop(env, ns, name string) bool {
+func (m *MultiStore) Stop(env, ns, name string) error {
 	cs, ok := m.storeFor(env)
 	if !ok {
-		return false
+		return model.ErrWorkloadNotFound
 	}
 	return cs.Stop(ns, name)
 }

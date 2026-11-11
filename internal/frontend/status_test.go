@@ -40,14 +40,14 @@ func (s *readOnlyStore) ReconcileAll(context.Context) error {
 	return nil
 }
 
-func (s *readOnlyStore) Start(string, string, string, string, time.Time) bool {
+func (s *readOnlyStore) Start(string, string, string, string, time.Time) error {
 	s.t.Error("the status path must not start")
-	return false
+	return model.ErrWorkloadNotFound
 }
 
-func (s *readOnlyStore) Stop(string, string, string) bool {
+func (s *readOnlyStore) Stop(string, string, string) error {
 	s.t.Error("the status path must not stop")
-	return false
+	return model.ErrWorkloadNotFound
 }
 
 func running(ns, name string, stopAt time.Time) *model.Workload {

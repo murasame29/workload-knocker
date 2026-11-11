@@ -259,7 +259,9 @@ start は scale subresource を起動中の replicas に、stop は `0` にし�
   `replicas is managed by <manager>; remove replicas from the manifest` で失敗し、warning を出力して
   `workload_knocker_gitops_conflicts` を 1 にします (解消後は 0)。[GitOps](gitops.md#direct-actuator) を参照。
 
-失敗はコントローラのログに出力され、チャットや API の応答にはまだ表示されません。
+start / stop の時点でこれらに当たった場合 (前回の検出後に HPA が追加された場合など) は操作を拒否し、状態は変えません。
+チャットには `⛔ <workload>: <理由>` を表示し、`POST /api/v1/start` の応答では `refused` に載せ、監査イベントは失敗になります。
+拒否された自動停止は reconcile のたびに再試行し、記録は 1 回だけです。
 
 cluster 設定の例 (全文は `example/config.example.yaml`):
 
@@ -522,10 +524,10 @@ curl -X POST "http://workload-knocker.workload-knocker.svc:8080/api/v1/start" \
 ```
 
 `user` は省略可 (既定 `rest-api`)。`duration` も省略可 (`"3h"` や `"90m"` のような Go duration。空は workload の既定) で、
-`15m` から workload の上限までの範囲外なら何も start せず `400` です。`200` で `started` / `not_found` / `forbidden` と
-`stop_at` (自動停止がある start 済み workload ごとの RFC 3339) を返し、入力不正は `400`、
-要求した workload がすべて [認可ポリシー](#認可) に拒否された場合は `403`、
-未登録の `env` または 1 件も見つからない場合は `404` です。
+`15m` から workload の上限までの範囲外なら何も start せず `400` です。`200` で `started` / `not_found` / `forbidden`、
+`stop_at` (自動停止がある start 済み workload ごとの RFC 3339)、`refused` (workload と理由。[GitOps の衝突](#direct-actuator)など) を返し、
+入力不正は `400`、要求した workload がすべて [認可ポリシー](#認可) に拒否された場合は `403`、
+未登録の `env` または 1 件も見つからない場合は `404`、何も start できず残りが actuator に拒否された場合は `409` です。
 
 ### `POST /api/v1/extend`
 

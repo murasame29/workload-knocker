@@ -118,7 +118,7 @@ func TestReload_RemovesClusterAndItsSeries(t *testing.T) {
 	if !slices.Equal(res.Removed, []string{"b"}) {
 		t.Errorf("Removed = %v", res.Removed)
 	}
-	if ms.Namespaces("b") != nil || ms.Start("b", "ns", "w", "u", time.Time{}) {
+	if ms.Namespaces("b") != nil || ms.Start("b", "ns", "w", "u", time.Time{}) == nil {
 		t.Error("removed cluster must no longer be served")
 	}
 	if !slices.Equal(m.deletedClusters, []string{"b/b-cluster"}) {
@@ -190,7 +190,7 @@ func TestReload_ChangedClusterBootstrapFailureKeepsOldStore(t *testing.T) {
 	if after, _ := ms.storeFor("a"); after != before {
 		t.Error("old store must be kept when the new one cannot bootstrap")
 	}
-	if !ms.Start("a", "ns", "w", "u", time.Time{}) {
+	if ms.Start("a", "ns", "w", "u", time.Time{}) != nil {
 		t.Error("old store must still serve")
 	}
 }

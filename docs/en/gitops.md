@@ -24,8 +24,8 @@ stream instead of the gauge. The [`direct` actuator](#direct-actuator) enforces 
 - It writes only the scale subresource (`deployments/scale`, `statefulsets/scale`), never the workload.
 - It reads `metadata.managedFields`. If a manager from `GITOPS_MANAGERS` (default `argocd-controller`,
   `kustomize-controller`, `helm-controller`) owns `spec.replicas`, Git has priority: the workload is not
-  scaled, the operation fails with `replicas is managed by <manager>; remove replicas from the manifest`,
-  a warning is logged and `workload_knocker_gitops_conflicts` is 1. Remove `replicas` from the manifest
+  scaled, the operation fails with `replicas is managed by <manager>; remove replicas from the manifest`
+  (shown in chat and in the API response), a warning is logged and `workload_knocker_gitops_conflicts` is 1. Remove `replicas` from the manifest
   (or exclude it as below) and the next operation resets the metric to 0.
 - Other managers do not matter: the HPA and `kube-controller-manager` entries on a compliant workload
   do not block it, and neither does an entry written through the scale subresource.
