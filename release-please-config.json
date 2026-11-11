@@ -4,6 +4,7 @@
     ".": {
       "release-type": "simple",
       "package-name": "workload-knocker",
+      "release-as": "0.2.0",
       "include-v-in-tag": true,
       "include-component-in-tag": false,
       "bump-minor-pre-major": true,
