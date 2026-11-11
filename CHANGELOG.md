@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.11](https://github.com/murasame29/workload-knocker/compare/v0.1.10...v0.1.11) (2026-11-11)
+
+
+### Features
+
+* **slack:** create and cancel one-off reservations ([#88](https://github.com/murasame29/workload-knocker/issues/88)) ([773dc45](https://github.com/murasame29/workload-knocker/commit/773dc45c648fa3b0c8691a424446341c624b435e)), closes [#77](https://github.com/murasame29/workload-knocker/issues/77)
+* **slack:** select workloads across namespaces in one modal ([#87](https://github.com/murasame29/workload-knocker/issues/87)) ([2101302](https://github.com/murasame29/workload-knocker/commit/210130228389e77a1d4ce75936a06ac4dc27247f)), closes [#80](https://github.com/murasame29/workload-knocker/issues/80)
+
+
+### Bug Fixes
+
+* run a reservation again when the controller dies while executing it ([#85](https://github.com/murasame29/workload-knocker/issues/85)) ([5820287](https://github.com/murasame29/workload-knocker/commit/58202876ac9d886d6613fb1d21315f619cc41ed1))
+
 ## [0.1.10](https://github.com/murasame29/workload-knocker/compare/v0.1.9...v0.1.10) (2026-11-11)
 
 
