@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,9 +10,10 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
+	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
-	"github.com/murasame29/workload-knocker/internal/notify"
 	"github.com/murasame29/workload-knocker/internal/rollout"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
@@ -139,55 +139,39 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cluster := h.clusterName(req.Env)
-	requestID := audit.NewRequestID()
-	record := func(name string, outcome audit.Outcome, err error, opts ...func(*audit.Record)) {
-		rec := audit.Record{
-			Event: audit.WorkloadStart, Outcome: outcome, Source: audit.SourceAPI,
-			RequestID: requestID, EndUser: audit.EndUserAPI,
-			Cluster: cluster, Namespace: req.Namespace, WorkloadName: name, WorkloadKind: h.kind(req.Env, req.Namespace, name), Err: err,
-		}
-		for _, o := range opts {
-			o(&rec)
-		}
-		h.audit.Record(r.Context(), rec)
+	// The shared service authorizes (before touching the store, so a refusal never reveals
+	// whether the workload exists), starts, audits, counts and notifies, as for chat.
+	areq := frontend.ApplyRequest{
+		Cluster:   config.Cluster{Env: req.Env, Name: h.clusterName(req.Env)},
+		Namespace: req.Namespace, User: user, Subject: authz.APISubject, RequestID: audit.NewRequestID(),
+		ToStart: req.Workloads, Durations: frontend.Uniform(req.Workloads, requested),
 	}
+	svc := h.service()
+	res := svc.Apply(areq)
+
 	stopAts := map[string]time.Time{}
 	started := make([]string, 0, len(req.Workloads))
 	notFound := make([]string, 0)
 	forbidden := make([]string, 0)
 	refused := map[string]string{}
-	for _, name := range req.Workloads {
-		// Authorize before touching the store so a refusal never reveals whether the workload exists.
-		if !h.authz.Allowed(authz.APISubject, req.Env, req.Namespace, name, authz.ActionStart) {
-			forbidden = append(forbidden, name)
-			record(name, audit.Denied, nil)
+	for _, a := range res.Applied {
+		if !a.Found {
+			notFound = append(notFound, a.Name)
 			continue
 		}
-		d, stopAt := h.schedule(req.Env, req.Namespace, name, requested)
-		begin := time.Now()
-		err := h.store.Start(req.Env, req.Namespace, name, user, stopAt)
-		if refusal, isRefusal := model.AsRefused(err); isRefusal {
-			h.metrics.ObserveOperation(req.Env, cluster, "start", "error", time.Since(begin))
-			refused[name] = refusal.Reason
-			record(name, audit.Failure, err)
-			continue
-		}
-		if err == nil {
-			h.metrics.ObserveOperation(req.Env, cluster, "start", "success", time.Since(begin))
-			started = append(started, name)
-			if !stopAt.IsZero() {
-				stopAts[name] = stopAt
-			}
-			record(name, audit.Success, nil, func(r *audit.Record) { r.Duration, r.StopAt = d, stopAt })
-		} else {
-			h.metrics.ObserveOperation(req.Env, cluster, "start", "not_found", time.Since(begin))
-			notFound = append(notFound, name)
-			record(name, audit.Failure, errWorkloadNotFound)
+		started = append(started, a.Name)
+		if !a.StopAt.IsZero() {
+			stopAts[a.Name] = a.StopAt
 		}
 	}
-
-	h.announce(r.Context(), req, cluster, user, started, stopAts)
+	for _, rej := range res.Rejected {
+		if rej.Reason == frontend.ReasonRefused {
+			refused[rej.Label] = rej.Detail
+			continue
+		}
+		forbidden = append(forbidden, rej.Label)
+	}
+	h.follow(svc, areq, res)
 
 	status := http.StatusOK
 	message := "workloads started"
@@ -226,32 +210,23 @@ func (h *StartHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// announce posts the started workloads to the notify channel and, when a tracker is set,
-// follows them until ready so the message can be edited.
-func (h *StartHandler) announce(ctx context.Context, req startRequest, cluster, user string, started []string, stopAts map[string]time.Time) {
-	if len(started) == 0 || !h.opts.notifier.Enabled(req.Env) {
+// errWorkloadNotFound is the audited error of an unknown workload.
+var errWorkloadNotFound = model.ErrWorkloadNotFound
+
+// service builds the shared operation logic from the handler's current settings (tests replace
+// the recorder and the clock after construction).
+func (h *StartHandler) service() *frontend.Service {
+	return newService(h.store, h.metrics, h.authz, h.defs, h.audit, h.now, h.opts)
+}
+
+// follow watches the started workloads until ready when a notify channel announced them, so
+// the ready edit of the start message happens.
+func (h *StartHandler) follow(svc *frontend.Service, req frontend.ApplyRequest, res frontend.ApplyResult) {
+	if h.opts.tracker == nil || !h.opts.notifier.Enabled(req.Cluster.Env) {
 		return
 	}
-	known := map[string]*model.Workload{}
-	for _, w := range h.store.WorkloadsByNamespace(req.Env, req.Namespace) {
-		known[w.Name] = w
-	}
-	ws := make([]notify.Workload, 0, len(started))
-	targets := make([]rollout.Target, 0, len(started))
-	for _, name := range started {
-		nw := notify.Workload{Namespace: req.Namespace, Name: name, StopAt: stopAts[name]}
-		tg := rollout.Target{Env: req.Env, Namespace: req.Namespace, Name: name, Direction: rollout.Start}
-		if w := known[name]; w != nil {
-			nw.ReadyMessage, tg.Kind = w.ReadyMessage, w.Kind
-		}
-		ws = append(ws, nw)
-		targets = append(targets, tg)
-	}
-	h.opts.notifier.Started(ctx, notify.Event{
-		Kind: notify.KindStart, Env: req.Env, ClusterName: cluster, Namespace: req.Namespace,
-		Actor: apiActor, StartedBy: user, Workloads: ws,
-	})
-	if h.opts.tracker == nil {
+	targets := svc.RolloutTargets(req, res)
+	if len(targets) == 0 {
 		return
 	}
 	go func() {
@@ -264,17 +239,6 @@ func (h *StartHandler) announce(ctx context.Context, req startRequest, cluster, 
 	}()
 }
 
-var errWorkloadNotFound = errors.New("workload not found")
-
-// schedule resolves the run duration and stop time of a validated start.
-func (h *StartHandler) schedule(env, ns, name string, requested time.Duration) (time.Duration, time.Time) {
-	d, _ := h.defs.For(h.workload(env, ns, name)).Resolve(requested)
-	if d == 0 {
-		return 0, time.Time{}
-	}
-	return d, h.now().Add(d)
-}
-
 // workload returns a copy of the store's workload, or nil when unknown.
 func (h *StartHandler) workload(env, ns, name string) *model.Workload {
 	for _, w := range h.store.WorkloadsByNamespace(env, ns) {
@@ -283,16 +247,6 @@ func (h *StartHandler) workload(env, ns, name string) *model.Workload {
 		}
 	}
 	return nil
-}
-
-// kind returns the workload kind, or "" when the store does not know the workload.
-func (h *StartHandler) kind(env, ns, name string) string {
-	for _, w := range h.store.WorkloadsByNamespace(env, ns) {
-		if w.Name == name {
-			return w.Kind
-		}
-	}
-	return ""
 }
 
 // clusterName returns the cluster name of env, or "" when unknown.

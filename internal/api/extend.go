@@ -10,6 +10,8 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/authz"
+	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/model"
 	"github.com/murasame29/workload-knocker/internal/runlimit"
 )
@@ -101,36 +103,24 @@ func (h *ExtendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requestID := audit.NewRequestID()
-	record := func(name string, outcome audit.Outcome, err error, stopAt time.Time) {
-		h.audit.Record(r.Context(), audit.Record{
-			Event: audit.WorkloadExtend, Outcome: outcome, Source: audit.SourceAPI,
-			RequestID: requestID, EndUser: audit.EndUserAPI,
-			Cluster: cluster, Namespace: req.Namespace, WorkloadName: name,
-			Duration: add, StopAt: stopAt, Err: err,
-		})
-	}
+	// The shared service authorizes like a start, applies the workload maximum and audits.
+	res := newService(h.store, nil, h.authz, h.defs, h.audit, h.now, settings{}).Extend(frontend.ExtendRequest{
+		Cluster: config.Cluster{Env: req.Env, Name: cluster}, Namespace: req.Namespace, Subject: authz.APISubject,
+		Names: req.Workloads, Duration: add,
+	})
 	resp := extendResponse{Env: req.Env, Namespace: req.Namespace, Extended: map[string]time.Time{}, NotFound: []string{}, Forbidden: []string{}, Failed: []extendFailure{}}
-	for _, name := range req.Workloads {
-		if !h.authz.Allowed(authz.APISubject, req.Env, req.Namespace, name, authz.ActionStart) {
-			resp.Forbidden = append(resp.Forbidden, name)
-			record(name, audit.Denied, nil, time.Time{})
-			continue
+	for _, rej := range res.Rejected {
+		resp.Forbidden = append(resp.Forbidden, rej.Label)
+	}
+	for _, x := range res.Extended {
+		switch {
+		case x.Err == nil:
+			resp.Extended[x.Name] = x.StopAt
+		case errors.Is(x.Err, model.ErrWorkloadNotFound):
+			resp.NotFound = append(resp.NotFound, x.Name)
+		default:
+			resp.Failed = append(resp.Failed, extendFailure{Workload: x.Name, Message: x.Err.Error()})
 		}
-		wl := h.workload(req.Env, req.Namespace, name)
-		if wl == nil {
-			resp.NotFound = append(resp.NotFound, name)
-			record(name, audit.Failure, errWorkloadNotFound, time.Time{})
-			continue
-		}
-		next, err := h.extend(req.Env, req.Namespace, wl, add)
-		if err != nil {
-			resp.Failed = append(resp.Failed, extendFailure{Workload: name, Message: err.Error()})
-			record(name, audit.Failure, err, time.Time{})
-			continue
-		}
-		resp.Extended[name] = next
-		record(name, audit.Success, nil, next)
 	}
 
 	status := http.StatusOK
@@ -154,29 +144,6 @@ func (h *ExtendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "failed to encode response",
 			slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
 	}
-}
-
-func (h *ExtendHandler) extend(env, ns string, wl *model.Workload, add time.Duration) (time.Time, error) {
-	if wl.Replicas == 0 {
-		return time.Time{}, errors.New("workload is not running")
-	}
-	next, err := h.defs.For(wl).Extend(h.now(), wl.StopAt, add)
-	if err != nil {
-		return time.Time{}, err
-	}
-	if !h.store.SetStopAt(env, ns, wl.Name, next) {
-		return time.Time{}, errWorkloadNotFound
-	}
-	return next, nil
-}
-
-func (h *ExtendHandler) workload(env, ns, name string) *model.Workload {
-	for _, w := range h.store.WorkloadsByNamespace(env, ns) {
-		if w.Name == name {
-			return w
-		}
-	}
-	return nil
 }
 
 func (h *ExtendHandler) clusterName(env string) (string, bool) {

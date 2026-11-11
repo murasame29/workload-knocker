@@ -285,7 +285,8 @@ func (s *Service) Plan(sub authz.Subject, cl config.Cluster, namespace string, e
 	return plan
 }
 
-var errNotFound = errors.New("workload not found")
+// errNotFound is the audited error of an unknown workload (shared with the store and the API).
+var errNotFound = model.ErrWorkloadNotFound
 
 // record emits the audit event of one workload operation requested by sub.
 func (s *Service) record(sub authz.Subject, cl config.Cluster, namespace, name string, a Action, outcome audit.Outcome, requestID string, err error, opts ...func(*audit.Record)) {
