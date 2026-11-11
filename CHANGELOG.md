@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/murasame29/workload-knocker/compare/v0.1.7...v0.1.8) (2026-11-11)
+
+
+### Features
+
+* show actuator refusals such as GitOps conflicts in chat ([#69](https://github.com/murasame29/workload-knocker/issues/69)) ([50c518f](https://github.com/murasame29/workload-knocker/commit/50c518f2c03aa25a48b731d943959671cfa94a00)), closes [#63](https://github.com/murasame29/workload-knocker/issues/63)
+
 ## [0.1.7](https://github.com/murasame29/workload-knocker/compare/v0.1.6...v0.1.7) (2026-11-11)
 
 
