@@ -383,6 +383,10 @@ metadata:
 
 引数なしの `/<command>` でこのモーダルを開きます。`/<command> status` は代わりに workload 一覧を表示します ([ステータス](#ステータス)参照)。その他の引数には短い使い方を返します。
 
+- 操作できる namespace がすべて 1 つのモーダルに収まる場合 (各 namespace の 10 件ごとに 1 ブロック、
+  合計 97 ブロックまで)、全 namespace をまとめて並べます。ラベルは namespace 名で、起動中のエントリはチェック済みです。
+  **Plan** で変更のある namespace をまとめてプレビューし、**Apply** で namespace ごとに 1 リクエストずつ適用します。
+  収まらない場合は namespace の選択から始まります。
 - namespace と workload は a→z 順です。
 - `foo-api` / `foo-app` / `foo-worker` のうち 2 件以上あれば 1 つの `foo` チェックボックスに
   merge されます。一部だけ起動中なら 🟡 でチェック ON になります。

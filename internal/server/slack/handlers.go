@@ -329,6 +329,8 @@ type modalMetadata struct {
 	// It restores the diff scope so workloads truncated by the display limit are not
 	// mistaken for "unchecked = stopped" on submit.
 	Rendered int `json:"rendered,omitempty"`
+	// Namespaces is set by the multi-namespace modal (one checkbox group per namespace).
+	Namespaces []nsMeta `json:"namespaces,omitempty"`
 }
 
 // previewMetadata is the private_metadata of the preview Modal.
@@ -345,6 +347,8 @@ type previewMetadata struct {
 	RequestID string `json:"request_id"`
 	// DurationSec is the requested run duration in seconds; 0 selects each workload's default.
 	DurationSec int64 `json:"duration_sec,omitempty"`
+	// Parts are the plans per namespace of the multi-namespace modal; empty for a single namespace.
+	Parts []previewPart `json:"parts,omitempty"`
 }
 
 // planLines renders the allowed plan changes for the preview modal.
@@ -439,7 +443,8 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 	// Reflect the latest ScaledObject state on demand.
 	b.svc.Reconcile(cl.Env)
 
-	namespaces, total := b.svc.Namespaces(<-subCh, cl.Env)
+	sub := <-subCh
+	namespaces, total := b.svc.Namespaces(sub, cl.Env)
 
 	// If no namespace is visible, return an error without opening the Modal
 	if len(namespaces) == 0 {
@@ -451,6 +456,14 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 			slack.MsgOptionText(text, false),
 		); err != nil {
 			slog.Error("failed to post ephemeral message", slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
+		}
+		return
+	}
+
+	// Every namespace in one modal when it fits; otherwise pick a namespace first.
+	if modal, ok := b.multiModal(sub, cl, namespaces, cmd.ChannelID, cmd.UserID); ok {
+		if _, err := b.client.OpenView(cmd.TriggerID, modal); err != nil {
+			slog.Error("failed to open Modal", slog.String("error.message", err.Error()))
 		}
 		return
 	}
@@ -626,6 +639,10 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		b.ack(*req, map[string]any{"response_action": "errors", "errors": map[string]string{blockDuration: err.Error()}})
 		return
 	}
+	if len(meta.Namespaces) > 0 {
+		b.handleMultiSubmit(callback, req, cl, meta, requested)
+		return
+	}
 
 	// Selected workloads (checked = wants running), folded across all split checkbox blocks.
 	selectedSet := selectedWorkloadNames(callback.View.State.Values)
@@ -735,20 +752,21 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 	}
 
 	envUpper := strings.ToUpper(cl.Env)
-	user := callback.User.Name
+	sub := b.subject(callback.User.ID)
+	duration := time.Duration(meta.DurationSec) * time.Second
 
-	req := frontend.ApplyRequest{
-		Cluster:   cl,
-		Namespace: meta.Namespace,
-		User:      user,
-		Subject:   b.subject(callback.User.ID),
-		RequestID: meta.RequestID,
-		ToStart:   meta.ToStart,
-		ToStop:    meta.ToStop,
-		Durations: frontend.Uniform(meta.ToStart, time.Duration(meta.DurationSec)*time.Second),
+	// One request per namespace keeps the audit, notify and REST semantics per namespace.
+	var applied []appliedPart
+	var targets []rollout.Target
+	for _, p := range meta.parts() {
+		req := frontend.ApplyRequest{
+			Cluster: cl, Namespace: p.Namespace, User: callback.User.Name, Subject: sub, RequestID: meta.RequestID,
+			ToStart: p.ToStart, ToStop: p.ToStop, Durations: frontend.Uniform(p.ToStart, duration),
+		}
+		res := b.svc.Apply(req)
+		applied = append(applied, appliedPart{req: req, res: res})
+		targets = append(targets, b.svc.RolloutTargets(req, res)...)
 	}
-	res := b.svc.Apply(req)
-	targets := b.svc.RolloutTargets(req, res)
 	tracked := b.svc.RolloutEnabled() && len(targets) > 0
 	timeout := b.svc.RolloutTimeout()
 	var initial rollout.Snapshot
@@ -757,23 +775,21 @@ func (b *Bot) handlePreviewConfirm(callback slack.InteractionCallback) {
 	}
 
 	resultHeader := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)",
-		callback.User.ID, envUpper, cl.Name, meta.Namespace,
+		callback.User.ID, envUpper, cl.Name, appliedNamespaces(applied),
 	)
-	resultLines := progressLines(res, initial, timeout)
-
 	if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
-		slack.MsgOptionBlocks(mrkdwnSections(resultHeader, resultLines)...),
+		slack.MsgOptionBlocks(mrkdwnSections(resultHeader, resultLines(applied, initial, timeout))...),
 	); err != nil {
 		slog.Error("failed to send result message", slog.String("error.message", err.Error()))
 	}
 	if tracked {
-		b.watchRollout(meta, req, res, targets, timeout)
+		b.watchRollout(meta, applied, targets, timeout)
 	}
 }
 
 // watchRollout follows the rollout in the background. Slack cannot edit an ephemeral message
 // posted with chat.postEphemeral, so only the final state is posted as a second message.
-func (b *Bot) watchRollout(meta previewMetadata, req frontend.ApplyRequest, res frontend.ApplyResult, targets []rollout.Target, timeout time.Duration) {
+func (b *Bot) watchRollout(meta previewMetadata, applied []appliedPart, targets []rollout.Target, timeout time.Duration) {
 	b.watchers.Add(1)
 	go func() {
 		defer b.watchers.Done()
@@ -782,15 +798,22 @@ func (b *Bot) watchRollout(meta previewMetadata, req frontend.ApplyRequest, res 
 				slog.Error("panic in slack rollout watch", slog.Any("recover", r), slog.String("stack", string(debug.Stack())))
 			}
 		}()
-		ready := b.svc.NewReadyRenderer(req)
+		renderers := make(map[string]*frontend.ReadyRenderer, len(applied))
+		for _, a := range applied {
+			renderers[a.req.Namespace] = b.svc.NewReadyRenderer(a.req)
+		}
 		b.svc.Track(b.watchCtx, targets, func(snap rollout.Snapshot) {
 			if !snap.Done() {
 				return
 			}
-			snap = ready.Decorate(snap)
-			header := fmt.Sprintf("📡 Rollout result (%s / %s)", strings.ToUpper(targets[0].Env), meta.Namespace)
+			for idx := range snap {
+				if r := renderers[snap[idx].Target.Namespace]; r != nil {
+					r.Decorate(snap[idx : idx+1])
+				}
+			}
+			header := fmt.Sprintf("📡 Rollout result (%s / %s)", strings.ToUpper(targets[0].Env), appliedNamespaces(applied))
 			if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID,
-				slack.MsgOptionBlocks(mrkdwnSections(header, progressLines(res, snap, timeout))...),
+				slack.MsgOptionBlocks(mrkdwnSections(header, resultLines(applied, snap, timeout))...),
 			); err != nil {
 				slog.Error("failed to send rollout result message", slog.String("error.message", err.Error()))
 			}
