@@ -62,7 +62,7 @@ func TestConfirm_PostsToNotifyChannelThenEditsWhenReady(t *testing.T) {
 
 	ws := []*model.Workload{{Name: "terraria", Namespace: "labs", ReadyMessage: "Connect to {{.Name}}.example.com:7777"}}
 	b, sess, _ := notifyBot(t, ws)
-	token, err := b.flows.create(&flow{userID: "u1", env: "stg", namespace: "labs", toStart: []string{"terraria"}})
+	token, err := b.flows.create(&flow{userID: "u1", env: "stg", parts: []*nsPart{{namespace: "labs", toStart: []string{"terraria"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

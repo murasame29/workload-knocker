@@ -214,10 +214,12 @@ The command has two subcommands, `start` and `status` (see [Status](#status)). D
 
 Flow of `/<command> start` (every message is ephemeral and only the invoking user can use its components):
 
-1. The subcommand shows a namespace select menu (25 per page, Previous/Next buttons).
-2. Choosing a namespace shows the workloads in a multi-select (25 per page). Running entries are pre-selected; selections are kept across pages. Merging of `-api` / `-app` / `-worker` and the 🟢 / 🟡 / 🔴 markers match Slack.
-3. **Apply** shows the plan preview with **Confirm** and **Cancel**.
-4. **Confirm** applies the plan and replaces the message with the result. The operation user is the Discord user ID. The message then follows the [rollout](#rollout-progress).
+1. When the user may operate at most **5 namespaces with at most 10 entries each**, the command opens a modal: one checkbox group per namespace. Running entries are checked; checked entries run and unchecked ones stop. Merging of `-api` / `-app` / `-worker` and the 🟢 / 🟡 / 🔴 markers match Slack. Submitting shows the plan preview of every namespace.
+2. Otherwise the command shows a namespace select menu (25 per page, Previous/Next buttons). Choosing a namespace shows its workloads in a multi-select (25 per page; running entries pre-selected, selections kept across pages). **Other namespace** goes back to the menu and keeps the selection, so one plan can cover several namespaces. **Apply** shows the plan preview.
+3. The preview lists each namespace with **Confirm**, **Change duration** and **Cancel**.
+4. **Confirm** applies the plan, one request per namespace, and replaces the message with the result. The operation user is the Discord user ID. The message then follows the [rollout](#rollout-progress).
+
+A Discord modal must be the first response to the command, so the modal is built from the controller's in-memory state, which the background reconcile ([environment variables](#environment-variables)) keeps fresh (`RECONCILE_INTERVAL`); the message-based flow still reconciles on demand.
 
 Per-interaction state (selection, page, plan) is kept in memory, keyed by a random token in each component's `custom_id` (`wk1:<kind>:<token>:<arg>`, well under Discord's 100-character limit). Flows expire after 15 minutes without use and are lost on restart; the message then asks the user to run the command again. This is why the controller must keep a single replica. The controller answers each interaction within Discord's 3-second window by deferring the slow steps (command start and Confirm).
 

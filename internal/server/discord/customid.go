@@ -24,6 +24,8 @@ const (
 	kindExtend          = "ex"  // Extend button of a stop reminder (Token keys the button payload)
 	kindStatusExtend    = "sx"  // Extend 1h button of a status entry (Token keys the button payload)
 	kindStatusStop      = "ss"  // Stop button of a status entry (Token keys the button payload)
+	kindNamespaces      = "nsl" // Other namespace button: back to the namespace menu, selections kept
+	kindSelectModal     = "sm"  // workload selection modal submission (one checkbox group per namespace)
 )
 
 // customID is the decoded component identifier: wk1:<kind>:<token>:<arg>.

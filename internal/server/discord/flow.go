@@ -20,13 +20,27 @@ const (
 // the token; selection state lives here because Discord select menus cap value length at 100
 // and a plan can hold many workload names.
 type flow struct {
-	userID    string
-	env       string
-	namespace string
-	// nsPage / page are the visible pages of the namespace and workload menus.
+	userID string
+	env    string
+	// nsPage is the visible page of the namespace menu.
 	nsPage int
-	page   int
-	// entries is the snapshot taken at namespace selection; select option values are indexes into it.
+	// parts are the namespaces the user opened, in the order they were opened.
+	parts []*nsPart
+	// cur indexes the part shown in the workload menu.
+	cur int
+	// draft holds the raw modal inputs of the last invalid submission, by input index.
+	draft []string
+	// requestID ties the preview and the confirm of one operation in the audit log.
+	requestID string
+	expires   time.Time
+}
+
+// nsPart is the selection and previewed plan of one namespace of a flow.
+type nsPart struct {
+	namespace string
+	// page is the visible page of the workload menu.
+	page int
+	// entries is the snapshot taken when the namespace was opened; option values index into it.
 	entries []frontend.Entry
 	// selected holds the representative names (Entry.Value) of entries to keep running.
 	selected map[string]bool
@@ -37,11 +51,53 @@ type flow struct {
 	rejected []frontend.Rejection
 	// durations are the requested run durations by workload name (absent = workload default).
 	durations map[string]time.Duration
-	// draft holds the raw modal inputs of the last invalid submission, by input index.
-	draft []string
-	// requestID ties the preview and the confirm of one operation in the audit log.
-	requestID string
-	expires   time.Time
+}
+
+// newPart snapshots entries; running entries start selected so an unchanged plan stops nothing.
+func newPart(namespace string, entries []frontend.Entry) *nsPart {
+	p := &nsPart{namespace: namespace, entries: entries, selected: make(map[string]bool, len(entries))}
+	for _, e := range entries {
+		if e.AnyRunning() {
+			p.selected[e.Value()] = true
+		}
+	}
+	return p
+}
+
+// current returns the part shown in the workload menu, or nil.
+func (f *flow) current() *nsPart {
+	if f.cur < 0 || f.cur >= len(f.parts) {
+		return nil
+	}
+	return f.parts[f.cur]
+}
+
+// planned returns the parts whose previewed plan changes something.
+func (f *flow) planned() []*nsPart {
+	var out []*nsPart
+	for _, p := range f.parts {
+		if len(p.toStart)+len(p.toStop) > 0 {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// startRef is one previewed start across the parts of a flow, in preview order.
+type startRef struct {
+	part *nsPart
+	name string
+}
+
+// starts lists the previewed starts of every part in preview order.
+func (f *flow) starts() []startRef {
+	var out []startRef
+	for _, p := range f.planned() {
+		for _, name := range p.toStart {
+			out = append(out, startRef{part: p, name: name})
+		}
+	}
+	return out
 }
 
 // flowStore is an in-memory TTL store of flows keyed by a random token. A restart drops all

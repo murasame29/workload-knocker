@@ -100,6 +100,8 @@ type Bot struct {
 	// registered is the command set last bulk-overwritten; only the Start goroutine touches it.
 	registered []string
 	flows      *flowStore
+	// noModal forces the message-based flow; tests use it to exercise the fallback.
+	noModal bool
 
 	// watchCtx ends rollout watches on shutdown; watchers lets Shutdown wait for them.
 	watchCtx    context.Context
@@ -157,6 +159,9 @@ func (b *Bot) Start(ctx context.Context) error {
 
 	b.sess.AddHandler(func(_ *discordgo.Session, ic *discordgo.InteractionCreate) {
 		b.dispatch(ic.Interaction)
+	})
+	b.sess.AddHandler(func(_ *discordgo.Session, e *discordgo.Event) {
+		b.handleRawEvent(e)
 	})
 
 	slog.Info("starting Discord gateway connection")
@@ -249,6 +254,22 @@ func (b *Bot) Shutdown(ctx context.Context) error {
 
 // dispatch routes one interaction; discordgo already calls handlers in their own goroutines.
 func (b *Bot) dispatch(i *discordgo.Interaction) {
+	b.guard(func() {
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			b.handleCommand(i)
+		case discordgo.InteractionMessageComponent:
+			b.handleComponent(i)
+		case discordgo.InteractionModalSubmit:
+			b.handleModal(i)
+		default:
+			slog.Debug("unhandled discord interaction type", slog.String("interaction.type", i.Type.String()))
+		}
+	})
+}
+
+// guard runs one handler under the concurrency limit, tracked for Shutdown and panic-safe.
+func (b *Bot) guard(fn func()) {
 	b.sem <- struct{}{}
 	b.inflight.Add(1)
 	defer b.inflight.Done()
@@ -258,15 +279,5 @@ func (b *Bot) dispatch(i *discordgo.Interaction) {
 			slog.Error("panic in discord interaction handler", slog.Any("recover", r), slog.String("stack", string(debug.Stack())))
 		}
 	}()
-
-	switch i.Type {
-	case discordgo.InteractionApplicationCommand:
-		b.handleCommand(i)
-	case discordgo.InteractionMessageComponent:
-		b.handleComponent(i)
-	case discordgo.InteractionModalSubmit:
-		b.handleModal(i)
-	default:
-		slog.Debug("unhandled discord interaction type", slog.String("interaction.type", i.Type.String()))
-	}
+	fn()
 }

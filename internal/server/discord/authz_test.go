@@ -129,7 +129,7 @@ func TestApply_IgnoresForgedFlowContents(t *testing.T) {
 
 	b, sess, store := newTestBotWith(t, []*model.Workload{wl("batch", 0), wl("secret", 0)}, policyBatchOnly, mode.Full)
 	// A flow whose stored plan names a workload the policy does not allow.
-	token, err := b.flows.create(&flow{userID: "u1", env: "stg", namespace: "labs", toStart: []string{"batch", "secret"}})
+	token, err := b.flows.create(&flow{userID: "u1", env: "stg", parts: []*nsPart{{namespace: "labs", toStart: []string{"batch", "secret"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestApply_ScheduledStopRejectsForgedStop(t *testing.T) {
 	t.Parallel()
 
 	b, sess, store := newTestBotWith(t, []*model.Workload{wl("legacy", 1)}, "", mode.ScheduledStop)
-	token, _ := b.flows.create(&flow{userID: "u1", env: "stg", namespace: "labs", toStop: []string{"legacy"}})
+	token, _ := b.flows.create(&flow{userID: "u1", env: "stg", parts: []*nsPart{{namespace: "labs", toStop: []string{"legacy"}}}})
 	b.dispatch(component("u1", customID{kindConfirm, token, 0}.String()))
 	if len(store.calls) != 0 {
 		t.Errorf("store calls = %v, want none", store.calls)

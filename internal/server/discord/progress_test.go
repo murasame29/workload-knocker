@@ -48,7 +48,7 @@ func confirmWithTracker(t *testing.T, ws []*model.Workload, toStart, toStop []st
 	tracker := rollout.NewTracker(oneCluster{reader}, 5*time.Second, 10*time.Minute, rollout.WithClock(&stepClock{now: time.Unix(0, 0)}))
 	b.svc = frontend.NewService(&fakeStore{workloads: ws}, metrics.New(), time.Second,
 		frontend.WithAuthorizer(authz.NewHolder(nil)), frontend.WithMode(mode.Full), frontend.WithRollout(tracker))
-	token, err := b.flows.create(&flow{userID: "u1", env: testCluster().Env, namespace: "labs", toStart: toStart, toStop: toStop})
+	token, err := b.flows.create(&flow{userID: "u1", env: testCluster().Env, parts: []*nsPart{{namespace: "labs", toStart: toStart, toStop: toStop}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestConfirm_WithoutTrackerKeepsPlainResult(t *testing.T) {
 	t.Parallel()
 
 	b, sess, _ := newTestBot(t, []*model.Workload{wl("terraria", 0)})
-	token, _ := b.flows.create(&flow{userID: "u1", env: testCluster().Env, namespace: "labs", toStart: []string{"terraria"}})
+	token, _ := b.flows.create(&flow{userID: "u1", env: testCluster().Env, parts: []*nsPart{{namespace: "labs", toStart: []string{"terraria"}}}})
 	b.dispatch(component("u1", customID{kindConfirm, token, 0}.String()))
 	b.watchers.Wait()
 
@@ -125,7 +125,7 @@ func TestProgressText_UnknownWorkloadStaysNotFound(t *testing.T) {
 	t.Parallel()
 
 	res := frontend.ApplyResult{Applied: []frontend.Applied{{Action: frontend.ActionStart, Name: "gone", Found: false}}}
-	got := progressText("u1", config.Cluster{Env: "stg", Name: "c"}, "labs", res, nil, 0)
+	got := progressText("u1", config.Cluster{Env: "stg", Name: "c"}, []applied{{namespace: "labs", res: res}}, nil, 0)
 	if !strings.Contains(got, "⚠ gone → start (not found)") {
 		t.Errorf("got %q", got)
 	}
