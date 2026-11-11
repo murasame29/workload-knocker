@@ -115,6 +115,13 @@ func (b *Bot) handleCommand(i *discordgo.Interaction) {
 		return
 	}
 
+	// A modal must be the first response, so it is built from the store without reconciling;
+	// the background reconcile keeps it fresh.
+	if resp, ok := b.selectionModal(subject(i), userID, cl); ok {
+		b.respond(i, resp)
+		return
+	}
+
 	// Ack first: the on-demand Reconcile can take longer than the 3s response window.
 	if !b.deferEphemeral(i) {
 		return
@@ -130,13 +137,13 @@ func (b *Bot) handleCommand(i *discordgo.Interaction) {
 		}
 		return
 	}
-	token, err := b.flows.create(&flow{userID: userID, env: cl.Env})
+	token, err := b.flows.create(&flow{userID: userID, env: cl.Env, cur: -1})
 	if err != nil {
 		slog.Error("failed to create discord flow", slog.String("error.message", err.Error()))
 		b.edit(i, text("⚠ Internal error. Please try again."))
 		return
 	}
-	b.edit(i, namespaceView(token, cl, namespaces, 0))
+	b.edit(i, namespaceView(token, cl, namespaces, 0, 0))
 }
 
 // handleComponent handles select menus and buttons of an open flow.
@@ -163,7 +170,7 @@ func (b *Bot) handleComponent(i *discordgo.Interaction) {
 		b.handleExtend(i, id)
 	case kindStatusExtend, kindStatusStop:
 		b.handleStatusAction(i, id, userID)
-	case kindNamespacePage, kindNamespaceSelect, kindWorkloadPage, kindWorkloadSelect, kindPlan, kindCancel:
+	case kindNamespacePage, kindNamespaceSelect, kindNamespaces, kindWorkloadPage, kindWorkloadSelect, kindPlan, kindCancel:
 		b.withFlow(i, id, userID, func(f *flow, cl config.Cluster) view {
 			return b.step(id, data.Values, subject(i), f, cl)
 		})
@@ -225,21 +232,29 @@ func (b *Bot) step(id customID, values []string, sub authz.Subject, f *flow, cl 
 	case kindNamespacePage:
 		f.nsPage = id.Arg
 		namespaces, _ := b.svc.Namespaces(sub, cl.Env)
-		return b.namespaces(token, cl, namespaces, f.nsPage)
+		return b.namespaces(token, cl, namespaces, f)
+
+	case kindNamespaces:
+		namespaces, _ := b.svc.Namespaces(sub, cl.Env)
+		return b.namespaces(token, cl, namespaces, f)
 
 	case kindNamespaceSelect:
 		namespaces, _ := b.svc.Namespaces(sub, cl.Env)
 		if len(values) != 1 || !slices.Contains(namespaces, values[0]) {
-			return b.namespaces(token, cl, namespaces, f.nsPage)
+			return b.namespaces(token, cl, namespaces, f)
 		}
 		return b.selectNamespace(token, sub, f, cl, values[0])
 
 	case kindWorkloadPage:
-		f.page = id.Arg
+		if p := f.current(); p != nil {
+			p.page = id.Arg
+		}
 		return b.workloads(token, cl, f)
 
 	case kindWorkloadSelect:
-		applyPageSelection(f, values)
+		if p := f.current(); p != nil {
+			applyPageSelection(p, values)
+		}
 		return b.workloads(token, cl, f)
 
 	case kindPlan:
@@ -251,98 +266,137 @@ func (b *Bot) step(id customID, values []string, sub authz.Subject, f *flow, cl 
 	}
 }
 
-// selectNamespace snapshots the namespace's entries; running entries start selected so an
-// unchanged plan does not stop them.
+// selectNamespace shows the namespace's workloads. A namespace opened earlier in the flow keeps
+// its snapshot and selection; a new one is snapshotted with running entries selected.
 func (b *Bot) selectNamespace(token string, sub authz.Subject, f *flow, cl config.Cluster, namespace string) view {
 	slog.Info("namespace selected", slog.String("user.id", f.userID), slog.String("cluster.name", cl.Name), slog.String("cluster.env", cl.Env), slog.String("namespace", namespace))
 
-	listing := b.svc.List(sub, cl.Env, namespace, frontend.Limits{PageSize: selectMaxOptions})
-	f.namespace = namespace
-	f.page = 0
-	f.entries = listing.Entries
-	f.selected = make(map[string]bool, len(listing.Entries))
-	for _, e := range listing.Entries {
-		if e.AnyRunning() {
-			f.selected[e.Value()] = true
+	for idx, p := range f.parts {
+		if p.namespace == namespace {
+			f.cur = idx
+			return b.workloads(token, cl, f)
 		}
 	}
+	listing := b.svc.List(sub, cl.Env, namespace, frontend.Limits{PageSize: selectMaxOptions})
+	f.parts = append(f.parts, newPart(namespace, listing.Entries))
+	f.cur = len(f.parts) - 1
 	return b.workloads(token, cl, f)
 }
 
 // namespaces renders the namespace menu, or the not-authorized notice when the policy leaves none.
-func (b *Bot) namespaces(token string, cl config.Cluster, namespaces []string, page int) view {
+func (b *Bot) namespaces(token string, cl config.Cluster, namespaces []string, f *flow) view {
 	if len(namespaces) == 0 {
 		return text(msgNotAuthorized)
 	}
-	return namespaceView(token, cl, namespaces, page)
+	return namespaceView(token, cl, namespaces, f.nsPage, len(f.parts))
 }
 
 func (b *Bot) workloads(token string, cl config.Cluster, f *flow) view {
-	return workloadView(token, cl, f.namespace, f.entries, f.selected, f.page, b.svc.ChatStopAllowed())
+	p := f.current()
+	if p == nil {
+		return text(msgUnrecognized)
+	}
+	return workloadView(token, cl, p.namespace, p.entries, p.selected, p.page, b.svc.ChatStopAllowed())
 }
 
-// applyPageSelection folds the values submitted by the visible page's menu into f.selected.
+// applyPageSelection folds the values submitted by the visible page's menu into p.selected.
 // Entries on other pages keep their state. Values are entry indexes; out-of-page ones are ignored.
-func applyPageSelection(f *flow, values []string) {
-	_, start, end, _ := pageBounds(len(f.entries), selectMaxOptions, f.page)
+func applyPageSelection(p *nsPart, values []string) {
+	_, start, end, _ := pageBounds(len(p.entries), selectMaxOptions, p.page)
 	for i := start; i < end; i++ {
-		delete(f.selected, f.entries[i].Value())
+		delete(p.selected, p.entries[i].Value())
 	}
 	for _, v := range values {
 		idx, err := strconv.Atoi(v)
 		if err != nil || idx < start || idx >= end {
 			continue
 		}
-		f.selected[f.entries[idx].Value()] = true
+		p.selected[p.entries[idx].Value()] = true
 	}
 }
 
-// buildPlan diffs the selection against the current state. Only snapshot entries take part,
+// buildPlan diffs the selection of p against the current state. Only snapshot entries take part,
 // so workloads that appeared after the menu was rendered are never changed by accident.
-func (b *Bot) buildPlan(sub authz.Subject, cl config.Cluster, f *flow) frontend.Plan {
-	shown := make(map[string]bool, len(f.entries))
-	for _, e := range f.entries {
+func (b *Bot) buildPlan(sub authz.Subject, cl config.Cluster, p *nsPart, requestID string) frontend.Plan {
+	shown := make(map[string]bool, len(p.entries))
+	for _, e := range p.entries {
 		shown[e.Value()] = true
 	}
-	listing := b.svc.List(sub, cl.Env, f.namespace, frontend.Limits{})
+	listing := b.svc.List(sub, cl.Env, p.namespace, frontend.Limits{})
 	var entries []frontend.Entry
 	for _, e := range listing.Entries {
 		if shown[e.Value()] {
 			entries = append(entries, e)
 		}
 	}
-	return b.svc.Plan(sub, cl, f.namespace, entries, f.selected, f.requestID)
+	return b.svc.Plan(sub, cl, p.namespace, entries, p.selected, requestID)
 }
 
+// previewPlan plans every opened namespace under one request ID and renders the preview.
 func (b *Bot) previewPlan(token string, sub authz.Subject, f *flow, cl config.Cluster) view {
 	f.requestID = audit.NewRequestID()
-	plan := b.buildPlan(sub, cl, f)
-	if plan.Empty() {
-		f.expires = time.Time{}
-		head := fmt.Sprintf("ℹ %s / %s — no changes", header(cl), f.namespace)
-		return text(fitLines(head, rejectionLines(plan.Rejected), contentMaxLen))
+	for _, p := range f.parts {
+		plan := b.buildPlan(sub, cl, p, f.requestID)
+		p.toStart, p.toStop = plan.ToStart, plan.ToStop
+		p.changes, p.rejected = plan.Changes, plan.Rejected
 	}
-	f.toStart, f.toStop = plan.ToStart, plan.ToStop
-	f.changes, f.rejected = plan.Changes, plan.Rejected
-	return b.preview(token, cl, f)
+	if len(f.planned()) > 0 {
+		return b.preview(token, cl, f)
+	}
+	f.expires = time.Time{}
+	names := make([]string, 0, len(f.parts))
+	var lines []string
+	for _, p := range f.parts {
+		names = append(names, p.namespace)
+		lines = append(lines, rejectionLines(p.rejected)...)
+	}
+	return text(fitLines(fmt.Sprintf("ℹ %s — no changes", namespaceHead(cl, names)), lines, contentMaxLen))
 }
 
-// preview renders the stored plan with the auto-stop of each start.
+// preview renders the stored plans with the auto-stop of each start; namespaces with neither a
+// change nor a refusal are left out.
 func (b *Bot) preview(token string, cl config.Cluster, f *flow) view {
-	starts := b.svc.Schedules(cl.Env, f.namespace, f.toStart, f.durations)
-	return previewView(token, cl, f.namespace, f.changes, f.rejected, starts)
+	var sections []section
+	for _, p := range f.parts {
+		if len(p.changes)+len(p.rejected) == 0 {
+			continue
+		}
+		sections = append(sections, section{
+			namespace: p.namespace,
+			changes:   p.changes,
+			rejected:  p.rejected,
+			starts:    b.svc.Schedules(cl.Env, p.namespace, p.toStart, p.durations),
+		})
+	}
+	return previewView(token, cl, sections)
+}
+
+// durationStarts lists the schedules of the previewed starts in preview order. With several
+// namespaces the names carry their namespace so the modal labels stay unambiguous.
+func (b *Bot) durationStarts(cl config.Cluster, f *flow) []frontend.Schedule {
+	planned := f.planned()
+	var out []frontend.Schedule
+	for _, p := range planned {
+		for _, s := range b.svc.Schedules(cl.Env, p.namespace, p.toStart, p.durations) {
+			if len(planned) > 1 {
+				s.Name = p.namespace + "/" + s.Name
+			}
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // openDurationModal shows the duration modal of the previewed starts.
 func (b *Bot) openDurationModal(i *discordgo.Interaction, id customID, userID string) {
 	b.flowResponse(i, id.Token, userID, false, func(f *flow, cl config.Cluster) *discordgo.InteractionResponse {
-		if len(f.toStart) == 0 {
+		starts := b.durationStarts(cl, f)
+		if len(starts) == 0 {
 			return &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: msgUnrecognized, Flags: discordgo.MessageFlagsEphemeral},
 			}
 		}
-		starts := b.svc.Schedules(cl.Env, f.namespace, f.toStart, f.durations)
 		var drafts []string
 		if id.Kind == kindDurationRetry {
 			drafts = f.draft
@@ -356,10 +410,14 @@ func (b *Bot) openDurationModal(i *discordgo.Interaction, id customID, userID st
 func (b *Bot) handleModal(i *discordgo.Interaction) {
 	data, ok := i.Data.(discordgo.ModalSubmitInteractionData)
 	if !ok {
-		slog.Warn("discord modal data type assertion failed")
+		// discordgo cannot decode modals with Label components; handleRawEvent answers those.
+		slog.Debug("discord modal data not decoded, left to the raw event handler")
 		return
 	}
 	id, err := parseCustomID(data.CustomID)
+	if err == nil && id.Kind == kindSelectModal {
+		return // decoded and handled from the raw gateway event (see handleRawEvent)
+	}
 	userID, _ := interactionUser(i)
 	if err != nil || userID == "" || id.Kind != kindDurationModal {
 		slog.Warn("unrecognized discord modal", slog.String("custom_id", data.CustomID))
@@ -369,22 +427,36 @@ func (b *Bot) handleModal(i *discordgo.Interaction) {
 	inputs := modalInputs(data.Components)
 
 	b.flowResponse(i, id.Token, userID, false, func(f *flow, cl config.Cluster) *discordgo.InteractionResponse {
-		names := f.toStart[:min(len(f.toStart), maxDurationInputs)]
-		raw := make([]string, len(names))
-		requested := make(map[string]time.Duration, len(names))
+		refs := f.starts()
+		refs = refs[:min(len(refs), maxDurationInputs)]
+		multi := len(f.planned()) > 1
+		label := func(r startRef) string {
+			if multi {
+				return r.part.namespace + "/" + r.name
+			}
+			return r.name
+		}
+		raw := make([]string, len(refs))
+		requested := map[*nsPart]map[string]time.Duration{}
 		var problems []string
-		for idx, name := range names {
+		for idx, r := range refs {
 			raw[idx] = inputs[strconv.Itoa(idx)]
 			d, err := runlimit.ParseHours(raw[idx])
 			if err != nil {
-				problems = append(problems, fmt.Sprintf("⛔ %s: %v", name, err))
+				problems = append(problems, fmt.Sprintf("⛔ %s: %v", label(r), err))
 				continue
 			}
-			requested[name] = d
+			if requested[r.part] == nil {
+				requested[r.part] = map[string]time.Duration{}
+			}
+			requested[r.part][r.name] = d
 		}
-		for _, sch := range b.svc.Schedules(cl.Env, f.namespace, names, requested) {
-			if sch.Err != nil {
-				problems = append(problems, fmt.Sprintf("⛔ %s: %v", sch.Name, sch.Err))
+		for _, p := range f.planned() {
+			names := slices.Sorted(maps.Keys(requested[p]))
+			for _, sch := range b.svc.Schedules(cl.Env, p.namespace, names, requested[p]) {
+				if sch.Err != nil {
+					problems = append(problems, fmt.Sprintf("⛔ %s: %v", label(startRef{part: p, name: sch.Name}), sch.Err))
+				}
 			}
 		}
 		if len(problems) > 0 {
@@ -396,10 +468,12 @@ func (b *Bot) handleModal(i *discordgo.Interaction) {
 			}
 		}
 		f.draft = nil
-		f.durations = make(map[string]time.Duration, len(requested))
-		for name, d := range requested {
-			if d > 0 {
-				f.durations[name] = d
+		for _, p := range f.planned() {
+			p.durations = map[string]time.Duration{}
+			for name, d := range requested[p] {
+				if d > 0 {
+					p.durations[name] = d
+				}
 			}
 		}
 		v := b.preview(id.Token, cl, f)
@@ -436,7 +510,7 @@ func modalInputs(components []discordgo.MessageComponent) map[string]string {
 // handleConfirm applies the previewed plan once; the flow is consumed before applying so a
 // double click cannot run it twice.
 func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string) {
-	var req frontend.ApplyRequest
+	var reqs []frontend.ApplyRequest
 	var cl config.Cluster
 	problem := ""
 	sub := subject(i)
@@ -448,11 +522,13 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 		case !found:
 			problem = msgClusterGone
 			f.expires = time.Time{}
-		case len(f.toStart)+len(f.toStop) == 0:
+		case len(f.planned()) == 0:
 			problem = msgUnrecognized
 		default:
 			cl = c
-			req = frontend.ApplyRequest{Cluster: c, Namespace: f.namespace, User: userID, Subject: sub, RequestID: f.requestID, ToStart: f.toStart, ToStop: f.toStop, Durations: maps.Clone(f.durations)}
+			for _, p := range f.planned() {
+				reqs = append(reqs, frontend.ApplyRequest{Cluster: c, Namespace: p.namespace, User: userID, Subject: sub, RequestID: f.requestID, ToStart: p.toStart, ToStop: p.toStop, Durations: maps.Clone(p.durations)})
+			}
 			f.expires = time.Time{}
 		}
 	})
@@ -472,10 +548,18 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 	if !b.deferUpdate(i) {
 		return
 	}
-	res := b.svc.Apply(req)
-	targets := b.svc.RolloutTargets(req, res)
+	// One request per namespace keeps the audit, notify and REST semantics per namespace.
+	results := make([]applied, 0, len(reqs))
+	renderers := make(map[string]*frontend.ReadyRenderer, len(reqs))
+	var targets []rollout.Target
+	for _, req := range reqs {
+		res := b.svc.Apply(req)
+		results = append(results, applied{namespace: req.Namespace, res: res})
+		targets = append(targets, b.svc.RolloutTargets(req, res)...)
+		renderers[req.Namespace] = b.svc.NewReadyRenderer(req)
+	}
 	if !b.svc.RolloutEnabled() || len(targets) == 0 {
-		b.edit(i, text(resultText(userID, cl, req.Namespace, res)))
+		b.edit(i, text(resultText(userID, cl, results)))
 		return
 	}
 	b.watchers.Add(1)
@@ -487,9 +571,18 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 			}
 		}()
 		timeout := b.svc.RolloutTimeout()
-		ready := b.svc.NewReadyRenderer(req)
 		b.svc.Track(b.watchCtx, targets, func(snap rollout.Snapshot) {
-			b.edit(i, text(progressText(userID, cl, req.Namespace, res, ready.Decorate(snap), timeout)))
+			b.edit(i, text(progressText(userID, cl, results, decorate(snap, renderers), timeout)))
 		})
 	}()
+}
+
+// decorate renders the ready message of each item with the renderer of its namespace.
+func decorate(snap rollout.Snapshot, renderers map[string]*frontend.ReadyRenderer) rollout.Snapshot {
+	for idx := range snap {
+		if r := renderers[snap[idx].Target.Namespace]; r != nil {
+			r.Decorate(snap[idx : idx+1])
+		}
+	}
+	return snap
 }

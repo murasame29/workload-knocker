@@ -100,7 +100,7 @@ func TestNamespaceView_Pagination(t *testing.T) {
 	for i := range 30 {
 		ns = append(ns, fmt.Sprintf("ns-%02d", i))
 	}
-	v := namespaceView("tok", testCluster(), ns, 1)
+	v := namespaceView("tok", testCluster(), ns, 1, 0)
 	r := rows(v)
 	menu := r[0].Components[0].(discordgo.SelectMenu)
 	if len(menu.Options) != 5 || menu.Options[0].Value != "ns-25" || menu.MaxValues != 1 {
@@ -115,7 +115,7 @@ func TestNamespaceView_Pagination(t *testing.T) {
 		t.Errorf("content %q lacks page info", v.Content)
 	}
 
-	one := rows(namespaceView("tok", testCluster(), ns[:3], 0))
+	one := rows(namespaceView("tok", testCluster(), ns[:3], 0, 0))
 	if len(one[1].Components) != 1 {
 		t.Errorf("single page: want only Cancel, got %d buttons", len(one[1].Components))
 	}
@@ -159,12 +159,12 @@ func TestWorkloadView_OptionsLimitsAndDefaults(t *testing.T) {
 			t.Errorf("label length %d exceeds %d", n, optionLabelMaxLen)
 		}
 	}
-	if len(r[1].Components) != 4 {
-		t.Errorf("buttons = %d, want Previous, Next, Apply, Cancel", len(r[1].Components))
+	if len(r[1].Components) != 5 || r[1].Components[3].(discordgo.Button).Label != "Other namespace" {
+		t.Errorf("buttons = %+v, want Previous, Next, Apply, Other namespace, Cancel", r[1].Components)
 	}
 
 	empty := workloadView("tok", testCluster(), "labs", nil, nil, 0, true)
-	if got := len(rows(empty)[0].Components); got != 1 || !strings.Contains(empty.Content, "No workloads") {
+	if got := len(rows(empty)[0].Components); got != 2 || !strings.Contains(empty.Content, "No workloads") {
 		t.Errorf("empty view: %d components, content %q", got, empty.Content)
 	}
 }
@@ -176,7 +176,7 @@ func TestPreviewView_TextAndTruncation(t *testing.T) {
 		{Action: frontend.ActionStart, Label: "checkout (app, worker)"},
 		{Action: frontend.ActionStop, Label: "batch"},
 	}
-	v := previewView("tok", testCluster(), "labs", changes, nil, nil)
+	v := previewView("tok", testCluster(), []section{{namespace: "labs", changes: changes, rejected: nil, starts: nil}})
 	for _, want := range []string{"**STG / example-staging**", "labs change preview:", "🟢 checkout (app, worker): stopped → **start**", "🔴 batch: running → **stop**"} {
 		if !strings.Contains(v.Content, want) {
 			t.Errorf("preview lacks %q:\n%s", want, v.Content)
@@ -191,7 +191,7 @@ func TestPreviewView_TextAndTruncation(t *testing.T) {
 	for i := range 200 {
 		many = append(many, frontend.Change{Action: frontend.ActionStart, Label: fmt.Sprintf("workload-with-a-long-name-%03d", i)})
 	}
-	big := previewView("tok", testCluster(), "labs", many, nil, nil).Content
+	big := previewView("tok", testCluster(), []section{{namespace: "labs", changes: many, rejected: nil, starts: nil}}).Content
 	if len(big) > contentMaxLen || !strings.Contains(big, "more") {
 		t.Errorf("long preview len=%d, want <= %d with a remainder note", len(big), contentMaxLen)
 	}
@@ -208,7 +208,7 @@ func TestFlowStore_TTLAndTake(t *testing.T) {
 	if err != nil || len(tok) != 12 {
 		t.Fatalf("create: %q %v", tok, err)
 	}
-	if !s.with(tok, func(f *flow) { f.page = 3 }) {
+	if !s.with(tok, func(f *flow) { f.nsPage = 3 }) {
 		t.Fatal("fresh flow not found")
 	}
 	now = now.Add(59 * time.Second)
@@ -337,7 +337,10 @@ func newTestBotWith(t *testing.T, ws []*model.Workload, policy string, m mode.Mo
 	sess := &fakeSession{}
 	svc := frontend.NewService(store, metrics.New(), time.Second,
 		frontend.WithAuthorizer(authz.NewHolder(p)), frontend.WithMode(m))
-	return newBot(sess, svc, config.NewHolder(reg), "guild-1"), sess, store
+	b := newBot(sess, svc, config.NewHolder(reg), "guild-1")
+	// Most tests drive the message flow; modal_test.go turns the modal back on.
+	b.noModal = true
+	return b, sess, store
 }
 
 func member(id string) *discordgo.Member { return &discordgo.Member{User: &discordgo.User{ID: id}} }
@@ -513,7 +516,7 @@ func TestApplyPageSelection_KeepsOtherPages(t *testing.T) {
 	for i := range 30 {
 		ws = append(ws, wl(fmt.Sprintf("svc-%02d", i), 0))
 	}
-	f := &flow{entries: frontend.GroupEntries(ws), page: 1, selected: map[string]bool{"svc-00": true, "svc-26": true}}
+	f := &nsPart{entries: frontend.GroupEntries(ws), page: 1, selected: map[string]bool{"svc-00": true, "svc-26": true}}
 	applyPageSelection(f, []string{"27", "3", "bad"})
 	if !f.selected["svc-00"] || f.selected["svc-26"] || !f.selected["svc-27"] || f.selected["svc-03"] {
 		t.Errorf("selected = %v", f.selected)

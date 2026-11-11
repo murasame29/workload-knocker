@@ -208,10 +208,12 @@ clusters:
 
 `/<command> start` のフロー (すべて ephemeral メッセージで、コンポーネントは実行したユーザーのみ操作できます):
 
-1. サブコマンドで namespace のセレクトメニューを表示します (1 ページ 25 件、前へ/次へボタン)。
-2. namespace を選ぶと workload の複数選択を表示します (1 ページ 25 件)。起動中のエントリは選択済みで、ページをまたいで選択が保持されます。`-api` / `-app` / `-worker` の merge と 🟢 / 🟡 / 🔴 は Slack と同じです。
-3. **Apply** で Plan のプレビューと **Confirm** / **Cancel** を表示します。
-4. **Confirm** で適用し、メッセージを結果に置き換えます。操作ユーザーは Discord のユーザー ID です。続けて[rollout の進捗](#rollout-の進捗)を表示します。
+1. 操作できる namespace が **5 個以内で、各 namespace のエントリが 10 件以内**なら、modal を開きます。namespace ごとにチェックボックスのグループが並び、起動中のエントリはチェック済みです。チェックしたものが起動、外したものが停止です。`-api` / `-app` / `-worker` の merge と 🟢 / 🟡 / 🔴 は Slack と同じです。送信するとすべての namespace の Plan をプレビューします。
+2. 上限を超える場合は namespace のセレクトメニューを表示します (1 ページ 25 件、前へ/次へボタン)。namespace を選ぶと workload の複数選択を表示します (1 ページ 25 件。起動中のエントリは選択済みで、ページをまたいで選択を保持)。**Other namespace** でメニューに戻っても選択は残るため、1 つの Plan で複数の namespace を扱えます。**Apply** でプレビューを表示します。
+3. プレビューは namespace ごとに変更を並べ、**Confirm** / **Change duration** / **Cancel** を表示します。
+4. **Confirm** で namespace ごとに 1 リクエストずつ適用し、メッセージを結果に置き換えます。操作ユーザーは Discord のユーザー ID です。続けて[rollout の進捗](#rollout-の進捗)を表示します。
+
+Discord の modal はコマンドへの最初の応答でなければならないため、modal は controller のメモリ上の状態から作ります。この状態はバックグラウンドの reconcile (`RECONCILE_INTERVAL`、[環境変数](#環境変数)) で最新に保たれます。メッセージのフローは従来どおりその場で reconcile します。
 
 操作ごとの状態 (選択・ページ・Plan) はメモリ上に保持し、各コンポーネントの `custom_id` (`wk1:<kind>:<token>:<arg>`、100 文字制限内) のランダムなトークンで引きます。15 分操作がないと失効し、再起動でも失われるため、その場合は再度コマンドの実行を促します。このため controller は 1 レプリカで運用してください。3 秒以内の応答は、時間のかかる手順 (コマンド開始と Confirm) を defer して満たします。
 

@@ -85,7 +85,8 @@ func selectMenu(id customID, placeholder string, minValues int, options []discor
 }
 
 // namespaceView lists one page of namespaces (already sorted) as a single-choice select menu.
-func namespaceView(token string, cl config.Cluster, namespaces []string, page int) view {
+// opened counts the namespaces already opened in this flow; with any, Apply previews them.
+func namespaceView(token string, cl config.Cluster, namespaces []string, page, opened int) view {
 	page, start, end, pages := pageBounds(len(namespaces), selectMaxOptions, page)
 	options := make([]discordgo.SelectMenuOption, 0, end-start)
 	for _, ns := range namespaces[start:end] {
@@ -98,8 +99,14 @@ func namespaceView(token string, cl config.Cluster, namespaces []string, page in
 	if pages > 1 {
 		content += fmt.Sprintf(" (page %d/%d)", page+1, pages)
 	}
-	buttons := append(pageButtons(kindNamespacePage, token, page, pages),
-		button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false))
+	if opened > 0 {
+		content += fmt.Sprintf("\n%d namespace(s) selected; Apply previews all of them.", opened)
+	}
+	buttons := pageButtons(kindNamespacePage, token, page, pages)
+	if opened > 0 {
+		buttons = append(buttons, button("Apply", discordgo.PrimaryButton, customID{kindPlan, token, 0}, false))
+	}
+	buttons = append(buttons, button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false))
 	return view{Content: content, Components: []discordgo.MessageComponent{
 		discordgo.ActionsRow{Components: []discordgo.MessageComponent{menu}},
 		discordgo.ActionsRow{Components: buttons},
@@ -114,11 +121,12 @@ func workloadView(token string, cl config.Cluster, namespace string, entries []f
 		content += "\nℹ Stopping from chat is disabled: running workloads are stopped by the nightly job."
 	}
 	cancel := button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false)
+	other := button("Other namespace", discordgo.SecondaryButton, customID{kindNamespaces, token, 0}, false)
 	if len(entries) == 0 {
 		return view{
 			Content: content + "\nNo workloads you may operate in this namespace.",
 			Components: []discordgo.MessageComponent{
-				discordgo.ActionsRow{Components: []discordgo.MessageComponent{cancel}},
+				discordgo.ActionsRow{Components: []discordgo.MessageComponent{other, cancel}},
 			},
 		}
 	}
@@ -141,6 +149,7 @@ func workloadView(token string, cl config.Cluster, namespace string, entries []f
 	buttons := pageButtons(kindWorkloadPage, token, page, pages)
 	buttons = append(buttons,
 		button("Apply", discordgo.PrimaryButton, customID{kindPlan, token, 0}, false),
+		other,
 		cancel)
 	return view{Content: content, Components: []discordgo.MessageComponent{
 		discordgo.ActionsRow{Components: []discordgo.MessageComponent{menu}},
@@ -173,20 +182,45 @@ func rejectionLines(rejected []frontend.Rejection) []string {
 // maxDurationInputs is Discord's cap of inputs per modal.
 const maxDurationInputs = 5
 
-// previewView shows the plan with the auto-stop of each start, Confirm, Change duration and Cancel.
-func previewView(token string, cl config.Cluster, namespace string, changes []frontend.Change, rejected []frontend.Rejection, starts []frontend.Schedule) view {
-	head := fmt.Sprintf("%s / %s change preview:", header(cl), namespace)
-	lines := append(planLines(changes), scheduleLines(starts)...)
-	if len(starts) > maxDurationInputs {
+// section is the previewed plan of one namespace.
+type section struct {
+	namespace string
+	changes   []frontend.Change
+	rejected  []frontend.Rejection
+	starts    []frontend.Schedule
+}
+
+// namespaceHead names the namespaces of sections in a header line.
+func namespaceHead(cl config.Cluster, namespaces []string) string {
+	return fmt.Sprintf("%s / %s", header(cl), strings.Join(namespaces, ", "))
+}
+
+// previewView shows the plan of every section with the auto-stop of each start, Confirm,
+// Change duration and Cancel. Several sections get a bold namespace line each.
+func previewView(token string, cl config.Cluster, sections []section) view {
+	names := make([]string, 0, len(sections))
+	var lines []string
+	starts := 0
+	for _, s := range sections {
+		names = append(names, s.namespace)
+		if len(sections) > 1 {
+			lines = append(lines, "**"+s.namespace+"**")
+		}
+		lines = append(lines, planLines(s.changes)...)
+		lines = append(lines, scheduleLines(s.starts)...)
+		lines = append(lines, rejectionLines(s.rejected)...)
+		starts += len(s.starts)
+	}
+	if starts > maxDurationInputs {
 		lines = append(lines, fmt.Sprintf("ℹ Change duration covers the first %d starts; the others use their default.", maxDurationInputs))
 	}
 	buttons := []discordgo.MessageComponent{button("Confirm", discordgo.SuccessButton, customID{kindConfirm, token, 0}, false)}
-	if len(starts) > 0 {
+	if starts > 0 {
 		buttons = append(buttons, button("Change duration", discordgo.SecondaryButton, customID{kindDuration, token, 0}, false))
 	}
 	buttons = append(buttons, button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false))
 	return view{
-		Content:    fitLines(head, append(lines, rejectionLines(rejected)...), contentMaxLen),
+		Content:    fitLines(namespaceHead(cl, names)+" change preview:", lines, contentMaxLen),
 		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: buttons}},
 	}
 }
@@ -302,35 +336,49 @@ func retryView(token string, lines []string) view {
 	}
 }
 
+// applied is the outcome of the plan of one namespace.
+type applied struct {
+	namespace string
+	res       frontend.ApplyResult
+}
+
 // resultText renders the outcome of an applied plan.
-func resultText(userID string, cl config.Cluster, namespace string, res frontend.ApplyResult) string {
-	return progressText(userID, cl, namespace, res, nil, 0)
+func resultText(userID string, cl config.Cluster, results []applied) string {
+	return progressText(userID, cl, results, nil, 0)
 }
 
 // progressText is resultText with the rollout progress of the applied workloads; applied
-// workloads missing from snap keep the plain "→ start" line.
-func progressText(userID string, cl config.Cluster, namespace string, res frontend.ApplyResult, snap rollout.Snapshot, timeout time.Duration) string {
+// workloads missing from snap keep the plain "→ start" line. Several namespaces get a bold
+// namespace line each.
+func progressText(userID string, cl config.Cluster, results []applied, snap rollout.Snapshot, timeout time.Duration) string {
 	progress := make(map[string]rollout.Item, len(snap))
 	for _, it := range snap {
-		progress[it.Target.Name] = it
+		progress[it.Target.Namespace+"/"+it.Target.Name] = it
 	}
-	lines := make([]string, 0, len(res.Applied)+1)
-	for _, a := range res.Applied {
-		it, tracked := progress[a.Name]
-		switch {
-		case !a.Found:
-			lines = append(lines, fmt.Sprintf("⚠ %s → %s (not found)", a.Name, a.Action))
-		case tracked:
-			lines = append(lines, rollout.Line(it, timeout))
-		case a.Action == frontend.ActionStart:
-			lines = append(lines, fmt.Sprintf("🟢 %s → start", a.Name))
-		default:
-			lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
+	names := make([]string, 0, len(results))
+	var lines []string
+	for _, r := range results {
+		names = append(names, r.namespace)
+		if len(results) > 1 {
+			lines = append(lines, "**"+r.namespace+"**")
 		}
+		for _, a := range r.res.Applied {
+			it, tracked := progress[r.namespace+"/"+a.Name]
+			switch {
+			case !a.Found:
+				lines = append(lines, fmt.Sprintf("⚠ %s → %s (not found)", a.Name, a.Action))
+			case tracked:
+				lines = append(lines, rollout.Line(it, timeout))
+			case a.Action == frontend.ActionStart:
+				lines = append(lines, fmt.Sprintf("🟢 %s → start", a.Name))
+			default:
+				lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
+			}
+		}
+		lines = append(lines, appliedStopLines(r.res.Applied)...)
+		lines = append(lines, rejectionLines(r.res.Rejected)...)
 	}
-	lines = append(lines, appliedStopLines(res.Applied)...)
-	lines = append(lines, rejectionLines(res.Rejected)...)
-	head := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)", userID, strings.ToUpper(cl.Env), cl.Name, namespace)
+	head := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)", userID, strings.ToUpper(cl.Env), cl.Name, strings.Join(names, ", "))
 	return fitLines(head, lines, contentMaxLen)
 }
 

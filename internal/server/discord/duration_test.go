@@ -30,7 +30,9 @@ func newDurationBot(t *testing.T, ws []*model.Workload) (*Bot, *fakeSession, *fa
 		frontend.WithAuthorizer(authz.NewHolder(nil)),
 		frontend.WithClock(func() time.Time { return discordNow }),
 		frontend.WithRunDefaults(runlimit.Defaults{Default: 4 * time.Hour, Max: 8 * time.Hour}))
-	return newBot(sess, svc, config.NewHolder(reg), "guild-1"), sess, store
+	b := newBot(sess, svc, config.NewHolder(reg), "guild-1")
+	b.noModal = true
+	return b, sess, store
 }
 
 // previewFlow drives the menu up to the plan preview that starts "batch" and "shop-app".
@@ -208,7 +210,7 @@ func TestDurationModal_CapsInputsAtFive(t *testing.T) {
 	if len(resp.Data.Components) != maxDurationInputs {
 		t.Errorf("inputs = %d, want %d", len(resp.Data.Components), maxDurationInputs)
 	}
-	v := previewView("tok", testCluster(), "labs", nil, nil, starts)
+	v := previewView("tok", testCluster(), []section{{namespace: "labs", changes: nil, rejected: nil, starts: starts}})
 	if !strings.Contains(v.Content, "first 5 starts") {
 		t.Errorf("preview lacks the cap note:\n%s", v.Content)
 	}
