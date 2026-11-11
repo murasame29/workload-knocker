@@ -318,6 +318,52 @@ func TestTick_SurvivesRestartAndMissesAfterGrace(t *testing.T) {
 	}
 }
 
+func TestTick_CrashBeforeTheResultIsSavedRunsAgainAfterRestart(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, allowAll, wl("terraria"))
+	at := t0.Add(time.Hour)
+	r := e.create(t, at, 0, "terraria")
+
+	// The workload starts, then saving the result fails (the controller dies at that point).
+	e.store.keys.fail = errors.New("controller gone")
+	e.tick(at.Add(-5 * time.Minute))
+	if len(e.store.starts) != 1 {
+		t.Fatalf("starts = %v, want one", e.store.starts)
+	}
+	e.store.keys.fail = nil
+
+	e.restart(allowAll)
+	if got := e.state(t, r.ID).State; got != Pending {
+		t.Fatalf("persisted state = %s, want pending (the result was never saved)", got)
+	}
+	e.tick(at.Add(-4 * time.Minute))
+	if got := e.state(t, r.ID).State; got != Started || len(e.store.starts) != 2 {
+		t.Errorf("after restart: state %s, starts %v, want started again", got, e.store.starts)
+	}
+	e.tick(at)
+	if len(e.store.starts) != 2 {
+		t.Errorf("started a third time: %v", e.store.starts)
+	}
+}
+
+func TestTick_CancelDuringExecutionKeepsCancelled(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, allowAll, wl("terraria"))
+	r := e.create(t, t0.Add(time.Hour), 0, "terraria")
+	e.svc.markDone(context.Background(), "stg", r.ID, Started, "", t0)
+	if got := e.state(t, r.ID).State; got != Started {
+		t.Fatalf("state = %s", got)
+	}
+	r2 := e.create(t, t0.Add(2*time.Hour), 0, "terraria")
+	if _, err := e.svc.Cancel(context.Background(), "stg", r2.ID, alice, audit.SourceDiscord); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.markDone(context.Background(), "stg", r2.ID, Started, "", t0)
+	if got := e.state(t, r2.ID).State; got != Cancelled {
+		t.Errorf("state = %s, want cancelled", got)
+	}
+}
+
 func TestTick_RechecksAuthorizationAtExecution(t *testing.T) {
 	t.Parallel()
 	allowed := true

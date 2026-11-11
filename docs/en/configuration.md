@@ -474,8 +474,10 @@ Discord or [`POST /api/v1/reservations`](#apiv1reservations).
   creating interaction. A workload refused at execution (policy, GitOps conflict, removed) is listed in the
   reservation's note; the reservation fails when none started.
 - **Restarts**: reservations are stored in the `workload-state` ConfigMap under `reservations.<env>.json` (no extra
-  RBAC). A reservation whose start passed while the controller was down still runs within `RESERVATION_GRACE`
-  (default `15m`); later it is marked missed and the notify channel is told.
+  RBAC), so they survive a Pod restart. A reservation whose start passed while the controller was down still runs
+  within `RESERVATION_GRACE` (default `15m`); later it is marked missed and the notify channel is told. The result is
+  saved after the workloads start, so a controller that dies in between runs the reservation again on restart
+  (starting a running workload changes nothing; the start message may be posted twice).
 - **List and cancel**: `/<command> status` lists the pending reservations with a **Cancel** button for the creator and
   for anyone allowed to stop all of their workloads. Finished reservations stay in `GET /api/v1/reservations` for a day.
 - Audit events: `reservation.create`, `reservation.cancel` and one `reservation.execute` per workload, all with the
