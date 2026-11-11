@@ -23,6 +23,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/metrics"
 	"github.com/murasame29/workload-knocker/internal/model"
 	"github.com/murasame29/workload-knocker/internal/notify"
+	"github.com/murasame29/workload-knocker/internal/periodic"
 	"github.com/murasame29/workload-knocker/internal/reconcile"
 	"github.com/murasame29/workload-knocker/internal/reload"
 	"github.com/murasame29/workload-knocker/internal/reservation"
@@ -138,9 +139,11 @@ func BuildServer(cfg *config.Env) (*dig.Container, error) {
 			return autostop.New(ws, m, cfg.StopReminder, autostop.WithReminder(n))
 		},
 
-		// Background reconcile (per-tick hooks for other features are passed here)
-		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager, as *autostop.Hook, rs *reservation.Service) *reconcile.Loop {
-			return reconcile.New(ws, m, cfg.ReconcileInterval, cfg.ClusterReconcileTimeout, as, rs)
+		// Every periodic hook of the background loop, wired in one place
+		periodic.New,
+		// Background reconcile running the periodic hooks each interval
+		func(cfg *config.Env, ws model.WorkloadStore, m metrics.MetricsManager, hooks periodic.Hooks) *reconcile.Loop {
+			return reconcile.New(ws, m, cfg.ReconcileInterval, cfg.ClusterReconcileTimeout, hooks...)
 		},
 
 		// KEDA external scaler gRPC server; nil unless a cluster uses keda-external

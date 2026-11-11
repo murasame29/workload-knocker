@@ -8,10 +8,11 @@
 | `internal/audit/` | Audit event schema and recorder (see [audit-log.md](audit-log.md)) |
 | `internal/autostop/` | Reconcile hook that stops expired workloads and calls the stop reminder |
 | `internal/reservation/` | One-off reservations: create, list, cancel, and the reconcile hook that reminds, executes and marks missed |
+| `internal/periodic/` | Wires every hook the background reconcile loop runs each interval (auto-stop, reservations) in run order |
 | `internal/authz/` | Authorization policy parsing and evaluation |
 | `internal/config/` | Environment variables and the cluster registry |
 | `internal/container/` | Dependency wiring |
-| `internal/frontend/` | Chat-independent start/stop flow shared by Slack and Discord |
+| `internal/frontend/` | Chat-independent start/stop flow shared by Slack, Discord and the start / extend API, and the shared chat lines rendered through each platform's `Markup` |
 | `internal/k8s/` | Cluster clients, EKS and kubeconfig auth, `ScaledObject` and scale target access, state ConfigMap |
 | `internal/logging/` | slog setup: `timestamp` / `message` keys, `service.*` attributes |
 | `internal/metrics/` | Prometheus metrics, including `workload_knocker_activation` |

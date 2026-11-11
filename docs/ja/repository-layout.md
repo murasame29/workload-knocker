@@ -8,10 +8,11 @@
 | `internal/audit/` | 監査イベントのスキーマと recorder ([audit-log.md](audit-log.md)) |
 | `internal/autostop/` | 期限切れの workload を停止し、停止リマインドを呼ぶ reconcile フック |
 | `internal/reservation/` | 単発予約の作成・一覧・取り消しと、リマインド・実行・missed 判定を行う reconcile フック |
+| `internal/periodic/` | バックグラウンドの reconcile ループが毎回実行するフック (自動停止、予約) を実行順にまとめて組み立てる |
 | `internal/authz/` | 認可ポリシーのパースと評価 |
 | `internal/config/` | 環境変数と Cluster Registry |
 | `internal/container/` | 依存の組み立て |
-| `internal/frontend/` | Slack と Discord が共有する、チャットに依存しない start/stop フロー |
+| `internal/frontend/` | Slack、Discord、start / extend API が共有する、チャットに依存しない start/stop フローと、各プラットフォームの `Markup` で描画する共通のチャット行 |
 | `internal/k8s/` | cluster クライアント、EKS / kubeconfig 認証、`ScaledObject` の取得、state ConfigMap |
 | `internal/logging/` | slog の設定 (`timestamp` / `message` キー、`service.*` 属性) |
 | `internal/metrics/` | Prometheus メトリクス (`workload_knocker_activation` など) |
