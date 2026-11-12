@@ -157,7 +157,7 @@ rules:
 | REST API | 固定の subject `api` |
 | Discord | ユーザー ID と、interaction の member データに含まれるロール ID (追加の API 呼び出しなし)。操作のたびに作り直すため、ロール変更は次のクリックから反映。DM にはロールがないため role ルールは適用されない |
 
-グループの取得には bot スコープ `usergroups:read` が必要です (`slack-manifest.yaml` に記載。このスコープ追加前に作成した App は再インストールが必要)。
+グループの取得には bot スコープ `usergroups:read` が必要です (`example/slack-manifest.yaml` に記載。このスコープ追加前に作成した App は再インストールが必要)。
 `slack.groups` を使うルールがあるときだけ使われます。取得に失敗した場合は warning を出し、そのグループについてはユーザー ID だけで照合します。
 fail open はしません。グループ経由でのみ許可されているユーザーは、取得に成功するまで拒否されます。
 
@@ -376,7 +376,7 @@ metadata:
 
 - `notifyChannel` がなければ何も投稿せず、追加の権限も不要です。投稿が失敗しても操作は止まらず、`notify post failed` をログに出すだけです。
 - Discord のメッセージはメンションを無効にして送るため、ユーザーを指名しても通知は飛びません。Slack では `<@user>` のメンションで該当ユーザーに通知が届くことがあります。
-- Discord: チャンネルで Bot に **View Channel** と **Send Messages** を付与します。Slack: Bot に `chat:write` scope (`slack-manifest.yaml` に含まれます) が必要で、チャンネルへの招待 (`/invite @workload-knocker`) も必要です。プライベートチャンネルは `G...` の ID を使います。
+- Discord: チャンネルで Bot に **View Channel** と **Send Messages** を付与します。Slack: Bot に `chat:write` scope (`example/slack-manifest.yaml` に含まれます) が必要で、チャンネルへの招待 (`/invite @workload-knocker`) も必要です。プライベートチャンネルは `G...` の ID を使います。
 - 1 秒以内に複数の workload が ready になった場合、編集は 1 回の API 呼び出しにまとめます。メッセージの状態はメモリ上にのみあり、コントローラーの再起動後は進行中の start メッセージは編集されません。
 
 ## Slack の workload モーダル

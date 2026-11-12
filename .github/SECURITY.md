@@ -19,4 +19,4 @@ expose it publicly.
 Without an authorization policy file (`AUTHZ_CONFIG_PATH`), every chat user and the API caller may
 start and stop every workload. Enable a policy for shared environments; the policy has allow rules
 only, so keep them narrow and `default: deny`. See
-[docs/en/configuration.md](docs/en/configuration.md#authorization).
+[docs/en/configuration.md](../docs/en/configuration.md#authorization).
