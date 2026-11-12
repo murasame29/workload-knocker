@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/murasame29/workload-knocker/compare/v0.1.11...v0.2.0) (2026-11-12)
+
+
+### Code Refactoring
+
+* consolidate chat rendering, API, store roles, periodic hooks and layout ([#89](https://github.com/murasame29/workload-knocker/issues/89)) ([3932958](https://github.com/murasame29/workload-knocker/commit/3932958e1018d555314c22ff11e6f97f9f453f59)), closes [#81](https://github.com/murasame29/workload-knocker/issues/81) [#82](https://github.com/murasame29/workload-knocker/issues/82) [#83](https://github.com/murasame29/workload-knocker/issues/83) [#84](https://github.com/murasame29/workload-knocker/issues/84)
+
 ## [0.1.11](https://github.com/murasame29/workload-knocker/compare/v0.1.10...v0.1.11) (2026-11-11)
 
 
