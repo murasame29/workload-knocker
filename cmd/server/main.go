@@ -11,13 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/murasame29/workload-knocker/internal/app/container"
+	"github.com/murasame29/workload-knocker/internal/app/server"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/container"
-	"github.com/murasame29/workload-knocker/internal/logging"
-	"github.com/murasame29/workload-knocker/internal/server"
-	httpserver "github.com/murasame29/workload-knocker/internal/server/http"
-	"github.com/murasame29/workload-knocker/internal/store"
-	"github.com/murasame29/workload-knocker/internal/version"
+	httpserver "github.com/murasame29/workload-knocker/internal/frontend/http"
+	"github.com/murasame29/workload-knocker/internal/observability/logging"
+	"github.com/murasame29/workload-knocker/internal/observability/version"
+	"github.com/murasame29/workload-knocker/internal/workload/store"
 )
 
 func main() {

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/murasame29/workload-knocker/internal/authz"
-	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/mode"
-	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
+	"github.com/murasame29/workload-knocker/internal/policy/authz"
+	"github.com/murasame29/workload-knocker/internal/policy/mode"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
 )
 
 // readOnlyStore serves the status path; any cluster call or mutation fails the test.

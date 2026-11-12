@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
 )
 
 // mergeableSuffixes are workload name suffixes merged into one entry.

@@ -8,9 +8,9 @@ import (
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 
 	"github.com/murasame29/workload-knocker/internal/actuator"
+	"github.com/murasame29/workload-knocker/internal/cluster/k8s"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/k8s"
-	"github.com/murasame29/workload-knocker/internal/metrics"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 )
 
 // externalTriggerTypes are the KEDA trigger types served by this actuator.

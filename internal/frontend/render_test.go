@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/murasame29/workload-knocker/internal/authz"
-	"github.com/murasame29/workload-knocker/internal/model"
-	"github.com/murasame29/workload-knocker/internal/reservation"
+	"github.com/murasame29/workload-knocker/internal/policy/authz"
+	"github.com/murasame29/workload-knocker/internal/schedule/reservation"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
 )
 
 var testMarkup = Markup{

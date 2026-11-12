@@ -11,7 +11,7 @@ import (
 	pb "github.com/kedacore/keda/v2/pkg/scalers/externalscaler"
 
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/metrics"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 )
 
 const (

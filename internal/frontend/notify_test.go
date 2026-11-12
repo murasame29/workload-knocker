@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/model"
-	"github.com/murasame29/workload-knocker/internal/notify"
-	"github.com/murasame29/workload-knocker/internal/rollout"
+	"github.com/murasame29/workload-knocker/internal/frontend/notify"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
+	"github.com/murasame29/workload-knocker/internal/workload/rollout"
 )
 
 // recordingNotifier records the events the service reports.

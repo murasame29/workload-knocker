@@ -7,15 +7,15 @@ import (
 	"slices"
 	"time"
 
-	"github.com/murasame29/workload-knocker/internal/audit"
-	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/mode"
-	"github.com/murasame29/workload-knocker/internal/model"
-	"github.com/murasame29/workload-knocker/internal/notify"
-	"github.com/murasame29/workload-knocker/internal/rollout"
-	"github.com/murasame29/workload-knocker/internal/runlimit"
+	"github.com/murasame29/workload-knocker/internal/frontend/notify"
+	"github.com/murasame29/workload-knocker/internal/observability/audit"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
+	"github.com/murasame29/workload-knocker/internal/policy/authz"
+	"github.com/murasame29/workload-knocker/internal/policy/mode"
+	"github.com/murasame29/workload-knocker/internal/policy/runlimit"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
+	"github.com/murasame29/workload-knocker/internal/workload/rollout"
 )
 
 // Limits are the per-frontend display constraints. Zero means unlimited.

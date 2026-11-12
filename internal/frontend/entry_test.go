@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
 )
 
 // wl creates a test workload.

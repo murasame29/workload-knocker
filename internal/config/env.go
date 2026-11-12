@@ -11,8 +11,8 @@ import (
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
 
-	"github.com/murasame29/workload-knocker/internal/mode"
-	"github.com/murasame29/workload-knocker/internal/runlimit"
+	"github.com/murasame29/workload-knocker/internal/policy/mode"
+	"github.com/murasame29/workload-knocker/internal/policy/runlimit"
 )
 
 // Env is the startup configuration of workload-knocker (from environment variables).
@@ -28,7 +28,7 @@ type Env struct {
 	ClusterConfigPath string `env:"CLUSTER_CONFIG_PATH" envDefault:"/etc/workload-knocker/config.yaml"`
 
 	// AuthzConfigPath is the authorization policy file. Empty means the default path, and
-	// authorization is disabled when that file does not exist (see internal/authz).
+	// authorization is disabled when that file does not exist (see internal/policy/authz).
 	AuthzConfigPath string `env:"AUTHZ_CONFIG_PATH"`
 
 	// ClusterReconcileTimeout is the Reconcile timeout when a chat command is received.
@@ -69,7 +69,7 @@ type Env struct {
 	// ReservationReminder is how long before a reservation starts the reminder is posted; 0 disables it.
 	ReservationReminder time.Duration `env:"RESERVATION_REMINDER" envDefault:"15m"`
 
-	// OperationMode is full | scheduled-stop | off; see internal/mode.
+	// OperationMode is full | scheduled-stop | off; see internal/policy/mode.
 	OperationMode mode.Mode `env:"OPERATION_MODE" envDefault:"full"`
 
 	// APIToken is the bearer token for /api/v1/*; empty disables the API (fail closed).

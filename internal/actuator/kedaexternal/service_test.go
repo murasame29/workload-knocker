@@ -16,7 +16,7 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/actuator"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/metrics"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 )
 
 const wait = 5 * time.Second

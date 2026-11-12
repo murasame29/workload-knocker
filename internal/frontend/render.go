@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/murasame29/workload-knocker/internal/reservation"
-	"github.com/murasame29/workload-knocker/internal/runlimit"
+	"github.com/murasame29/workload-knocker/internal/policy/runlimit"
+	"github.com/murasame29/workload-knocker/internal/schedule/reservation"
 )
 
 // Markup is how a chat platform formats the shared lines; adapters (Discord, Slack) set it once
