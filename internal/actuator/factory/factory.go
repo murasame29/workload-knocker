@@ -14,9 +14,9 @@ import (
 	"github.com/murasame29/workload-knocker/internal/actuator/kedaexternal"
 	"github.com/murasame29/workload-knocker/internal/actuator/kedaprometheus"
 	"github.com/murasame29/workload-knocker/internal/actuator/multi"
+	"github.com/murasame29/workload-knocker/internal/cluster/k8s"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/k8s"
-	"github.com/murasame29/workload-knocker/internal/metrics"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 )
 
 // builder creates the Discoverer and Actuator of one cluster.

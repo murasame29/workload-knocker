@@ -17,7 +17,7 @@ import (
 	"github.com/murasame29/workload-knocker/internal/actuator"
 	"github.com/murasame29/workload-knocker/internal/actuator/actuatortest"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/metrics"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 )
 
 var testCluster = config.Cluster{Env: "stg", Name: "stg-cluster"}

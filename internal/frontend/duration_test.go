@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/murasame29/workload-knocker/internal/audit"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/model"
-	"github.com/murasame29/workload-knocker/internal/runlimit"
+	"github.com/murasame29/workload-knocker/internal/observability/audit"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
+	"github.com/murasame29/workload-knocker/internal/policy/runlimit"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
 )
 
 // durStore is an in-memory store that keeps StopAt like the real one.

@@ -18,9 +18,9 @@ RUN CGO_ENABLED=0 go build \
     -buildvcs=false \
     -o /build/main \
     -ldflags="-w -s \
-      -X github.com/murasame29/workload-knocker/internal/version.Version=${VERSION} \
-      -X github.com/murasame29/workload-knocker/internal/version.Commit=${COMMIT} \
-      -X github.com/murasame29/workload-knocker/internal/version.BuildDate=${BUILD_DATE}" \
+      -X github.com/murasame29/workload-knocker/internal/observability/version.Version=${VERSION} \
+      -X github.com/murasame29/workload-knocker/internal/observability/version.Commit=${COMMIT} \
+      -X github.com/murasame29/workload-knocker/internal/observability/version.BuildDate=${BUILD_DATE}" \
     ./cmd/server && \
     go_root="$(go env GOROOT)" && \
     go_version="$(go env GOVERSION)" && \

@@ -7,15 +7,15 @@ import (
 	"slices"
 	"time"
 
-	"github.com/murasame29/workload-knocker/internal/audit"
-	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/mode"
-	"github.com/murasame29/workload-knocker/internal/model"
-	"github.com/murasame29/workload-knocker/internal/notify"
-	"github.com/murasame29/workload-knocker/internal/rollout"
-	"github.com/murasame29/workload-knocker/internal/runlimit"
+	"github.com/murasame29/workload-knocker/internal/frontend/notify"
+	"github.com/murasame29/workload-knocker/internal/observability/audit"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
+	"github.com/murasame29/workload-knocker/internal/policy/authz"
+	"github.com/murasame29/workload-knocker/internal/policy/mode"
+	"github.com/murasame29/workload-knocker/internal/policy/runlimit"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
+	"github.com/murasame29/workload-knocker/internal/workload/rollout"
 )
 
 // Limits are the per-frontend display constraints. Zero means unlimited.
@@ -155,7 +155,7 @@ type ApplyResult struct {
 
 // Service is the frontend-independent workload operation logic.
 type Service struct {
-	store            model.WorkloadStore
+	store            Store
 	metrics          metrics.MetricsManager
 	reconcileTimeout time.Duration
 	authz            authz.Authorizer
@@ -199,8 +199,15 @@ func WithExtender(e notify.Extender) Option { return func(s *Service) { s.extend
 // WithClusters sets the registry the default Extender resolves clusters from; without it the button answers "not available".
 func WithClusters(c config.Resolver) Option { return func(s *Service) { s.clusters = c } }
 
+// Store is the part of the workload store the service needs.
+type Store interface {
+	model.WorkloadReader
+	model.WorkloadOperator
+	Reconcile(ctx context.Context, env string) error
+}
+
 // NewService builds a Service. reconcileTimeout bounds each on-demand Reconcile.
-func NewService(store model.WorkloadStore, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
+func NewService(store Store, m metrics.MetricsManager, reconcileTimeout time.Duration, opts ...Option) *Service {
 	s := &Service{store: store, metrics: m, reconcileTimeout: reconcileTimeout, audit: audit.NewSlog(), now: time.Now, notifier: notify.Nop{}}
 	for _, o := range opts {
 		o(s)
@@ -285,7 +292,8 @@ func (s *Service) Plan(sub authz.Subject, cl config.Cluster, namespace string, e
 	return plan
 }
 
-var errNotFound = errors.New("workload not found")
+// errNotFound is the audited error of an unknown workload (shared with the store and the API).
+var errNotFound = model.ErrWorkloadNotFound
 
 // record emits the audit event of one workload operation requested by sub.
 func (s *Service) record(sub authz.Subject, cl config.Cluster, namespace, name string, a Action, outcome audit.Outcome, requestID string, err error, opts ...func(*audit.Record)) {

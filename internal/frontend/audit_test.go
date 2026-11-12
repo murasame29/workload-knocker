@@ -5,12 +5,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/murasame29/workload-knocker/internal/audit"
-	"github.com/murasame29/workload-knocker/internal/authz"
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/metrics"
-	"github.com/murasame29/workload-knocker/internal/mode"
-	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/observability/audit"
+	"github.com/murasame29/workload-knocker/internal/observability/metrics"
+	"github.com/murasame29/workload-knocker/internal/policy/authz"
+	"github.com/murasame29/workload-knocker/internal/policy/mode"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
 )
 
 type recorderFake struct {

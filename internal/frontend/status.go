@@ -7,8 +7,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/murasame29/workload-knocker/internal/authz"
-	"github.com/murasame29/workload-knocker/internal/model"
+	"github.com/murasame29/workload-knocker/internal/policy/authz"
+	"github.com/murasame29/workload-knocker/internal/workload/model"
 )
 
 // StatusEntry is one entry of the status view with the data of its running members.

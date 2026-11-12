@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/murasame29/workload-knocker/internal/config"
-	"github.com/murasame29/workload-knocker/internal/notify"
+	"github.com/murasame29/workload-knocker/internal/frontend/notify"
 )
 
 // serviceExtender adapts Service.Extend to notify.Extender; authorization, mode and the cap stay in the service.
