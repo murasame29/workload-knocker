@@ -5,7 +5,7 @@
 ## リリースの流れ
 
 1. PR は squash マージし、PR タイトルがコミットメッセージになります。タイトルは Conventional Commits (`feat` `fix` `docs` `refactor` `perf` `test` `build` `ci` `chore` `revert`、任意の scope、破壊的変更は `!`) に従います。`pr-title` チェックが検査します。
-2. `main` への push ごとに release-please がリリース PR を作成・更新します。`.release-please-manifest.json`、`CHANGELOG.md`、`charts/workload-knocker/Chart.yaml` の `version` / `appVersion` が更新され、chart・appVersion・アプリのバージョンは常に一致します。
+2. `main` への push ごとに release-please がリリース PR を作成・更新します。`.github/.release-please-manifest.json`、`CHANGELOG.md`、`charts/workload-knocker/Chart.yaml` の `version` / `appVersion` が更新され、chart・appVersion・アプリのバージョンは常に一致します。
 3. リリース PR をマージするとタグ `vX.Y.Z` と GitHub Release が作成されます。リリースノートは生成された changelog (Features / Bug Fixes / Performance Improvements / Dependencies / Reverts と BREAKING CHANGES) です。
 4. タグで `.github/workflows/release.yml` が動きます。
    - `image` は `ghcr.io/murasame29/workload-knocker:X.Y.Z` を公開します (最新の安定タグのときだけ `X.Y` / `X` / `latest` も付与)。OCI ラベル `source` / `version` / `revision` / `created` を付け、バージョン・コミット・ビルド日時をバイナリに埋め込みます (`workload-knocker --version`)。
@@ -19,7 +19,7 @@
 
 ## バージョニング
 
-SemVer。1.0.0 未満では破壊的変更が minor、`feat` と `fix` が patch を上げます (`bump-patch-for-minor-pre-major`)。機能ごとにリリースして検証し、0.2.0 のようなマイルストーンは `Release-As` フッターか `release-please-config.json` の `release-as` で切ります。manifest は `0.0.0` から始まるため最初のリリース PR は `0.1.0` を提案します。1.0.0 にするには `Release-As: 1.0.0` フッター付きのコミットを `main` に入れます (空コミットでも可)。1.0.0 以降は破壊的変更が major、`feat` が minor を上げます。
+SemVer。1.0.0 未満では破壊的変更が minor、`feat` と `fix` が patch を上げます (`bump-patch-for-minor-pre-major`)。機能ごとにリリースして検証し、0.2.0 のようなマイルストーンは `Release-As` フッターか `.github/release-please-config.json` の `release-as` で切ります。manifest は `0.0.0` から始まるため最初のリリース PR は `0.1.0` を提案します。1.0.0 にするには `Release-As: 1.0.0` フッター付きのコミットを `main` に入れます (空コミットでも可)。1.0.0 以降は破壊的変更が major、`feat` が minor を上げます。
 
 ## release ブランチからのパッチリリース (未実装)
 

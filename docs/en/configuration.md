@@ -160,7 +160,7 @@ The mode applies on top of the policy. The API side is described in [Operation m
 | REST API | The fixed subject `api`. |
 | Discord | The user ID plus the role IDs Discord sends with the interaction's member data (no extra API call). Built again on every interaction, so a role change applies on the next click. Role rules do not apply in DMs, which carry no roles. |
 
-Usergroup lookups need the `usergroups:read` bot scope (listed in `slack-manifest.yaml`; reinstall the app
+Usergroup lookups need the `usergroups:read` bot scope (listed in `example/slack-manifest.yaml`; reinstall the app
 if you created it before this scope was added). It is only used when a rule lists `slack.groups`. If a lookup fails the controller logs a warning and matches the user ID only for that
 group. It never fails open: a user allowed only through a group is denied until the lookup succeeds.
 
@@ -386,7 +386,7 @@ Notes:
 
 - Without `notifyChannel` nothing is posted and no extra permission is needed. Posts never block or fail an operation: a failed post is logged as `notify post failed`.
 - Discord messages are sent with mentions disabled, so naming a user pings nobody. In Slack the `<@user>` mention can notify the user it names.
-- Discord: grant the bot **View Channel** and **Send Messages** in the channel. Slack: the bot needs the `chat:write` scope (already in `slack-manifest.yaml`) and must be invited to the channel (`/invite @workload-knocker`); for a private channel use its `G...` ID.
+- Discord: grant the bot **View Channel** and **Send Messages** in the channel. Slack: the bot needs the `chat:write` scope (already in `example/slack-manifest.yaml`) and must be invited to the channel (`/invite @workload-knocker`); for a private channel use its `G...` ID.
 - Edits for several workloads that become ready within one second are combined into one API call. Messages are kept in memory only: after a controller restart an in-flight start message is not edited any more.
 
 ## Slack workload modal

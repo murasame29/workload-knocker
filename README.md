@@ -68,7 +68,7 @@ helm install workload-knocker oci://ghcr.io/murasame29/charts/workload-knocker \
   --values values.yaml
 ```
 
-1. Create a Slack app from [`slack-manifest.yaml`](slack-manifest.yaml) (Socket Mode) and store
+1. Create a Slack app from [`example/slack-manifest.yaml`](example/slack-manifest.yaml) (Socket Mode) and store
    the app-level and bot tokens in a Secret (`app-token`, `bot-token`).
    For Discord, create a bot, invite it with the `applications.commands` and `bot` scopes, and store
    the bot token in a Secret (`bot-token`, `discord.secretName`). The bot needs no message
@@ -117,8 +117,8 @@ make docker-build
 go run ./cmd/server --version
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/en/repository-layout.md](docs/en/repository-layout.md) and
-[docs/en/release.md](docs/en/release.md). Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md), [docs/en/repository-layout.md](docs/en/repository-layout.md) and
+[docs/en/release.md](docs/en/release.md). Report vulnerabilities as described in [SECURITY.md](.github/SECURITY.md).
 
 ## License
 
