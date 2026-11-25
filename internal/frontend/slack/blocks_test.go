@@ -39,7 +39,7 @@ func TestGroupWorkloads_ReducesCheckboxBlocks(t *testing.T) {
 		in = append(in, wl(svc+"-api", 0), wl(svc+"-app", 0))
 	}
 
-	if got := len(enUI.workloadCheckboxBlocks("labs", listingOf(in))); got != 1 {
+	if got := len(enUI.workloadCheckboxBlocks("labs", "r1", listingOf(in))); got != 1 {
 		t.Errorf("merged: block count = %d, want 1", got)
 	}
 	// Without merging, 12 options would need 2 blocks (kept for contrast).
