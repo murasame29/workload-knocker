@@ -204,6 +204,15 @@ func (m *MultiStore) Start(env, ns, name, user string, stopAt time.Time) error {
 	return cs.Start(ns, name, user, stopAt)
 }
 
+// StartReserved starts a workload for a reservation (see ClusterStore.StartReserved).
+func (m *MultiStore) StartReserved(env, ns, name, user string, stopAt time.Time, reservationID string) error {
+	cs, ok := m.storeFor(env)
+	if !ok {
+		return model.ErrWorkloadNotFound
+	}
+	return cs.StartReserved(ns, name, user, stopAt, reservationID)
+}
+
 // SetStopAt moves the auto-stop of a running workload of the given cluster.
 func (m *MultiStore) SetStopAt(env, ns, name string, stopAt time.Time) bool {
 	cs, ok := m.storeFor(env)

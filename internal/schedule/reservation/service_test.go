@@ -67,11 +67,14 @@ func (f *fakeStore) WorkloadsByNamespace(env, ns string) []*model.Workload {
 	}
 	return out
 }
-func (f *fakeStore) Start(_, _, name, user string, stopAt time.Time) error {
+func (f *fakeStore) StartReserved(_, _, name, user string, stopAt time.Time, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.refuse[name] {
 		return &model.RefusedError{Reason: "replicas is managed by argocd-controller"}
+	}
+	if id == "" {
+		return errors.New("reservation id missing")
 	}
 	f.starts = append(f.starts, name+":"+user)
 	if f.stopAts == nil {

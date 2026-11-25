@@ -30,6 +30,8 @@ type StateEntry struct {
 	StartedAt time.Time `json:"startedAt,omitzero"`
 	// StopAt is the auto-stop time; absent in state written by older versions (no auto-stop).
 	StopAt time.Time `json:"stopAt,omitzero"`
+	// Reservation is the ID of the reservation that started the run; absent for other starts.
+	Reservation string `json:"reservation,omitempty"`
 }
 
 // StateRepository persists workload state.

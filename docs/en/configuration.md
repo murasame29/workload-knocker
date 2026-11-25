@@ -391,7 +391,15 @@ Notes:
 
 ## Slack workload modal
 
-`/<command>` without an argument opens this modal. `/<command> status` lists the workloads instead (see [Status](#status)), `/<command> schedule` opens the [reservation](#reservations) form; any other argument gets a short usage message.
+A Slack slash command cannot have subcommands, so `/<command>` without an argument opens a menu with three buttons.
+Each button replaces the menu in the same modal:
+
+- **Start / Stop** opens the workload modal described below (the state is reconciled first).
+- **Schedule** asks for a namespace, then shows the [reservation](#reservations) form of that namespace.
+- **Status** asks for a namespace, then shows the [status](#status) of that namespace.
+
+`/<command> status` and `/<command> schedule` skip the menu and open those flows directly; any other argument gets a
+short usage message.
 
 - When every namespace the user may operate fits one modal (one checkbox block per 10 entries of
   each namespace, at most 97 blocks), the modal lists all namespaces at once, labelled by namespace,
@@ -405,7 +413,7 @@ Notes:
 
 ## Status
 
-`/<command> status` (Discord subcommand, Slack argument) answers with an ephemeral list of the workloads the user may operate, grouped by namespace (a to z). Each entry shows the state (🟢 running, 🟡 partly running, 🔴 stopped), who started it, when, and its stop time (`stops <time>`, or `no auto-stop`). Times are rendered in the viewer's time zone (Discord relative time, Slack date format). `-api` / `-app` / `-worker` workloads are merged as in the start flow.
+`/<command> status` (Discord subcommand) answers with an ephemeral list of the workloads the user may operate, grouped by namespace (a to z). In Slack, **Status** in the menu (or `/<command> status`) asks for a namespace first and shows the list of that namespace in the modal; picking another namespace replaces it. Each entry shows the state (🟢 running, 🟡 partly running, 🔴 stopped), who started it, when, and its stop time (`stops <time>`, or `no auto-stop`). Times are rendered in the viewer's time zone (Discord relative time, Slack date format). `-api` / `-app` / `-worker` workloads are merged as in the start flow.
 
 The list is built from the controller's in-memory state only. It makes no cluster call and does not reconcile, so it answers inside Discord's 3-second window. The state is refreshed by the background reconcile (`RECONCILE_INTERVAL`).
 
@@ -414,11 +422,11 @@ Running entries carry buttons (the label names the entry):
 - **Extend 1h** adds one hour to the stop time, like `POST /api/v1/extend`. It is shown only for entries with an auto-stop.
 - **Stop** stops the entry directly, without a confirm step. It goes through the normal stop path: policy check, operation mode check, `workload.stop` audit event (source `discord` or `slack`) and the notify channel. It is not shown in `scheduled-stop` mode.
 
-After a press the list is replaced in place with the outcome and the refreshed state. Both checks run again on press, so an outdated list cannot widen access.
+After a press the list (Discord message or Slack modal) is replaced in place with the outcome and the refreshed state. Both checks run again on press, so an outdated list cannot widen access.
 
 Limits and caveats:
 
-- Discord allows 25 buttons per message and 2000 characters of text; Slack allows 50 blocks. Entries beyond that still appear in the list (the text ends with a `… and N more` line when it is cut) but have no buttons; the message says so. Use `/<command> start` for those.
+- Discord allows 25 buttons per message and 2000 characters of text; a Slack modal allows 100 blocks. Entries beyond that still appear in the list (the text ends with a `… and N more` line when it is cut) but have no buttons; the message says so. Use `/<command> start` for those.
 - The starter and start time are recorded when a start is applied and stored in the `workload-state` ConfigMap (`startedBy`, `startedAt`). Workloads that were found already running when the controller first saw them, and state written by older versions, show no starter or start time. The starter is the Discord user ID (shown as a mention), the Slack user name, or the `user` of an API call.
 - Only the entries that are visible after the [authorization policy](#authorization) are listed.
 - Discord keeps the button payloads in memory for 24 hours; after that, or after a restart, a stale button answers that it expired. Slack buttons carry their payload and keep working.
@@ -466,9 +474,10 @@ is `workload.extend`; an expiry is `workload.auto_stop` with source `scheduler`.
 A one-off reservation makes workloads **Ready at a requested time**. Create one with `/<command> schedule` in
 Discord or Slack, or [`POST /api/v1/reservations`](#apiv1reservations).
 
-- **Slack form**: `/<slashCommand> schedule` opens a modal with one checkbox group per namespace (unchecked), a
-  date and time picker shown in the user's own Slack time zone (no setting needed), and the run duration in hours.
-  The modal holds every namespace when they fit Slack's block limit; otherwise use the API.
+- **Slack form**: **Schedule** in the menu (or `/<slashCommand> schedule`) asks for a namespace, then lists its
+  workloads as unchecked checkboxes with **Ready in (hours)** (how long from now until the workloads are Ready,
+  at least `0.25`) and **Run duration (hours)** (how long they run once Ready; empty uses the workload default).
+  One reservation is created for the namespace.
 
 - **Discord form**: one checkbox group per namespace (at most 3 namespaces of 10 entries; use the API beyond),
   **Ready at** (`21:00` means today, or tomorrow once passed; `2026-11-14 21:00` for another day) in
@@ -486,7 +495,7 @@ Discord or Slack, or [`POST /api/v1/reservations`](#apiv1reservations).
   within `RESERVATION_GRACE` (default `15m`); later it is marked missed and the notify channel is told. The result is
   saved after the workloads start, so a controller that dies in between runs the reservation again on restart
   (starting a running workload changes nothing; the start message may be posted twice).
-- **List and cancel**: `/<command> status` (Discord and Slack) lists the pending reservations with a **Cancel** button for the creator and
+- **List and cancel**: `/<command> status` (Discord; in Slack the status of the namespace) lists the pending reservations with a **Cancel** button for the creator and
   for anyone allowed to stop all of their workloads. Finished reservations stay in `GET /api/v1/reservations` for a day.
 - Audit events: `reservation.create`, `reservation.cancel` and one `reservation.execute` per workload, all with the
   reservation ID as `workload_knocker.request_id`.
@@ -518,10 +527,16 @@ kubectl create secret generic workload-knocker-api \
 `nightlyStop` renders a CronJob that sends `POST /api/v1/stop-all` to the in-cluster Service with
 `Authorization: Bearer <token>` and `X-Workload-Knocker-Source: nightly-stop` (the audit log source), and fails on any non-2xx response.
 
+By default it stops every running workload. `nightlyStop.skipReserved: true` calls `/api/v1/stop-all?skip=reserved`
+instead, which leaves the runs a [reservation](#reservations) started running; they stop at the end of their run
+duration, or keep running when the workload has no default duration. A reservation run becomes an ordinary run once it
+is stopped, or started again from chat or the API.
+
 | Value | Default |
 | --- | --- |
 | `nightlyStop.enabled` | `false` |
 | `nightlyStop.schedule` / `timeZone` | `0 22 * * *` / `Asia/Tokyo` |
+| `nightlyStop.skipReserved` | `false` (stop everything); `true` keeps the runs started by a reservation |
 | `nightlyStop.suspend` | `false` |
 | `nightlyStop.startingDeadlineSeconds` | `300` |
 | `nightlyStop.concurrencyPolicy` | `Forbid` |
@@ -620,6 +635,10 @@ cancels a pending one (`404` when there is none).
 Allowed only in `full` mode (`403` otherwise). Stops the workloads the `api` subject may stop in all managed
 clusters (best effort); running workloads kept by the authorization policy are reported in `skipped`
 per cluster and in `total_skipped`. Returns `200` with a per-cluster breakdown even when some clusters fail.
+
+`?skip=reserved` keeps the workloads whose current run a reservation started; they are listed in `reserved` per
+cluster and counted in `total_reserved`, and get no audit event or notify line. Any other `skip` value answers `400`.
+The reservation that started a run is stored with the state (`reservation` in the `workload-state` ConfigMap).
 
 ### Probes
 

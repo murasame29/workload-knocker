@@ -29,6 +29,7 @@ const (
 // Bot is the workload control bot running on Slack Socket Mode.
 type Bot struct {
 	client   *slack.Client
+	views    viewAPI
 	socket   *socketmode.Client
 	svc      *frontend.Service
 	registry config.Resolver
@@ -70,6 +71,7 @@ func New(cfg *config.Env, store frontend.Store, registry config.Resolver, az *au
 		watchCtx:    watchCtx,
 		watchCancel: watchCancel,
 		client:      client,
+		views:       client,
 		socket:      socket,
 		svc: frontend.NewService(store, m, cfg.ClusterReconcileTimeout,
 			append([]frontend.Option{frontend.WithAuthorizer(az), frontend.WithMode(cfg.OperationMode)}, opts...)...),
