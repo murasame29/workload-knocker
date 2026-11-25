@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/murasame29/workload-knocker/compare/v0.2.1...v0.2.2) (2026-11-25)
+
+
+### Features
+
+* **slack:** pick a namespace first in start/stop and add a Japanese UI ([#94](https://github.com/murasame29/workload-knocker/issues/94)) ([42b4cbc](https://github.com/murasame29/workload-knocker/commit/42b4cbc950df3215a203b623d403b7179bb75418))
+
 ## [0.2.1](https://github.com/murasame29/workload-knocker/compare/v0.2.0...v0.2.1) (2026-11-25)
 
 
