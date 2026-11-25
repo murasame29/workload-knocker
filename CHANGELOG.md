@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/murasame29/workload-knocker/compare/v0.2.2...v0.2.3) (2026-11-25)
+
+
+### Bug Fixes
+
+* **slack:** recheck running workloads after a namespace change and show starters by name ([#97](https://github.com/murasame29/workload-knocker/issues/97)) ([979f0ce](https://github.com/murasame29/workload-knocker/commit/979f0ceacf6a68896fe293cd18667afdf741704f))
+
 ## [0.2.2](https://github.com/murasame29/workload-knocker/compare/v0.2.1...v0.2.2) (2026-11-25)
 
 
