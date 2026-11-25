@@ -48,7 +48,8 @@ func (b *Bot) handleStatus(i *discordgo.Interaction, cl config.Cluster) {
 	})
 }
 
-// handleStatusAction runs the Extend or Stop button of a status entry and refreshes the list in place.
+// handleStatusAction runs the Extend or Stop button of a status entry and refreshes the list in
+// place. Stop asks first when someone else started the entry (see confirm.go).
 func (b *Bot) handleStatusAction(i *discordgo.Interaction, id customID, userID string) {
 	payload, ok := b.poster.buttons.get(id.Token)
 	if !ok {
@@ -66,14 +67,25 @@ func (b *Bot) handleStatusAction(i *discordgo.Interaction, id customID, userID s
 		b.update(i, text(msgClusterGone))
 		return
 	}
+	sub := subject(i)
+	switch id.Kind {
+	case kindStatusBack:
+		b.update(i, b.statusView(cl, sub, b.svc.Status(sub, cl.Env), nil))
+		return
+	case kindStatusStop:
+		// The in-memory status answers inside the 3s window; the stop itself waits for Stop.
+		if label, starters := b.foreignStarters(sub, userID, ref); len(starters) > 0 {
+			b.update(i, stopConfirmView(cl, id.Token, label, starters))
+			return
+		}
+	}
 	// Ack first: extending and stopping persist state through the cluster API.
 	if !b.deferUpdate(i) {
 		return
 	}
 
-	sub := subject(i)
 	var notes []string
-	if id.Kind == kindStatusStop {
+	if id.Kind == kindStatusStop || id.Kind == kindStatusStopConfirmed {
 		res := b.svc.Apply(frontend.ApplyRequest{Cluster: cl, Namespace: ref.Namespace, User: userID, Subject: sub, ToStop: ref.Names})
 		notes = res.StopLines()
 	} else {

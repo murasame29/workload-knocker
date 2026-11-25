@@ -166,6 +166,8 @@ type section struct {
 	changes   []frontend.Change
 	rejected  []frontend.Rejection
 	starts    []frontend.Schedule
+	// foreign warns about stops of workloads someone else started.
+	foreign []string
 }
 
 // namespaceHead names the namespaces of sections in a header line.
@@ -184,6 +186,7 @@ func previewView(token string, cl config.Cluster, sections []section) view {
 		if len(sections) > 1 {
 			lines = append(lines, "**"+s.namespace+"**")
 		}
+		lines = append(lines, s.foreign...)
 		lines = append(lines, markup.PlanLines(s.changes)...)
 		lines = append(lines, markup.ScheduleLines(s.starts)...)
 		lines = append(lines, frontend.RejectionLines(s.rejected)...)

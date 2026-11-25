@@ -172,7 +172,7 @@ func (b *Bot) handleComponent(i *discordgo.Interaction) {
 		b.openDurationModal(i, id, userID)
 	case kindExtend:
 		b.handleExtend(i, id)
-	case kindStatusExtend, kindStatusStop:
+	case kindStatusExtend, kindStatusStop, kindStatusStopConfirmed, kindStatusBack:
 		b.handleStatusAction(i, id, userID)
 	case kindReservationStop:
 		b.handleReservationCancel(i, id)
@@ -372,6 +372,7 @@ func (b *Bot) preview(token string, cl config.Cluster, f *flow) view {
 			changes:   p.changes,
 			rejected:  p.rejected,
 			starts:    b.svc.Schedules(cl.Env, p.namespace, p.toStart, p.durations),
+			foreign:   foreignStopLines(p.changes, p.entries, f.userID),
 		})
 	}
 	return previewView(token, cl, sections)

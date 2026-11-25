@@ -1,7 +1,6 @@
 package slackbot
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -43,33 +42,13 @@ func (u ui) foreignStopConfirm(label, starter string) *slack.ConfirmationBlockOb
 // foreignStopLines warns, in the change preview, about the stops of workloads someone else started.
 // entries are the rendered entries the plan was built from.
 func (u ui) foreignStopLines(changes []frontend.Change, entries []frontend.Entry, v viewer) []string {
-	starters := map[string]string{}
-	for _, e := range entries {
-		for _, w := range e.Members {
-			if w.Replicas > 0 {
-				starters[w.Name] = w.StartedBy
-			}
-		}
-	}
 	var lines []string
-	for _, c := range changes {
-		if c.Action != frontend.ActionStop {
-			continue
-		}
-		var others []string
-		for _, name := range c.Names {
-			if s := starters[name]; !v.started(s) && !slices.Contains(others, s) {
-				others = append(others, s)
-			}
-		}
-		if len(others) == 0 {
-			continue
-		}
-		shown := make([]string, 0, len(others))
-		for _, s := range others {
+	for _, fs := range frontend.ForeignStops(changes, entries, v.started) {
+		shown := make([]string, 0, len(fs.Starters))
+		for _, s := range fs.Starters {
 			shown = append(shown, slackStarter(s))
 		}
-		lines = append(lines, u.t("⚠️ Stop: *%s*  Started by: %s", escapeMrkdwn(c.Label), strings.Join(shown, ", ")))
+		lines = append(lines, u.t("⚠️ Stop: *%s*  Started by: %s", escapeMrkdwn(fs.Label), strings.Join(shown, ", ")))
 	}
 	if len(lines) == 0 {
 		return nil

@@ -421,7 +421,7 @@ The list is built from the controller's in-memory state only. It makes no cluste
 Running entries carry buttons (the label names the entry):
 
 - **Extend 1h** adds one hour to the stop time, like `POST /api/v1/extend`. It is shown only for entries with an auto-stop.
-- **Stop** stops the entry directly, without a confirm step. It goes through the normal stop path: policy check, operation mode check, `workload.stop` audit event (source `discord` or `slack`) and the notify channel. It is not shown in `scheduled-stop` mode. In Slack, when someone else started the entry, the button first opens a confirmation dialog naming the workload and its starter.
+- **Stop** stops the entry directly, without a confirm step. It goes through the normal stop path: policy check, operation mode check, `workload.stop` audit event (source `discord` or `slack`) and the notify channel. It is not shown in `scheduled-stop` mode. When someone else started the entry, the button first asks for confirmation, naming the workload and its starter: Slack opens a confirmation dialog, Discord replaces the list with the question and **Cancel** / **Stop** buttons. The starter of a workload found already running is unknown, so it asks nothing. The start/stop preview of both platforms warns about such stops too.
 
 After a press the list (Discord message or Slack modal) is replaced in place with the outcome and the refreshed state. Both checks run again on press, so an outdated list cannot widen access.
 
