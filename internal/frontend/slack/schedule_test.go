@@ -142,7 +142,7 @@ func TestStatusMessage_ListsReservationsWithCancel(t *testing.T) {
 	res := &fakeReservations{list: []reservation.Reservation{{ID: "r1", Namespace: "labs", Workloads: []string{"web"}, At: at, Creator: reservation.Creator{Platform: authz.PlatformSlack, User: "UTEST0001"}}}}
 	b.SetReservations(res)
 
-	_, blocks := enUI.statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), b.visibleReservations(slackUser, "stg"), nil)
+	_, blocks := enUI.statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), b.visibleReservations(slackUser, "stg"), nil, viewer{})
 	raw, _ := json.Marshal(blocks)
 	s := string(raw)
 	if !strings.Contains(s, "*Reservations*") || !strings.Contains(s, "by \\u003c@UTEST0001\\u003e") || !strings.Contains(s, `"action_id":"reservation_cancel"`) {

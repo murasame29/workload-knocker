@@ -56,9 +56,9 @@ type menuItem struct {
 // (description, then its button) to stack them vertically and give them room.
 func (u ui) menuModal(cl config.Cluster, meta string) slack.ModalViewRequest {
 	items := []menuItem{
-		{actionMenuStartStop, u.t("▶️  Start / Stop"), u.t("Pick a namespace, then the workloads to run now."), slack.StylePrimary},
-		{actionMenuSchedule, u.t("📅  Schedule"), u.t("Pick a namespace, then reserve workloads to start later."), slack.StyleDefault},
-		{actionMenuStatus, u.t("📊  Status"), u.t("Pick a namespace, then list its workloads."), slack.StyleDefault},
+		{actionMenuStartStop, u.t("▶️  Start / Stop"), u.t("Start and stop the workloads in the chosen namespace."), slack.StylePrimary},
+		{actionMenuSchedule, u.t("📅  Schedule"), u.t("Reserve when the workloads in the chosen namespace start and how long until they stop."), slack.StyleDefault},
+		{actionMenuStatus, u.t("📊  Status"), u.t("Check which workloads in the chosen namespace are running. You can stop them here too."), slack.StyleDefault},
 	}
 	blocks := []slack.Block{
 		slack.NewHeaderBlock(slack.NewTextBlockObject("plain_text", truncateText(strings.ToUpper(cl.Env)+" / "+cl.Name, 150), false, false)),
@@ -238,16 +238,16 @@ func (b *Bot) handleStatusNamespace(callback slack.InteractionCallback, namespac
 		return
 	}
 	meta.Namespace = namespace
-	b.updateView(callback, b.statusModal(b.subject(callback.User.ID), cl, meta, nil))
+	b.updateView(callback, b.statusModal(b.subject(callback.User.ID), viewerOf(callback.User), cl, meta, nil))
 }
 
 // statusModal renders the status of one namespace with its buttons and pending reservations.
-func (b *Bot) statusModal(sub authz.Subject, cl config.Cluster, meta statusMetadata, notes []string) slack.ModalViewRequest {
+func (b *Bot) statusModal(sub authz.Subject, v viewer, cl config.Cluster, meta statusMetadata, notes []string) slack.ModalViewRequest {
 	namespaces, _ := b.svc.Namespaces(sub, cl.Env)
 	st := namespaceStatus(b.svc.Status(sub, cl.Env), meta.Namespace)
 	pending := namespaceReservations(b.visibleReservations(sub, cl.Env), meta.Namespace)
 	picker := b.namespacePicker(actionStatusNamespace, namespaces, meta.Namespace)
-	_, blocks := b.statusBlocks(cl, st, pending, notes, slackModalMaxBlocks-1)
+	_, blocks := b.statusBlocks(cl, st, pending, notes, slackModalMaxBlocks-1, v)
 	raw, _ := json.Marshal(meta)
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
@@ -291,11 +291,11 @@ func (b *Bot) refreshStatus(callback slack.InteractionCallback, cl config.Cluste
 			return
 		}
 		// Replace regardless of the hash: the state changed by the action itself.
-		if _, err := b.views.UpdateView(b.statusModal(sub, cl, meta, notes), "", "", callback.View.ID); err != nil {
+		if _, err := b.views.UpdateView(b.statusModal(sub, viewerOf(callback.User), cl, meta, notes), "", "", callback.View.ID); err != nil {
 			slog.Error("failed to update the status modal", slog.String("error.message", err.Error()))
 		}
 		return
 	}
-	text, blocks := b.statusMessage(cl, b.svc.Status(sub, cl.Env), b.visibleReservations(sub, cl.Env), notes)
+	text, blocks := b.statusMessage(cl, b.svc.Status(sub, cl.Env), b.visibleReservations(sub, cl.Env), notes, viewerOf(callback.User))
 	b.replaceOriginal(callback, text, blocks)
 }

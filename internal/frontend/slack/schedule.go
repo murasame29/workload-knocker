@@ -82,18 +82,18 @@ func (u ui) scheduleModal(cl config.Cluster, namespaces []string, namespace stri
 			in.Hint = nil
 		}
 	}
-	readyIn := slack.NewInputBlock(blockReserveIn, slack.NewTextBlockObject("plain_text", u.t("Ready in (hours)"), false, false),
-		slack.NewTextBlockObject("plain_text", u.t("Hours from now until the workloads are ready; they start a few minutes earlier. Minimum 0.25."), false, false),
+	readyIn := slack.NewInputBlock(blockReserveIn, slack.NewTextBlockObject("plain_text", u.t("Start in (hours)"), false, false),
+		slack.NewTextBlockObject("plain_text", u.t("Hours from now until the workloads start. Starting begins a few minutes earlier. Minimum 0.25 (15 minutes)."), false, false),
 		slack.NewNumberInputBlockElement(slack.NewTextBlockObject("plain_text", "1", false, false), actionReserveIn, true).WithMinValue("0.25"))
 	hours := slack.NewInputBlock(blockReserveHours, slack.NewTextBlockObject("plain_text", u.t("Run duration (hours)"), false, false),
-		slack.NewTextBlockObject("plain_text", u.t("Hours they run once ready, then they stop. Empty = workload default. Minimum 0.25."), false, false),
+		slack.NewTextBlockObject("plain_text", u.t("Hours from Ready until they stop. Empty = workload default. Minimum 0.25 (15 minutes)."), false, false),
 		slack.NewNumberInputBlockElement(slack.NewTextBlockObject("plain_text", "3", false, false), actionReserveHours, true).WithMinValue("0.25"))
 	hours.Optional = true
 	blocks = append(blocks, checks...)
 	blocks = append(blocks, readyIn, hours)
 	if listing.Truncated > 0 {
 		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn",
-			u.t(":warning: %d entries do not fit this form. Use POST /api/v1/reservations for those.", listing.Truncated), false, false), nil, nil))
+			u.t(":warning: %d entries do not fit this form (it shows up to %d). Use POST /api/v1/reservations for those.", listing.Truncated, maxWorkloadOptions), false, false), nil, nil))
 	}
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
@@ -122,7 +122,7 @@ func (u ui) parseSchedule(meta scheduleMetadata, values map[string]map[string]sl
 	case err != nil:
 		errs[blockReserveIn] = err.Error()
 	case readyIn == 0:
-		errs[blockReserveIn] = u.t("Enter the hours until the workloads are ready.")
+		errs[blockReserveIn] = u.t("Enter the hours until the workloads start.")
 	default:
 		in.at = now.Add(readyIn).UTC()
 	}

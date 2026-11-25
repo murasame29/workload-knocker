@@ -397,7 +397,8 @@ row (Start / Stop, Schedule, Status), each with a short description. Each button
 and every flow starts with a namespace select:
 
 - **Start / Stop** reconciles the state, asks for a namespace, then lists its workloads (running ones checked) with
-  the run duration. **Plan** previews the changes and **Apply** applies them.
+  the run duration. **Plan** previews the changes and **Apply** applies them. The preview warns about each stop of a
+  workload someone else started, with its starter.
 - **Schedule** asks for a namespace, then shows the [reservation](#reservations) form of that namespace.
 - **Status** asks for a namespace, then shows the [status](#status) of that namespace.
 
@@ -420,7 +421,7 @@ The list is built from the controller's in-memory state only. It makes no cluste
 Running entries carry buttons (the label names the entry):
 
 - **Extend 1h** adds one hour to the stop time, like `POST /api/v1/extend`. It is shown only for entries with an auto-stop.
-- **Stop** stops the entry directly, without a confirm step. It goes through the normal stop path: policy check, operation mode check, `workload.stop` audit event (source `discord` or `slack`) and the notify channel. It is not shown in `scheduled-stop` mode.
+- **Stop** stops the entry directly, without a confirm step. It goes through the normal stop path: policy check, operation mode check, `workload.stop` audit event (source `discord` or `slack`) and the notify channel. It is not shown in `scheduled-stop` mode. In Slack, when someone else started the entry, the button first opens a confirmation dialog naming the workload and its starter.
 
 After a press the list (Discord message or Slack modal) is replaced in place with the outcome and the refreshed state. Both checks run again on press, so an outdated list cannot widen access.
 

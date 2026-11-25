@@ -108,26 +108,27 @@ func (b *Bot) replaceOriginal(callback slack.InteractionCallback, text string, b
 const responseTimeout = 5 * time.Second
 
 // statusMessage renders the status list as a message (at most slackMessageMaxBlocks blocks).
-func (u ui) statusMessage(cl config.Cluster, st frontend.Status, pending []reservation.Reservation, notes []string) (string, []slack.Block) {
-	return u.statusBlocks(cl, st, pending, notes, slackMessageMaxBlocks)
+func (u ui) statusMessage(cl config.Cluster, st frontend.Status, pending []reservation.Reservation, notes []string, v viewer) (string, []slack.Block) {
+	return u.statusBlocks(cl, st, pending, notes, slackMessageMaxBlocks, v)
 }
 
 // statusBlocks renders the status list: the plain-text fallback and at most maxBlocks blocks.
 // notes are the outcome lines of the action that led to this refresh. Buttons are added per
 // running entry the user may operate, as far as the block limit allows.
-// The pending reservations follow with a Cancel button each.
-func (u ui) statusBlocks(cl config.Cluster, st frontend.Status, pending []reservation.Reservation, notes []string, maxBlocks int) (string, []slack.Block) {
+// The pending reservations follow with a Cancel button each. v is who sees the list: Stop asks
+// for confirmation on entries someone else started.
+func (u ui) statusBlocks(cl config.Cluster, st frontend.Status, pending []reservation.Reservation, notes []string, maxBlocks int, v viewer) (string, []slack.Block) {
 	head := u.t("*%s / %s* status", strings.ToUpper(cl.Env), cl.Name)
 	if st.Empty() {
 		lines := append(slices.Clone(notes), u.t("ℹ️ No workloads you may operate are registered in this cluster."))
 		return head, mrkdwnSections(head, lines)
 	}
-	text, blocks := u.workloadStatus(head, st, notes, maxBlocks)
+	text, blocks := u.workloadStatus(head, st, notes, maxBlocks, v)
 	return text, append(blocks, u.reservationBlocks(st.Env, pending, maxBlocks-len(blocks))...)
 }
 
 // workloadStatus renders the workload part of the status list.
-func (u ui) workloadStatus(head string, st frontend.Status, notes []string, maxBlocks int) (string, []slack.Block) {
+func (u ui) workloadStatus(head string, st frontend.Status, notes []string, maxBlocks int, v viewer) (string, []slack.Block) {
 	lines := slices.Clone(notes)
 	lines = append(lines, u.t("🟢 running  🟡 partial  🔴 stopped"))
 	for _, ns := range st.Namespaces {
@@ -141,7 +142,7 @@ func (u ui) workloadStatus(head string, st frontend.Status, notes []string, maxB
 	skipped := 0
 	for _, ns := range st.Namespaces {
 		for _, se := range ns.Entries {
-			row := u.entryButtons(st.Env, ns.Name, se)
+			row := u.entryButtons(st.Env, ns.Name, se, v)
 			switch {
 			case row == nil:
 			case len(blocks) >= maxBlocks-1:
@@ -159,7 +160,7 @@ func (u ui) workloadStatus(head string, st frontend.Status, notes []string, maxB
 }
 
 // entryButtons returns the action row of an entry, or nil when the user may do neither action.
-func (u ui) entryButtons(env, namespace string, se frontend.StatusEntry) slack.Block {
+func (u ui) entryButtons(env, namespace string, se frontend.StatusEntry, v viewer) slack.Block {
 	var elems []slack.BlockElement
 	add := func(actionID, label string, names []string, danger bool) {
 		if len(names) == 0 {
@@ -172,6 +173,9 @@ func (u ui) entryButtons(env, namespace string, se frontend.StatusEntry) slack.B
 		btn := slack.NewButtonBlockElement(actionID, value, slack.NewTextBlockObject("plain_text", truncateText(label+": "+se.Entry.Key, slackButtonTextMaxLen), false, false))
 		if danger {
 			btn = btn.WithStyle(slack.StyleDanger)
+		}
+		if actionID == actionStatusStop && !v.started(se.StartedBy) {
+			btn = btn.WithConfirm(u.foreignStopConfirm(se.Entry.Key, se.StartedBy))
 		}
 		elems = append(elems, btn)
 	}

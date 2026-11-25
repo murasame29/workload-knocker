@@ -387,7 +387,8 @@ Start / Stop、Schedule、Status のボタンを 1 行に 1 つずつ、短い�
 どの画面も namespace の選択から始まります。
 
 - **Start / Stop**: 状態を reconcile してから namespace を選ばせ、その workload を一覧します (起動中はチェック済み)。
-  稼働時間も入力できます。**Plan** で変更内容を確認し、**Apply** で適用します。
+  稼働時間も入力できます。**Plan** で変更内容を確認し、**Apply** で適用します。ほかの人が起動した workload を停止する場合は、
+  確認画面に起動者付きの警告を出します。
 - **Schedule**: namespace を選ぶと、その namespace の[予約](#予約)フォームを表示します。
 - **Status**: namespace を選ぶと、その namespace の[ステータス](#ステータス)を表示します。
 
@@ -409,7 +410,7 @@ Start / Stop、Schedule、Status のボタンを 1 行に 1 つずつ、短い�
 起動中のエントリにはボタンが付きます (ラベルにエントリ名が入ります):
 
 - **Extend 1h**: `POST /api/v1/extend` と同様に停止時刻を 1 時間延ばします。自動停止があるエントリにだけ表示します。
-- **Stop**: 確認なしで直接停止します。通常の停止と同じ経路 (ポリシー判定、動作モード判定、source が `discord` / `slack` の `workload.stop` 監査イベント、通知チャンネル) を通ります。`scheduled-stop` モードでは表示しません。
+- **Stop**: 確認なしで直接停止します。通常の停止と同じ経路 (ポリシー判定、動作モード判定、source が `discord` / `slack` の `workload.stop` 監査イベント、通知チャンネル) を通ります。`scheduled-stop` モードでは表示しません。Slack では、ほかの人が起動したエントリの場合、押すとまず workload と起動者を示す確認ダイアログを出します。
 
 押下後は、その場で一覧 (Discord のメッセージ、Slack のモーダル) を結果と最新の状態に置き換えます。判定は押下時にも再実行するため、古い一覧で権限を広げることはできません。
 
