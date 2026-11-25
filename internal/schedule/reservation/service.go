@@ -38,7 +38,8 @@ const (
 type Store interface {
 	Clusters() []model.ClusterRef
 	WorkloadsByNamespace(env, ns string) []*model.Workload
-	Start(env, ns, name, user string, stopAt time.Time) error
+	// StartReserved starts a workload and records that reservationID started the run.
+	StartReserved(env, ns, name, user string, stopAt time.Time, reservationID string) error
 	ReservationStore(env string) (k8s.KeyStore, bool)
 }
 
@@ -359,7 +360,7 @@ func (s *Service) execute(ctx context.Context, c model.ClusterRef, r Reservation
 				if d > 0 {
 					stopAt = r.At.Add(d)
 				}
-				err = s.store.Start(c.Env, r.Namespace, name, r.Creator.User, stopAt)
+				err = s.store.StartReserved(c.Env, r.Namespace, name, r.Creator.User, stopAt, r.ID)
 			}
 		}
 		outcome := audit.Success

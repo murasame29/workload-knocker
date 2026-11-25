@@ -381,7 +381,14 @@ metadata:
 
 ## Slack の workload モーダル
 
-引数なしの `/<command>` でこのモーダルを開きます。`/<command> status` は代わりに workload 一覧を表示し ([ステータス](#ステータス)参照)、`/<command> schedule` は[予約](#予約)のフォームを開きます。その他の引数には短い使い方を返します。
+Slack の slash command はサブコマンドを持てないため、引数なしの `/<command>` は 3 つのボタンを持つメニューを開きます。
+ボタンを押すと、同じモーダルの中身が次の画面に置き換わります。
+
+- **Start / Stop**: 以下で説明する workload モーダルを開きます (先に状態を reconcile します)。
+- **Schedule**: namespace を選ぶと、その namespace の[予約](#予約)フォームを表示します。
+- **Status**: namespace を選ぶと、その namespace の[ステータス](#ステータス)を表示します。
+
+`/<command> status` と `/<command> schedule` はメニューを飛ばしてそれぞれの画面を直接開きます。その他の引数には短い使い方を返します。
 
 - 操作できる namespace がすべて 1 つのモーダルに収まる場合 (各 namespace の 10 件ごとに 1 ブロック、
   合計 97 ブロックまで)、全 namespace をまとめて並べます。ラベルは namespace 名で、起動中のエントリはチェック済みです。
@@ -395,7 +402,7 @@ metadata:
 
 ## ステータス
 
-`/<command> status` (Discord ではサブコマンド、Slack では引数) は、ユーザーが操作できる workload を namespace ごと (a→z) に ephemeral で一覧します。各エントリに状態 (🟢 起動中、🟡 一部起動中、🔴 停止中)、起動した人、起動時刻、停止時刻 (`stops <時刻>`、なければ `no auto-stop`) を表示します。時刻は閲覧者のタイムゾーンで表示されます (Discord は相対時刻、Slack は日付形式)。`-api` / `-app` / `-worker` は start のフローと同じく 1 つにまとめます。
+`/<command> status` (Discord のサブコマンド) は、ユーザーが操作できる workload を namespace ごと (a→z) に ephemeral で一覧します。Slack ではメニューの **Status** (または `/<command> status`) で先に namespace を選び、その namespace の一覧をモーダルに表示します。別の namespace を選ぶと表示が切り替わります。各エントリに状態 (🟢 起動中、🟡 一部起動中、🔴 停止中)、起動した人、起動時刻、停止時刻 (`stops <時刻>`、なければ `no auto-stop`) を表示します。時刻は閲覧者のタイムゾーンで表示されます (Discord は相対時刻、Slack は日付形式)。`-api` / `-app` / `-worker` は start のフローと同じく 1 つにまとめます。
 
 一覧は controller のメモリ上の状態だけから作ります。クラスタ呼び出しも reconcile もしないため、Discord の 3 秒以内に応答できます。状態はバックグラウンドの reconcile (`RECONCILE_INTERVAL`) で更新されます。
 
@@ -404,11 +411,11 @@ metadata:
 - **Extend 1h**: `POST /api/v1/extend` と同様に停止時刻を 1 時間延ばします。自動停止があるエントリにだけ表示します。
 - **Stop**: 確認なしで直接停止します。通常の停止と同じ経路 (ポリシー判定、動作モード判定、source が `discord` / `slack` の `workload.stop` 監査イベント、通知チャンネル) を通ります。`scheduled-stop` モードでは表示しません。
 
-押下後は、その場で一覧を結果と最新の状態に置き換えます。判定は押下時にも再実行するため、古い一覧で権限を広げることはできません。
+押下後は、その場で一覧 (Discord のメッセージ、Slack のモーダル) を結果と最新の状態に置き換えます。判定は押下時にも再実行するため、古い一覧で権限を広げることはできません。
 
 制限と注意:
 
-- Discord は 1 メッセージ 25 ボタン・本文 2000 文字、Slack は 50 block までです。超えたエントリも一覧には出ますが (本文が切れる場合は末尾に `… and N more`)、ボタンは付かず、その旨を表示します。その場合は `/<command> start` を使ってください。
+- Discord は 1 メッセージ 25 ボタン・本文 2000 文字、Slack のモーダルは 100 block までです。超えたエントリも一覧には出ますが (本文が切れる場合は末尾に `… and N more`)、ボタンは付かず、その旨を表示します。その場合は `/<command> start` を使ってください。
 - 起動した人と起動時刻は start 適用時に記録し、`workload-state` ConfigMap (`startedBy`、`startedAt`) に保存します。controller が最初から起動中として検出した workload や、古いバージョンが書いた state では、起動した人と起動時刻は表示されません。起動した人は Discord ではユーザー ID (メンション表示)、Slack ではユーザー名、API では呼び出しの `user` です。
 - [認可ポリシー](#認可)で見えるエントリだけを表示します。
 - Discord はボタンのペイロードを 24 時間メモリに保持します。それを過ぎた後や再起動後に古いボタンを押すと、失効した旨を返します。Slack のボタンはペイロードを持つため引き続き動作します。
@@ -452,8 +459,9 @@ start には実行時間を付けられます。コントローラは workload �
 単発の予約で、workload を**指定した時刻に Ready に**できます。Discord / Slack の `/<command> schedule` か
 [`POST /api/v1/reservations`](#apiv1reservations) で作ります。
 
-- **Slack のフォーム**: `/<slashCommand> schedule` で、namespace ごとのチェックボックス (未チェック)、日時ピッカー (各ユーザーの Slack の
-  タイムゾーンで表示されるため設定は不要)、稼働時間 (時間単位) のモーダルを開きます。Slack のブロック上限に収まらない場合は API を使います。
+- **Slack のフォーム**: メニューの **Schedule** (または `/<slashCommand> schedule`) で namespace を選ぶと、その workload を
+  未チェックのチェックボックスで並べ、**Ready in (hours)** (今から Ready になるまでの時間、最小 `0.25`) と
+  **Run duration (hours)** (Ready になってから停止するまでの時間、空は workload の既定) を入力します。予約はその namespace に 1 件作成します。
 
 - **Discord のフォーム**: namespace ごとのチェックボックス (namespace 3 個、各 10 件まで。超える場合は API を使う)、
   **Ready at** (`21:00` は今日、過ぎていれば明日。別の日は `2026-11-14 21:00`。`frontends.discord.timeZone` の時刻)、
@@ -468,7 +476,7 @@ start には実行時間を付けられます。コントローラは workload �
   controller が止まっている間に起動時刻を過ぎた予約は、`RESERVATION_GRACE` (既定 `15m`) 以内なら実行し、過ぎていれば missed として
   通知チャンネルに知らせます。結果は workload の起動後に保存するため、その間に controller が落ちても再起動後にもう一度実行します
   (起動中の workload を起動しても変化はなく、起動メッセージが 2 回出ることがあります)。
-- **一覧と取り消し**: `/<command> status` (Discord / Slack) に待機中の予約を並べ、作成者と、予約の workload をすべて停止できるユーザーに **Cancel** ボタンを出します。
+- **一覧と取り消し**: `/<command> status` (Discord。Slack では選んだ namespace のステータス) に待機中の予約を並べ、作成者と、予約の workload をすべて停止できるユーザーに **Cancel** ボタンを出します。
   終わった予約も `GET /api/v1/reservations` に 1 日残ります。
 - 監査イベント: `reservation.create`、`reservation.cancel`、workload ごとの `reservation.execute`。いずれも予約 ID を
   `workload_knocker.request_id` に入れます。
@@ -499,10 +507,15 @@ kubectl create secret generic workload-knocker-api \
 `nightlyStop` は、クラスタ内 Service へ `Authorization: Bearer <token>` 付きで
 `POST /api/v1/stop-all` を送る CronJob を作成し (監査ログの source 用に `X-Workload-Knocker-Source: nightly-stop` ヘッダー付き)、2xx 以外は失敗として扱います。
 
+既定では起動中の workload をすべて停止します。`nightlyStop.skipReserved: true` にすると `/api/v1/stop-all?skip=reserved` を呼び、
+[予約](#予約)で起動した実行は止めずに残します。残した実行は稼働時間の終わりに停止し、workload に既定の稼働時間がなければ動き続けます。
+予約で起動した実行も、一度停止するか、チャットや API から起動し直すと通常の実行として扱います。
+
 | 値 | 既定 |
 | --- | --- |
 | `nightlyStop.enabled` | `false` |
 | `nightlyStop.schedule` / `timeZone` | `0 22 * * *` / `Asia/Tokyo` |
+| `nightlyStop.skipReserved` | `false` (すべて停止)。`true` は予約で起動した実行を残す |
 | `nightlyStop.suspend` | `false` |
 | `nightlyStop.startingDeadlineSeconds` | `300` |
 | `nightlyStop.concurrencyPolicy` | `Forbid` |
@@ -595,6 +608,10 @@ curl -X POST "http://workload-knocker.workload-knocker.svc:8080/api/v1/start" \
 `full` モードのみ可 (それ以外は `403`)。全 managed cluster のうち `api` subject が stop できる workload を停止します (best effort)。
 認可ポリシーで止めなかった起動中 workload は cluster ごとの `skipped` と `total_skipped` に出ます。一部の cluster が失敗しても `200` で
 cluster ごとの内訳を返します。
+
+`?skip=reserved` を付けると、予約が起動した実行中の workload を止めません。cluster ごとの `reserved` と `total_reserved` に出し、
+監査イベントと通知の行は出しません。`skip` にそれ以外の値を渡すと `400` を返します。
+どの予約が起動したかは状態と一緒に保存します (`workload-state` ConfigMap の `reservation`)。
 
 ### プローブ
 

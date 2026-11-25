@@ -19,6 +19,7 @@ import (
 
 // StopAllHandler handles /api/v1/stop-all.
 // It fans out StopAll to every registered cluster and returns a per-cluster breakdown.
+// With ?skip=reserved, workloads whose current run was started by a reservation keep running.
 type StopAllHandler struct {
 	store   stopAllStore
 	metrics metrics.MetricsManager
@@ -40,8 +41,10 @@ func New(store stopAllStore, m metrics.MetricsManager, az authz.Authorizer, opts
 
 // stopAllResponse is the JSON schema of the HTTP response.
 type stopAllResponse struct {
-	TotalStopped      int                                 `json:"total_stopped"`
-	TotalSkipped      int                                 `json:"total_skipped"`
+	TotalStopped int `json:"total_stopped"`
+	TotalSkipped int `json:"total_skipped"`
+	// TotalReserved counts the reservation runs kept by ?skip=reserved.
+	TotalReserved     int                                 `json:"total_reserved"`
 	ClustersTotal     int                                 `json:"clusters_total"`
 	ClustersSucceeded int                                 `json:"clusters_succeeded"`
 	ClustersFailed    int                                 `json:"clusters_failed"`
@@ -54,7 +57,27 @@ type perClusterStopResultJSON struct {
 	Stopped int `json:"stopped"`
 	// Skipped lists "namespace/name" of running workloads the authorization policy kept running.
 	Skipped []string `json:"skipped"`
-	Error   string   `json:"error,omitempty"`
+	// Reserved lists "namespace/name" of reservation runs kept by ?skip=reserved.
+	Reserved []string `json:"reserved,omitempty"`
+	Error    string   `json:"error,omitempty"`
+}
+
+// skipParam is the query parameter of stop-all; skipReserved is its only value.
+const (
+	skipParam    = "skip"
+	skipReserved = "reserved"
+)
+
+// parseSkip reads ?skip=reserved; any other value is a client error.
+func parseSkip(r *http.Request) (bool, error) {
+	switch v := r.URL.Query().Get(skipParam); v {
+	case "":
+		return false, nil
+	case skipReserved:
+		return true, nil
+	default:
+		return false, fmt.Errorf("unknown %s value %q (supported: %s)", skipParam, v, skipReserved)
+	}
 }
 
 // ServeHTTP implements net/http.Handler.
@@ -66,10 +89,24 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	keepReserved, err := parseSkip(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	running := h.runningWorkloads()
+	kept := map[string]bool{}
+	if keepReserved {
+		for _, wl := range running {
+			if wl.Reservation != "" {
+				kept[wl.Env+"/"+wl.Namespace+"/"+wl.Name] = true
+			}
+		}
+	}
 	begin := time.Now()
 	result := h.store.StopAll(r.Context(), func(env, ns, name string) bool {
-		return h.authz.Allowed(authz.APISubject, env, ns, name, authz.ActionStop)
+		return !kept[env+"/"+ns+"/"+name] && h.authz.Allowed(authz.APISubject, env, ns, name, authz.ActionStop)
 	})
 	elapsed := time.Since(begin)
 	clusterNames := make(map[string]string)
@@ -78,10 +115,19 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	per := make(map[string]perClusterStopResultJSON, len(result.PerCluster))
-	succeeded, failed, skipped := 0, 0, 0
+	succeeded, failed, skipped, reserved := 0, 0, 0, 0
 	for k, v := range result.PerCluster {
-		skipped += len(v.Skipped)
-		per[k] = perClusterStopResultJSON{Stopped: v.Stopped, Skipped: append([]string{}, v.Skipped...), Error: v.Error}
+		pc := perClusterStopResultJSON{Stopped: v.Stopped, Skipped: []string{}, Error: v.Error}
+		for _, s := range v.Skipped {
+			if kept[k+"/"+s] {
+				pc.Reserved = append(pc.Reserved, s)
+			} else {
+				pc.Skipped = append(pc.Skipped, s)
+			}
+		}
+		skipped += len(pc.Skipped)
+		reserved += len(pc.Reserved)
+		per[k] = pc
 		if v.Error == "" {
 			succeeded++
 			h.metrics.ObserveOperation(k, clusterNames[k], "stop_all", "success", elapsed)
@@ -91,17 +137,24 @@ func (h *StopAllHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.recordAll(r, running, result, clusterNames)
-	h.announce(r, running, result, clusterNames)
+	// Reservation runs that were kept were neither stopped nor refused: leave them out of the
+	// audit and the notify message.
+	stoppable := slices.DeleteFunc(slices.Clone(running), func(wl model.Workload) bool { return kept[wl.Env+"/"+wl.Namespace+"/"+wl.Name] })
+	h.recordAll(r, stoppable, result, clusterNames)
+	h.announce(r, stoppable, result, clusterNames)
 
 	message := "stop-all dispatched to all clusters"
 	if skipped > 0 {
 		message = fmt.Sprintf("stop-all dispatched; %d running workloads were skipped by the authorization policy", skipped)
 	}
+	if reserved > 0 {
+		message += fmt.Sprintf("; %d workloads started by a reservation kept running", reserved)
+	}
 
 	resp := stopAllResponse{
 		TotalStopped:      result.TotalStopped,
 		TotalSkipped:      skipped,
+		TotalReserved:     reserved,
 		ClustersTotal:     succeeded + failed,
 		ClustersSucceeded: succeeded,
 		ClustersFailed:    failed,
@@ -123,7 +176,7 @@ func (h *StopAllHandler) runningWorkloads() []model.Workload {
 		for _, ns := range h.store.Namespaces(c.Env) {
 			for _, w := range h.store.WorkloadsByNamespace(c.Env, ns) {
 				if w.Replicas > 0 {
-					out = append(out, model.Workload{Env: c.Env, Namespace: ns, Name: w.Name, Kind: w.Kind})
+					out = append(out, model.Workload{Env: c.Env, Namespace: ns, Name: w.Name, Kind: w.Kind, Reservation: w.Reservation})
 				}
 			}
 		}

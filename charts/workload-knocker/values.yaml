@@ -61,6 +61,9 @@ nightlyStop:
   enabled: false
   schedule: "0 22 * * *"
   timeZone: Asia/Tokyo
+  # false stops every running workload. true leaves the runs that a reservation started
+  # (schedule) running; they still stop at the end of their run duration.
+  skipReserved: false
   suspend: false
   startingDeadlineSeconds: 300
   concurrencyPolicy: Forbid

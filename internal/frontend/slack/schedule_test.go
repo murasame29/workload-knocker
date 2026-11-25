@@ -12,6 +12,7 @@ import (
 
 	"github.com/slack-go/slack"
 
+	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/observability/audit"
 	"github.com/murasame29/workload-knocker/internal/policy/authz"
 	"github.com/murasame29/workload-knocker/internal/schedule/reservation"
@@ -60,9 +61,9 @@ func (f *fakeReservations) Visible(context.Context, authz.Subject, string) []res
 
 func (f *fakeReservations) Warmup(string, string, []string) time.Duration { return 5 * time.Minute }
 
-func scheduleValues(at int64, hours string, sel map[string][]string) map[string]map[string]slack.BlockAction {
+func scheduleValues(readyIn, hours string, sel map[string][]string) map[string]map[string]slack.BlockAction {
 	v := checked(sel)
-	v[blockReserveAt] = map[string]slack.BlockAction{actionReserveAt: {SelectedDateTime: at}}
+	v[blockReserveIn] = map[string]slack.BlockAction{actionReserveIn: {Value: readyIn}}
 	v[blockReserveHours] = map[string]slack.BlockAction{actionReserveHours: {Value: hours}}
 	return v
 }
@@ -70,35 +71,42 @@ func scheduleValues(at int64, hours string, sel map[string][]string) map[string]
 func TestParseSchedule(t *testing.T) {
 	t.Parallel()
 	meta := scheduleMetadata{Namespaces: []string{"alpha", "beta"}}
-	at := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
 
-	in, errs := parseSchedule(meta, scheduleValues(at.Unix(), "3", map[string][]string{"block_ns_1_0": {"beta-w00"}, "block_ns_9_0": {"x"}}))
-	if len(errs) != 0 || !in.at.Equal(at) || in.hours != 3*time.Hour || len(in.names) != 1 || !slices.Equal(in.names["beta"], []string{"beta-w00"}) {
+	in, errs := parseSchedule(meta, scheduleValues("1.5", "3", map[string][]string{"block_ns_1_0": {"beta-w00"}, "block_ns_9_0": {"x"}}), now)
+	if len(errs) != 0 || !in.at.Equal(now.Add(90*time.Minute)) || in.hours != 3*time.Hour || len(in.names) != 1 || !slices.Equal(in.names["beta"], []string{"beta-w00"}) {
 		t.Errorf("parsed = %+v %v", in, errs)
 	}
-	if _, errs := parseSchedule(meta, scheduleValues(0, "x", map[string][]string{"block_ns_0_0": {"a"}})); errs[blockReserveAt] == "" || errs[blockReserveHours] == "" {
-		t.Errorf("errs = %v, want time and hours errors", errs)
+	if _, errs := parseSchedule(meta, scheduleValues("", "x", map[string][]string{"block_ns_0_0": {"a"}}), now); errs[blockReserveIn] == "" || errs[blockReserveHours] == "" {
+		t.Errorf("errs = %v, want ready-in and hours errors", errs)
 	}
-	if _, errs := parseSchedule(meta, scheduleValues(at.Unix(), "", nil)); !strings.Contains(errs[blockReserveAt], "at least one workload") {
+	if _, errs := parseSchedule(meta, scheduleValues("0.1", "", map[string][]string{"block_ns_0_0": {"a"}}), now); !strings.Contains(errs[blockReserveIn], "at least") {
+		t.Errorf("errs = %v, want the minimum error", errs)
+	}
+	if _, errs := parseSchedule(meta, scheduleValues("2", "", nil), now); !strings.Contains(errs[blockReserveIn], "at least one workload") {
 		t.Errorf("errs = %v, want a missing selection error", errs)
 	}
 }
 
-func TestScheduleModal_UncheckedGroupsPickerAndHours(t *testing.T) {
+func TestScheduleModal_OneNamespaceUncheckedWithReadyInAndHours(t *testing.T) {
 	t.Parallel()
 	b := multiBot(t, map[string][]*model.Workload{"alpha": nsWL("alpha", 1)}, "")
-	listings := b.listNamespaces(multiSub, "stg", []string{"alpha"})
-	now := time.Date(2026, 11, 14, 10, 20, 0, 0, time.UTC)
-	m := scheduleModal(statusCluster, listings, "{}", now)
+	listing := b.svc.List(multiSub, "stg", "alpha", listLimits)
+	m := scheduleModal(statusCluster, []string{"beta", "alpha"}, "alpha", listing, "{}")
 	raw, _ := json.Marshal(m)
 	s := string(raw)
-	for _, want := range []string{`"callback_id":"schedule_modal"`, `"type":"datetimepicker"`, fmt.Sprintf(`"initial_date_time":%d`, now.Add(time.Hour).Truncate(time.Hour).Unix()), `"block_id":"block_ns_0_0"`, `"block_id":"block_reserve_hours"`} {
+	for _, want := range []string{`"callback_id":"schedule_modal"`, `"action_id":"schedule_namespace"`, `"initial_option":{"text":{"type":"plain_text","text":"alpha"`, `"block_id":"block_ns_0_0"`, `"block_id":"block_reserve_in"`, `"block_id":"block_reserve_hours"`, `"submit"`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("modal lacks %s", want)
 		}
 	}
-	if strings.Contains(s, "initial_options") {
-		t.Error("reservation checkboxes must start unchecked")
+	if strings.Contains(s, "initial_options") || strings.Contains(s, "datetimepicker") {
+		t.Errorf("reservation checkboxes must start unchecked and use hours: %s", s)
+	}
+
+	empty := scheduleModal(statusCluster, []string{"alpha"}, "alpha", frontend.Listing{}, "{}")
+	if empty.Submit != nil || !strings.Contains(blockTexts(empty.Blocks.BlockSet), "not authorized") {
+		t.Errorf("empty namespace modal = %+v", empty)
 	}
 }
 

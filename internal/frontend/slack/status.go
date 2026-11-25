@@ -54,18 +54,14 @@ func parseSlashArg(text string) slashArg {
 	return argUnknown
 }
 
-// handleStatus posts the status list to the invoking user, from the in-memory store only.
+// handleStatus opens the status flow at its namespace select.
 func (b *Bot) handleStatus(cmd slack.SlashCommand, cl config.Cluster) {
-	sub := b.subject(cmd.UserID)
-	text, blocks := statusMessage(cl, b.svc.Status(sub, cl.Env), b.visibleReservations(sub, cl.Env), nil)
-	if _, err := b.client.PostEphemeral(cmd.ChannelID, cmd.UserID, slack.MsgOptionText(text, false), slack.MsgOptionBlocks(blocks...)); err != nil {
-		slog.Error("failed to post status message", slog.String("error.message", err.Error()))
-	}
+	b.openView(cmd.TriggerID, b.statusStart(b.subject(cmd.UserID), cl, cmd.ChannelID, cmd.UserID))
 }
 
 // postUsage tells the user which arguments the slash command accepts.
 func (b *Bot) postUsage(cmd slack.SlashCommand) {
-	msg := fmt.Sprintf("ℹ️ Usage: `%s` opens the start/stop form, `%s %s` lists the running workloads, `%s %s` reserves workloads for a time.", cmd.Command, cmd.Command, slashStatus, cmd.Command, slashSchedule)
+	msg := fmt.Sprintf("ℹ️ Usage: `%s` opens the menu (start/stop, schedule, status), `%s %s` lists the workloads of a namespace, `%s %s` reserves workloads for later.", cmd.Command, cmd.Command, slashStatus, cmd.Command, slashSchedule)
 	if _, err := b.client.PostEphemeral(cmd.ChannelID, cmd.UserID, slack.MsgOptionText(msg, false)); err != nil {
 		slog.Error("failed to post ephemeral message", slog.String("error.message", err.Error()))
 	}
@@ -93,8 +89,7 @@ func (b *Bot) handleStatusAction(callback slack.InteractionCallback, actionID, p
 		res := b.svc.Extend(frontend.ExtendRequest{Cluster: cl, Namespace: ref.Namespace, Subject: sub, Names: ref.Names, Duration: notify.ExtendBy})
 		notes = res.Lines(slackTime)
 	}
-	text, blocks := statusMessage(cl, b.svc.Status(sub, cl.Env), b.visibleReservations(sub, cl.Env), notes)
-	b.replaceOriginal(callback, text, blocks)
+	b.refreshStatus(callback, cl, sub, notes)
 }
 
 // replaceOriginal replaces the ephemeral message the button was pressed on.
@@ -113,22 +108,27 @@ func (b *Bot) replaceOriginal(callback slack.InteractionCallback, text string, b
 // responseTimeout bounds the call to a response_url.
 const responseTimeout = 5 * time.Second
 
-// statusMessage renders the status list: the plain-text fallback and the blocks. notes are the
-// outcome lines of the action that led to this refresh. Buttons are added per running entry the
-// user may operate, as far as Slack's block limit allows.
-// The pending reservations follow with a Cancel button each.
+// statusMessage renders the status list as a message (at most slackMessageMaxBlocks blocks).
 func statusMessage(cl config.Cluster, st frontend.Status, pending []reservation.Reservation, notes []string) (string, []slack.Block) {
+	return statusBlocks(cl, st, pending, notes, slackMessageMaxBlocks)
+}
+
+// statusBlocks renders the status list: the plain-text fallback and at most maxBlocks blocks.
+// notes are the outcome lines of the action that led to this refresh. Buttons are added per
+// running entry the user may operate, as far as the block limit allows.
+// The pending reservations follow with a Cancel button each.
+func statusBlocks(cl config.Cluster, st frontend.Status, pending []reservation.Reservation, notes []string, maxBlocks int) (string, []slack.Block) {
 	head := fmt.Sprintf("*%s / %s* status", strings.ToUpper(cl.Env), cl.Name)
 	if st.Empty() {
 		lines := append(slices.Clone(notes), "ℹ️ No workloads you may operate are registered in this cluster.")
 		return head, mrkdwnSections(head, lines)
 	}
-	text, blocks := workloadStatus(head, st, notes)
-	return text, append(blocks, reservationBlocks(st.Env, pending, slackMessageMaxBlocks-len(blocks))...)
+	text, blocks := workloadStatus(head, st, notes, maxBlocks)
+	return text, append(blocks, reservationBlocks(st.Env, pending, maxBlocks-len(blocks))...)
 }
 
 // workloadStatus renders the workload part of the status list.
-func workloadStatus(head string, st frontend.Status, notes []string) (string, []slack.Block) {
+func workloadStatus(head string, st frontend.Status, notes []string, maxBlocks int) (string, []slack.Block) {
 	lines := slices.Clone(notes)
 	lines = append(lines, "🟢 running  🟡 partial  🔴 stopped")
 	for _, ns := range st.Namespaces {
@@ -145,7 +145,7 @@ func workloadStatus(head string, st frontend.Status, notes []string) (string, []
 			row := entryButtons(st.Env, ns.Name, se)
 			switch {
 			case row == nil:
-			case len(blocks) >= slackMessageMaxBlocks-1:
+			case len(blocks) >= maxBlocks-1:
 				skipped++
 			default:
 				blocks = append(blocks, row)
@@ -154,7 +154,7 @@ func workloadStatus(head string, st frontend.Status, notes []string) (string, []
 	}
 	if skipped > 0 {
 		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn",
-			fmt.Sprintf("ℹ️ Slack limits a message to %d blocks; %d entries have no buttons. Use the start/stop form for those.", slackMessageMaxBlocks, skipped), false, false), nil, nil))
+			fmt.Sprintf("ℹ️ Slack limits this view to %d blocks; %d entries have no buttons. Use the start/stop form for those.", maxBlocks, skipped), false, false), nil, nil))
 	}
 	return head, blocks
 }

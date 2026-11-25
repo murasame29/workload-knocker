@@ -15,7 +15,6 @@ import (
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/observability/audit"
-	"github.com/murasame29/workload-knocker/internal/policy/authz"
 	"github.com/murasame29/workload-knocker/internal/policy/runlimit"
 	"github.com/murasame29/workload-knocker/internal/workload/rollout"
 )
@@ -340,8 +339,8 @@ func modalNote(listing frontend.Listing, chatStopAllowed bool) string {
 	return strings.Join(notes, "\n")
 }
 
-// handleSlashCommand handles /workload-knocker-*.
-// The cluster is resolved via b.registry.BySlashCommand(cmd.Command).
+// handleSlashCommand handles /workload-knocker-*: no argument opens the menu modal, status and
+// schedule open their flow directly. The cluster is resolved via b.registry.BySlashCommand(cmd.Command).
 func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 	cl, ok := b.registry.BySlashCommand(cmd.Command)
 	if !ok {
@@ -369,60 +368,14 @@ func (b *Bot) handleSlashCommand(cmd slack.SlashCommand) {
 		return
 	}
 
-	// Resolve the subject while reconciling so both fit the 3s trigger_id window.
-	subCh := make(chan authz.Subject, 1)
-	go func() { subCh <- b.subject(cmd.UserID) }()
+	meta, _ := json.Marshal(modalMetadata{ChannelID: cmd.ChannelID, UserID: cmd.UserID, Cluster: cl.Env})
+	b.openView(cmd.TriggerID, menuModal(cl, string(meta)))
+}
 
-	// Reflect the latest ScaledObject state on demand.
-	b.svc.Reconcile(cl.Env)
-
-	sub := <-subCh
-	namespaces, total := b.svc.Namespaces(sub, cl.Env)
-
-	// If no namespace is visible, return an error without opening the Modal
-	if len(namespaces) == 0 {
-		text := "⚠️ No managed workloads are registered yet. Please wait for ScaledObject discovery."
-		if total > 0 {
-			text = "⚠️ You are not authorized to operate any workload in this cluster."
-		}
-		if _, err := b.client.PostEphemeral(cmd.ChannelID, cmd.UserID,
-			slack.MsgOptionText(text, false),
-		); err != nil {
-			slog.Error("failed to post ephemeral message", slog.String("error.type", fmt.Sprintf("%T", err)), slog.String("error.message", err.Error()))
-		}
-		return
-	}
-
-	// Every namespace in one modal when it fits; otherwise pick a namespace first.
-	if modal, ok := b.multiModal(sub, cl, namespaces, cmd.ChannelID, cmd.UserID); ok {
-		if _, err := b.client.OpenView(cmd.TriggerID, modal); err != nil {
-			slog.Error("failed to open Modal", slog.String("error.message", err.Error()))
-		}
-		return
-	}
-
-	nsBlock := namespaceInputBlock(namespaces, "")
-
-	meta, _ := json.Marshal(modalMetadata{
-		ChannelID: cmd.ChannelID,
-		UserID:    cmd.UserID,
-		Cluster:   cl.Env,
-	})
-
-	modal := slack.ModalViewRequest{
-		Type:            slack.VTModal,
-		CallbackID:      callbackWorkloadModal,
-		Title:           slack.NewTextBlockObject("plain_text", modalTitle(cl), false, false),
-		Submit:          slack.NewTextBlockObject("plain_text", "Plan", false, false),
-		Close:           slack.NewTextBlockObject("plain_text", "Cancel", false, false),
-		PrivateMetadata: string(meta),
-		Blocks: slack.Blocks{
-			BlockSet: []slack.Block{nsBlock},
-		},
-	}
-
-	if _, err := b.client.OpenView(cmd.TriggerID, modal); err != nil {
-		slog.Error("failed to open Modal", slog.String("error.message", err.Error()))
+// openView opens a modal from a slash command (trigger_id is valid for 3 seconds).
+func (b *Bot) openView(triggerID string, view slack.ModalViewRequest) {
+	if _, err := b.views.OpenView(triggerID, view); err != nil {
+		slog.Error("failed to open Modal", slog.String("view.callback_id", view.CallbackID), slog.String("error.message", err.Error()))
 	}
 }
 
@@ -434,6 +387,12 @@ func (b *Bot) handleInteraction(callback slack.InteractionCallback) {
 		for _, action := range callback.ActionCallback.BlockActions {
 			slog.Debug("block action", slog.String("action.id", action.ActionID), slog.String("block.id", action.BlockID), slog.String("selected.value", action.SelectedOption.Value))
 			switch action.ActionID {
+			case actionMenuStartStop, actionMenuSchedule, actionMenuStatus:
+				b.handleMenu(callback, action.ActionID)
+			case actionScheduleNamespace:
+				b.handleScheduleNamespace(callback, action.SelectedOption.Value)
+			case actionStatusNamespace:
+				b.handleStatusNamespace(callback, action.SelectedOption.Value)
 			case actionSelectNamespace:
 				b.handleNamespaceSelected(callback, action.SelectedOption.Value)
 			case actionExtend:
@@ -543,9 +502,7 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 		},
 	}
 
-	if _, err := b.client.UpdateView(modal, callback.View.ExternalID, callback.View.Hash, callback.View.ID); err != nil {
-		slog.Error("failed to update Modal", slog.String("error.message", err.Error()))
-	}
+	b.updateView(callback, modal)
 }
 
 // handleModalSubmit computes the diff on Plan and shows the preview Modal.

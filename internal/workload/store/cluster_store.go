@@ -135,20 +135,27 @@ func (s *ClusterStore) Start(ns, name, user string, stopAt time.Time) error {
 	return s.change(ns+"/"+name, true, runState{replicas: 1, startedBy: user, startedAt: s.now(), stopAt: stopAt})
 }
 
+// StartReserved is Start for a reservation; the run remembers the reservation ID so the
+// nightly stop can leave it running.
+func (s *ClusterStore) StartReserved(ns, name, user string, stopAt time.Time, reservationID string) error {
+	return s.change(ns+"/"+name, true, runState{replicas: 1, startedBy: user, startedAt: s.now(), stopAt: stopAt, reservation: reservationID})
+}
+
 // runState is the part of a workload that Start and Stop change.
 type runState struct {
-	replicas  int
-	startedBy string
-	startedAt time.Time
-	stopAt    time.Time
+	replicas    int
+	startedBy   string
+	startedAt   time.Time
+	stopAt      time.Time
+	reservation string
 }
 
 func stateOf(w *model.Workload) runState {
-	return runState{replicas: w.Replicas, startedBy: w.StartedBy, startedAt: w.StartedAt, stopAt: w.StopAt}
+	return runState{replicas: w.Replicas, startedBy: w.StartedBy, startedAt: w.StartedAt, stopAt: w.StopAt, reservation: w.Reservation}
 }
 
 func (r runState) setOn(w *model.Workload) {
-	w.Replicas, w.StartedBy, w.StartedAt, w.StopAt = r.replicas, r.startedBy, r.startedAt, r.stopAt
+	w.Replicas, w.StartedBy, w.StartedAt, w.StopAt, w.Reservation = r.replicas, r.startedBy, r.startedAt, r.stopAt, r.reservation
 }
 
 // change sets the run state of key, persists it and applies it; a refusal restores the previous
@@ -225,6 +232,7 @@ func (s *ClusterStore) StopAll(_ context.Context, allow func(namespace, workload
 		w.StartedBy = ""
 		w.StartedAt = time.Time{}
 		w.StopAt = time.Time{}
+		w.Reservation = ""
 		changed = append(changed, effect{w: ref(w)})
 	}
 	slices.Sort(skipped)
@@ -450,6 +458,7 @@ func (s *ClusterStore) restoreLocked(entries map[string]k8s.StateEntry) []effect
 		w.StartedBy = entry.StartedBy
 		w.StartedAt = entry.StartedAt
 		w.StopAt = entry.StopAt
+		w.Reservation = entry.Reservation
 	}
 
 	effects := make([]effect, 0, len(s.workloads))
@@ -469,6 +478,8 @@ func (s *ClusterStore) snapshotEntriesLocked() map[string]k8s.StateEntry {
 			StartedBy: w.StartedBy,
 			StartedAt: w.StartedAt,
 			StopAt:    w.StopAt,
+
+			Reservation: w.Reservation,
 		}
 	}
 	return entries

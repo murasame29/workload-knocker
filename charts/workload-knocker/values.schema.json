@@ -23,6 +23,7 @@
         "enabled": {"type": "boolean"},
         "schedule": {"type": "string", "minLength": 1},
         "timeZone": {"type": "string", "minLength": 1},
+        "skipReserved": {"type": "boolean"},
         "suspend": {"type": "boolean"},
         "startingDeadlineSeconds": {"type": "integer", "minimum": 1},
         "concurrencyPolicy": {"type": "string", "enum": ["Allow", "Forbid", "Replace"]},

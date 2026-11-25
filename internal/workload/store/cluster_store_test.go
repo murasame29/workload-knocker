@@ -557,3 +557,54 @@ func TestClusterStore_Bootstrap_LegacyStateWithoutStartedAt(t *testing.T) {
 		t.Errorf("legacy state: StartedBy=%q StartedAt=%v, want carol and zero", w.StartedBy, w.StartedAt)
 	}
 }
+
+func TestClusterStore_Reservation_PersistsAndClears(t *testing.T) {
+	t.Parallel()
+
+	c := testCluster("stg")
+	kc := fake.NewClientset()
+	kk := kedafake.NewSimpleClientset(makeScaledObject("ns-a", "wl-1"), makeScaledObject("ns-a", "wl-2"))
+	first := newTestStore(t, c, kc, kk, &fakeMetrics{})
+	if err := first.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.StartReserved("ns-a", "wl-1", "alice", time.Time{}, "r1"); err != nil {
+		t.Fatal(err)
+	}
+
+	second := newTestStore(t, c, kc, kk, &fakeMetrics{})
+	if err := second.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	byName := func(s *ClusterStore) map[string]*model.Workload {
+		out := map[string]*model.Workload{}
+		for _, w := range s.WorkloadsByNamespace("ns-a") {
+			out[w.Name] = w
+		}
+		return out
+	}
+	if got := byName(second)["wl-1"].Reservation; got != "r1" {
+		t.Fatalf("Reservation after restart = %q, want r1", got)
+	}
+
+	// A plain start is not a reservation run, even of a workload a reservation started before.
+	if err := second.Start("ns-a", "wl-1", "bob", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := byName(second)["wl-1"].Reservation; got != "" {
+		t.Errorf("Reservation after a plain start = %q, want empty", got)
+	}
+
+	if err := second.StartReserved("ns-a", "wl-2", "alice", time.Time{}, "r2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := second.StopAll(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := byName(second)["wl-2"].Reservation; got != "" {
+		t.Errorf("Reservation after StopAll = %q, want empty", got)
+	}
+	if _, ok := readStateRaw(t, kc)["ns-a/wl-2"]["reservation"]; ok {
+		t.Error("reservation must be omitted from the state of a stopped workload")
+	}
+}

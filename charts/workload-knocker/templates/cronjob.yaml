@@ -44,7 +44,7 @@ spec:
                       name: {{ .Values.api.tokenSecret.name | quote }}
                       key: {{ .Values.api.tokenSecret.key | quote }}
                 - name: STOP_ALL_URL
-                  value: {{ printf "http://%s.%s.svc:%v/api/v1/stop-all" (include "workload-knocker.fullname" .) .Release.Namespace .Values.service.port | quote }}
+                  value: {{ printf "http://%s.%s.svc:%v/api/v1/stop-all%s" (include "workload-knocker.fullname" .) .Release.Namespace .Values.service.port (ternary "?skip=reserved" "" $n.skipReserved) | quote }}
               command:
                 - sh
                 - -c

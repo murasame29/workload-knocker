@@ -23,8 +23,8 @@ const (
 	slashSchedule = "schedule"
 
 	callbackScheduleModal = "schedule_modal"
-	blockReserveAt        = "block_reserve_at"
-	actionReserveAt       = "action_reserve_at"
+	blockReserveIn        = "block_reserve_in"
+	actionReserveIn       = "action_reserve_in"
 	blockReserveHours     = "block_reserve_hours"
 	actionReserveHours    = "action_reserve_hours"
 	actionReservationStop = "reservation_cancel"
@@ -46,7 +46,8 @@ type reservations interface {
 // SetReservations enables the schedule argument and the reservation list in status.
 func (b *Bot) SetReservations(r reservations) { b.reservations = r }
 
-// scheduleMetadata is the private_metadata of the schedule modal.
+// scheduleMetadata is the private_metadata of the schedule modal; Namespaces holds the chosen
+// namespace once picked.
 type scheduleMetadata struct {
 	ChannelID  string   `json:"c"`
 	UserID     string   `json:"u"`
@@ -54,45 +55,26 @@ type scheduleMetadata struct {
 	Namespaces []string `json:"n"`
 }
 
-// handleSchedule opens the reservation modal: checkboxes per namespace, a date and time picker
-// (shown and read in the user's own time zone) and the run duration in hours.
+// handleSchedule opens the schedule flow at its namespace select.
 func (b *Bot) handleSchedule(cmd slack.SlashCommand, cl config.Cluster) {
-	if b.reservations == nil {
-		b.ephemeral(cmd.ChannelID, cmd.UserID, "⚠️ Reservations are not available.")
-		return
-	}
-	sub := b.subject(cmd.UserID)
-	namespaces, total := b.svc.Namespaces(sub, cl.Env)
-	listings := b.listNamespaces(sub, cl.Env, namespaces)
-	switch {
-	case len(listings) == 0 && total > 0:
-		b.ephemeral(cmd.ChannelID, cmd.UserID, "⚠️ You are not authorized to operate any workload in this cluster.")
-		return
-	case len(listings) == 0:
-		b.ephemeral(cmd.ChannelID, cmd.UserID, "⚠️ No managed workloads are registered yet.")
-		return
-	case !multiNamespaceFits(listings):
-		b.ephemeral(cmd.ChannelID, cmd.UserID, "⚠️ The workloads do not fit the schedule form. Use POST /api/v1/reservations instead.")
-		return
-	}
-	meta := scheduleMetadata{ChannelID: cmd.ChannelID, UserID: cmd.UserID, Cluster: cl.Env}
-	for _, l := range listings {
-		meta.Namespaces = append(meta.Namespaces, l.Namespace)
-	}
-	raw, err := json.Marshal(meta)
-	if err != nil || len(raw) > slackPrivateMetadataMaxLen {
-		b.ephemeral(cmd.ChannelID, cmd.UserID, "⚠️ The workloads do not fit the schedule form. Use POST /api/v1/reservations instead.")
-		return
-	}
-	if _, err := b.client.OpenView(cmd.TriggerID, scheduleModal(cl, listings, string(raw), b.svc.Now())); err != nil {
-		slog.Error("failed to open the schedule modal", slog.String("error.message", err.Error()))
-	}
+	b.openView(cmd.TriggerID, b.scheduleStart(b.subject(cmd.UserID), cl, cmd.ChannelID, cmd.UserID))
 }
 
-// scheduleModal renders the reservation form; no workload is checked by default.
-func scheduleModal(cl config.Cluster, listings []nsListing, meta string, now time.Time) slack.ModalViewRequest {
-	blocks := multiNamespaceBlocks(listings)
-	for _, blk := range blocks {
+// scheduleModal renders the reservation form of one namespace: the namespace select, the
+// unchecked workloads, the hours until they are Ready and the run duration.
+func scheduleModal(cl config.Cluster, namespaces []string, namespace string, listing frontend.Listing, meta string) slack.ModalViewRequest {
+	blocks := []slack.Block{namespacePicker(actionScheduleNamespace, namespaces, namespace)}
+	if len(listing.Entries) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", "ℹ️ You are not authorized to start any workload in this namespace.", false, false), nil, nil))
+		return slack.ModalViewRequest{
+			Type: slack.VTModal, CallbackID: callbackScheduleModal, PrivateMetadata: meta,
+			Title:  slack.NewTextBlockObject("plain_text", truncateText("📅 "+cl.Env, slackModalTitleMaxLen), false, false),
+			Close:  slack.NewTextBlockObject("plain_text", "Close", false, false),
+			Blocks: slack.Blocks{BlockSet: blocks},
+		}
+	}
+	checks := multiNamespaceBlocks([]nsListing{{Namespace: namespace, Listing: listing}})
+	for _, blk := range checks {
 		if in, ok := blk.(*slack.InputBlock); ok {
 			if cb, ok := in.Element.(*slack.CheckboxGroupsBlockElement); ok {
 				cb.InitialOptions = nil
@@ -100,14 +82,19 @@ func scheduleModal(cl config.Cluster, listings []nsListing, meta string, now tim
 			in.Hint = nil
 		}
 	}
-	picker := slack.NewDateTimePickerBlockElement(actionReserveAt)
-	picker.InitialDateTime = now.Add(time.Hour).Truncate(time.Hour).Unix()
-	at := slack.NewInputBlock(blockReserveAt, slack.NewTextBlockObject("plain_text", "Ready at", false, false),
-		slack.NewTextBlockObject("plain_text", "Shown in your time zone; the workloads start a few minutes earlier.", false, false), picker)
+	readyIn := slack.NewInputBlock(blockReserveIn, slack.NewTextBlockObject("plain_text", "Ready in (hours)", false, false),
+		slack.NewTextBlockObject("plain_text", "Hours from now until the workloads are ready; they start a few minutes earlier. Minimum 0.25.", false, false),
+		slack.NewNumberInputBlockElement(slack.NewTextBlockObject("plain_text", "1", false, false), actionReserveIn, true).WithMinValue("0.25"))
 	hours := slack.NewInputBlock(blockReserveHours, slack.NewTextBlockObject("plain_text", "Run duration (hours)", false, false),
-		slack.NewTextBlockObject("plain_text", "Empty = workload default. Minimum 0.25.", false, false),
+		slack.NewTextBlockObject("plain_text", "Hours they run once ready, then they stop. Empty = workload default. Minimum 0.25.", false, false),
 		slack.NewNumberInputBlockElement(slack.NewTextBlockObject("plain_text", "3", false, false), actionReserveHours, true).WithMinValue("0.25"))
 	hours.Optional = true
+	blocks = append(blocks, checks...)
+	blocks = append(blocks, readyIn, hours)
+	if listing.Truncated > 0 {
+		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn",
+			fmt.Sprintf(":warning: %d entries do not fit this form. Use POST /api/v1/reservations for those.", listing.Truncated), false, false), nil, nil))
+	}
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
 		CallbackID:      callbackScheduleModal,
@@ -115,7 +102,7 @@ func scheduleModal(cl config.Cluster, listings []nsListing, meta string, now tim
 		Submit:          slack.NewTextBlockObject("plain_text", "Reserve", false, false),
 		Close:           slack.NewTextBlockObject("plain_text", "Cancel", false, false),
 		PrivateMetadata: meta,
-		Blocks:          slack.Blocks{BlockSet: append(blocks, at, hours)},
+		Blocks:          slack.Blocks{BlockSet: blocks},
 	}
 }
 
@@ -126,14 +113,18 @@ type scheduleInput struct {
 	names map[string][]string // namespace -> checked workload names
 }
 
-// parseSchedule reads the form; errs maps an input block to its message (response_action errors).
-func parseSchedule(meta scheduleMetadata, values map[string]map[string]slack.BlockAction) (scheduleInput, map[string]string) {
+// parseSchedule reads the form; the ready time is now plus the entered hours. errs maps an
+// input block to its message (response_action errors).
+func parseSchedule(meta scheduleMetadata, values map[string]map[string]slack.BlockAction, now time.Time) (scheduleInput, map[string]string) {
 	in := scheduleInput{names: map[string][]string{}}
 	errs := map[string]string{}
-	if ts := values[blockReserveAt][actionReserveAt].SelectedDateTime; ts > 0 {
-		in.at = time.Unix(ts, 0).UTC()
-	} else {
-		errs[blockReserveAt] = "Pick a date and time."
+	switch readyIn, err := runlimit.ParseHours(values[blockReserveIn][actionReserveIn].Value); {
+	case err != nil:
+		errs[blockReserveIn] = err.Error()
+	case readyIn == 0:
+		errs[blockReserveIn] = "Enter the hours until the workloads are ready."
+	default:
+		in.at = now.Add(readyIn).UTC()
 	}
 	d, err := runlimit.ParseHours(values[blockReserveHours][actionReserveHours].Value)
 	if err != nil {
@@ -149,7 +140,7 @@ func parseSchedule(meta scheduleMetadata, values map[string]map[string]slack.Blo
 		}
 	}
 	if len(errs) == 0 && len(in.names) == 0 {
-		errs[blockReserveAt] = "Check at least one workload."
+		errs[blockReserveIn] = "Check at least one workload."
 	}
 	return in, errs
 }
@@ -162,7 +153,7 @@ func (b *Bot) handleScheduleSubmit(callback slack.InteractionCallback, req *sock
 		b.ack(*req)
 		return
 	}
-	in, errs := parseSchedule(meta, callback.View.State.Values)
+	in, errs := parseSchedule(meta, callback.View.State.Values, b.svc.Now())
 	if len(errs) > 0 {
 		b.ack(*req, map[string]any{"response_action": "errors", "errors": errs})
 		return
@@ -270,8 +261,7 @@ func (b *Bot) handleReservationCancel(callback slack.InteractionCallback, value 
 	if err != nil {
 		note = "⛔ " + escapeMrkdwn(frontend.ReservationError(err))
 	}
-	text, blocks := statusMessage(cl, b.svc.Status(sub, cl.Env), b.visibleReservations(sub, cl.Env), []string{note})
-	b.replaceOriginal(callback, text, blocks)
+	b.refreshStatus(callback, cl, sub, []string{note})
 }
 
 func (b *Bot) ephemeral(channelID, userID, text string) {
