@@ -196,7 +196,7 @@ func TestWorkloadCheckboxBlocks_SplitsAtSlackLimit(t *testing.T) {
 		t.Run(fmt.Sprintf("count=%d", tc.count), func(t *testing.T) {
 			t.Parallel()
 
-			blocks := workloadCheckboxBlocks("ns", listingOf(makeWorkloads(tc.count)))
+			blocks := enUI.workloadCheckboxBlocks("ns", listingOf(makeWorkloads(tc.count)))
 			if len(blocks) != tc.wantBlocks {
 				t.Fatalf("block count = %d, want %d", len(blocks), tc.wantBlocks)
 			}
@@ -271,7 +271,7 @@ func TestWorkloadCheckboxBlocks_InitialOptionsReflectRunning(t *testing.T) {
 	}
 
 	gotInitial := make(map[string]bool)
-	for _, b := range workloadCheckboxBlocks("ns", listingOf(workloads)) {
+	for _, b := range enUI.workloadCheckboxBlocks("ns", listingOf(workloads)) {
 		cb := b.(*slack.InputBlock).Element.(*slack.CheckboxGroupsBlockElement)
 		if cb.InitialOptions != nil && len(cb.InitialOptions) == 0 {
 			t.Error("InitialOptions is an empty slice, want nil (Slack rejects [])")
@@ -296,7 +296,7 @@ func TestWorkloadCheckboxBlocks_InitialOptionsReflectRunning(t *testing.T) {
 func TestWorkloadCheckboxBlocks_FitsModalBlockLimit(t *testing.T) {
 	t.Parallel()
 
-	blocks := workloadCheckboxBlocks("ns", listingOf(makeWorkloads(maxWorkloadOptions)))
+	blocks := enUI.workloadCheckboxBlocks("ns", listingOf(makeWorkloads(maxWorkloadOptions)))
 	total := len(blocks) + reservedModalBlocks // namespace select + warning section
 	if total > slackModalMaxBlocks {
 		t.Errorf("total blocks = %d, want <= %d", total, slackModalMaxBlocks)

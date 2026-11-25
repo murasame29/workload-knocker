@@ -12,6 +12,7 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
+	"github.com/murasame29/workload-knocker/internal/frontend/i18n"
 	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 	"github.com/murasame29/workload-knocker/internal/policy/mode"
 	"github.com/murasame29/workload-knocker/internal/workload/model"
@@ -104,6 +105,64 @@ func TestSlashCommand_NoArgumentOpensTheMenu(t *testing.T) {
 	if views.opened[0].Submit != nil {
 		t.Error("the menu has no submit button")
 	}
+	// One actions block per button stacks them vertically.
+	var rows []string
+	for _, blk := range views.opened[0].Blocks.BlockSet {
+		if a, ok := blk.(*slack.ActionBlock); ok {
+			if len(a.Elements.ElementSet) != 1 {
+				t.Errorf("row %s has %d buttons, want 1", a.BlockID, len(a.Elements.ElementSet))
+			}
+			rows = append(rows, a.Elements.ElementSet[0].(*slack.ButtonBlockElement).ActionID)
+		}
+	}
+	if want := []string{actionMenuStartStop, actionMenuSchedule, actionMenuStatus}; strings.Join(rows, ",") != strings.Join(want, ",") {
+		t.Errorf("rows = %v, want %v", rows, want)
+	}
+}
+
+func TestStartStopNamespace_ListsOnlyThatNamespace(t *testing.T) {
+	t.Parallel()
+	b, views := menuBot(t, map[string][]*model.Workload{"alpha": nsWL("alpha", 1), "beta": nsWL("beta", 0, 0)})
+
+	b.handleNamespaceSelected(viewCallback(t, callbackWorkloadModal, modalMetadata{ChannelID: "C1", UserID: multiSub.User, Cluster: "stg"}), "beta")
+
+	got := views.last(t)
+	s := modalJSON(t, got)
+	if !strings.Contains(s, "beta-w01") || strings.Contains(s, "alpha-w00") || got.Submit == nil || !strings.Contains(s, `"block_id":"block_duration"`) {
+		t.Errorf("start/stop form = %s", s)
+	}
+	var meta modalMetadata
+	if err := json.Unmarshal([]byte(got.PrivateMetadata), &meta); err != nil || meta.Namespace != "beta" || meta.Rendered != 2 || len(meta.Namespaces) != 0 {
+		t.Errorf("metadata = %+v %v", meta, err)
+	}
+
+	// A namespace without operable entries has no inputs, so no submit button (Slack rejects one).
+	b.handleNamespaceSelected(viewCallback(t, callbackWorkloadModal, modalMetadata{Cluster: "stg"}), "missing")
+	if got := views.last(t); got.Submit != nil {
+		t.Errorf("empty namespace has a submit button: %s", modalJSON(t, got))
+	}
+}
+
+func TestMenu_Japanese(t *testing.T) {
+	t.Parallel()
+	b, views := menuBot(t, map[string][]*model.Workload{"alpha": nsWL("alpha", 0)})
+	b.ui = newUI(i18n.Ja)
+
+	b.handleSlashCommand(slack.SlashCommand{Command: "/knock-stg", TriggerID: "T1", ChannelID: "C1", UserID: multiSub.User})
+	b.handleNamespaceSelected(viewCallback(t, callbackWorkloadModal, modalMetadata{Cluster: "stg"}), "alpha")
+
+	menu := modalJSON(t, views.opened[0])
+	form := modalJSON(t, views.last(t))
+	for _, want := range []string{"起動 / 停止", "予約", "状態", "キャンセル"} {
+		if !strings.Contains(menu, want) {
+			t.Errorf("menu lacks %q: %s", want, menu)
+		}
+	}
+	for _, want := range []string{"稼働時間", "確認"} {
+		if !strings.Contains(form, want) {
+			t.Errorf("form lacks %q: %s", want, form)
+		}
+	}
 }
 
 func TestMenu_EachButtonReplacesTheModalWithItsFlow(t *testing.T) {
@@ -117,7 +176,7 @@ func TestMenu_EachButtonReplacesTheModalWithItsFlow(t *testing.T) {
 		callback     string
 		contains     string
 	}{
-		{actionMenuStartStop, false, callbackWorkloadModal, `"block_id":"block_ns_1_0"`},
+		{actionMenuStartStop, false, callbackWorkloadModal, `"action_id":"select_namespace"`},
 		{actionMenuSchedule, true, callbackScheduleModal, `"action_id":"schedule_namespace"`},
 		{actionMenuSchedule, false, "", "Reservations are not available"},
 		{actionMenuStatus, false, callbackStatusModal, `"action_id":"status_namespace"`},

@@ -30,6 +30,7 @@
 | `EXTERNAL_SCALER_PORT` | `9090` | KEDA external scaler の gRPC ポート。`actuator: keda-external` の cluster がある間だけ待ち受ける。Chart: `externalScaler.port` |
 | `EXTERNAL_SCALER_TLS_CERT` / `EXTERNAL_SCALER_TLS_KEY` | 空 | このポートで TLS を有効にする証明書と鍵のパス (両方指定するか、どちらも指定しない。ハンドシェイクごとに再読込)。Chart: `externalScaler.tls.secretName` |
 | `EXTERNAL_SCALER_ADDRESS_MATCH` | `workload-knocker` | trigger の `scalerAddress` にこの文字列を含むものを担当する。Chart は Service 名を設定する |
+| `UI_LANGUAGE` | `en` | Slack の UI の言語。`en` か `ja` で、それ以外は起動時にエラー。Slack のモーダルと返信 (変更内容・結果・状態の行を含む) に適用します。Discord、通知チャンネル、予約サービスが返すエラーの詳細は英語のままです。chart: `settings.uiLanguage` |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`。ログは `timestamp` / `message` キーの JSON です ([監査ログ](audit-log.md)) |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。
@@ -381,19 +382,18 @@ metadata:
 
 ## Slack の workload モーダル
 
-Slack の slash command はサブコマンドを持てないため、引数なしの `/<command>` は 3 つのボタンを持つメニューを開きます。
-ボタンを押すと、同じモーダルの中身が次の画面に置き換わります。
+Slack の slash command はサブコマンドを持てないため、引数なしの `/<command>` はメニューを開きます。
+Start / Stop、Schedule、Status のボタンを 1 行に 1 つずつ、短い説明付きで縦に並べます。ボタンを押すと同じモーダルの中身が次の画面に置き換わり、
+どの画面も namespace の選択から始まります。
 
-- **Start / Stop**: 以下で説明する workload モーダルを開きます (先に状態を reconcile します)。
+- **Start / Stop**: 状態を reconcile してから namespace を選ばせ、その workload を一覧します (起動中はチェック済み)。
+  稼働時間も入力できます。**Plan** で変更内容を確認し、**Apply** で適用します。
 - **Schedule**: namespace を選ぶと、その namespace の[予約](#予約)フォームを表示します。
 - **Status**: namespace を選ぶと、その namespace の[ステータス](#ステータス)を表示します。
 
-`/<command> status` と `/<command> schedule` はメニューを飛ばしてそれぞれの画面を直接開きます。その他の引数には短い使い方を返します。
+別の namespace を選ぶと一覧が切り替わります。`/<command> status` と `/<command> schedule` はメニューを飛ばしてそれぞれの画面を直接開きます。
+その他の引数には短い使い方を返します。`UI_LANGUAGE=ja` にするとメニューとフォームを日本語で表示します。
 
-- 操作できる namespace がすべて 1 つのモーダルに収まる場合 (各 namespace の 10 件ごとに 1 ブロック、
-  合計 97 ブロックまで)、全 namespace をまとめて並べます。ラベルは namespace 名で、起動中のエントリはチェック済みです。
-  **Plan** で変更のある namespace をまとめてプレビューし、**Apply** で namespace ごとに 1 リクエストずつ適用します。
-  収まらない場合は namespace の選択から始まります。
 - namespace と workload は a→z 順です。
 - `foo-api` / `foo-app` / `foo-worker` のうち 2 件以上あれば 1 つの `foo` チェックボックスに
   merge されます。一部だけ起動中なら 🟡 でチェック ON になります。

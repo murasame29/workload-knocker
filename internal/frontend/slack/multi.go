@@ -17,8 +17,8 @@ import (
 	"github.com/murasame29/workload-knocker/internal/workload/rollout"
 )
 
-// Block and action ID prefixes of the multi-namespace modal: <prefix><namespace index>_<page>.
-// They differ from blockSelectWorkloads so the single-namespace fallback keeps its own IDs.
+// Block and action ID prefixes of the namespace checkbox groups of the schedule form, and of the
+// multi-namespace start/stop modal of older versions: <prefix><namespace index>_<page>.
 const (
 	blockNamespaceWorkloads  = "block_ns_"
 	actionNamespaceWorkloads = "select_ns_"
@@ -36,30 +36,9 @@ type nsListing struct {
 	Listing   frontend.Listing
 }
 
-// listNamespaces lists the operable entries of every namespace; namespaces without any are skipped.
-func (b *Bot) listNamespaces(sub authz.Subject, env string, namespaces []string) []nsListing {
-	var out []nsListing
-	for _, ns := range namespaces {
-		l := b.svc.List(sub, env, ns, frontend.Limits{PageSize: checkboxMaxOptions})
-		if len(l.Entries) > 0 {
-			out = append(out, nsListing{Namespace: ns, Listing: l})
-		}
-	}
-	return out
-}
-
-// multiNamespaceFits reports whether every namespace fits one modal with the reserved blocks.
-func multiNamespaceFits(listings []nsListing) bool {
-	n := 0
-	for _, l := range listings {
-		n += len(l.Listing.Pages())
-	}
-	return len(listings) > 0 && n <= slackModalMaxBlocks-reservedModalBlocks
-}
-
 // multiNamespaceBlocks renders one checkbox input per page of each namespace, labelled with the
 // namespace; running entries are checked. Option values are the representative workload names.
-func multiNamespaceBlocks(listings []nsListing) []slack.Block {
+func (u ui) multiNamespaceBlocks(listings []nsListing) []slack.Block {
 	var blocks []slack.Block
 	for ni, l := range listings {
 		pages := l.Listing.Pages()
@@ -86,7 +65,7 @@ func multiNamespaceBlocks(listings []nsListing) []slack.Block {
 			}
 			var hint *slack.TextBlockObject
 			if ni == 0 && pi == 0 {
-				hint = slack.NewTextBlockObject("plain_text", "✅ = running  ☐ = stopped", false, false)
+				hint = slack.NewTextBlockObject("plain_text", u.t("✅ = running  ☐ = stopped"), false, false)
 			}
 			block := slack.NewInputBlock(fmt.Sprintf("%s%d_%d", blockNamespaceWorkloads, ni, pi), slack.NewTextBlockObject("plain_text", label, false, false), hint, cb)
 			block.Optional = true
@@ -95,36 +74,6 @@ func multiNamespaceBlocks(listings []nsListing) []slack.Block {
 		}
 	}
 	return blocks
-}
-
-// multiModal returns the multi-namespace workload modal, or false when it does not fit the
-// Slack limits (the caller then opens the namespace select).
-func (b *Bot) multiModal(sub authz.Subject, cl config.Cluster, namespaces []string, channelID, userID string) (slack.ModalViewRequest, bool) {
-	listings := b.listNamespaces(sub, cl.Env, namespaces)
-	if !multiNamespaceFits(listings) {
-		return slack.ModalViewRequest{}, false
-	}
-	meta := modalMetadata{ChannelID: channelID, UserID: userID, Cluster: cl.Env}
-	for _, l := range listings {
-		meta.Namespaces = append(meta.Namespaces, nsMeta{Namespace: l.Namespace, Rendered: len(l.Listing.Entries)})
-	}
-	raw, err := json.Marshal(meta)
-	if err != nil || len(raw) > slackPrivateMetadataMaxLen {
-		return slack.ModalViewRequest{}, false
-	}
-	blocks := append(multiNamespaceBlocks(listings), durationInputBlock())
-	if !b.svc.ChatStopAllowed() {
-		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", "ℹ️ Stopping from chat is disabled: running workloads are stopped by the nightly job.", false, false), nil, nil))
-	}
-	return slack.ModalViewRequest{
-		Type:            slack.VTModal,
-		CallbackID:      callbackWorkloadModal,
-		Title:           slack.NewTextBlockObject("plain_text", modalTitle(cl), false, false),
-		Submit:          slack.NewTextBlockObject("plain_text", "Plan", false, false),
-		Close:           slack.NewTextBlockObject("plain_text", "Cancel", false, false),
-		PrivateMetadata: string(raw),
-		Blocks:          slack.Blocks{BlockSet: blocks},
-	}, true
 }
 
 // selectedByNamespace folds the checked values of the multi-namespace modal per namespace index.
@@ -178,7 +127,7 @@ func (b *Bot) planNamespaces(sub authz.Subject, cl config.Cluster, meta modalMet
 
 // multiPreviewLines renders the plans; several namespaces get a bold namespace line each.
 // Namespaces with neither a change nor a refusal are left out.
-func multiPreviewLines(plans []nsPlan) []string {
+func (u ui) multiPreviewLines(plans []nsPlan) []string {
 	shown := 0
 	for _, p := range plans {
 		if len(p.plan.Changes)+len(p.plan.Rejected) > 0 {
@@ -193,9 +142,9 @@ func multiPreviewLines(plans []nsPlan) []string {
 		if shown > 1 {
 			lines = append(lines, "*"+p.plan.Namespace+"*")
 		}
-		lines = append(lines, markup.PlanLines(p.plan.Changes)...)
-		lines = append(lines, markup.ScheduleLines(p.starts)...)
-		lines = append(lines, frontend.RejectionLines(p.plan.Rejected)...)
+		lines = append(lines, u.markup.PlanLines(p.plan.Changes)...)
+		lines = append(lines, u.markup.ScheduleLines(p.starts)...)
+		lines = append(lines, u.markup.RejectionLines(p.plan.Rejected)...)
 	}
 	return lines
 }
@@ -211,7 +160,8 @@ func namespaceList(plans []nsPlan) string {
 	return strings.Join(names, ", ")
 }
 
-// handleMultiSubmit is handleModalSubmit for the multi-namespace modal.
+// handleMultiSubmit is handleModalSubmit for the multi-namespace modal that older versions opened;
+// it keeps a modal that was open during an upgrade working.
 func (b *Bot) handleMultiSubmit(callback slack.InteractionCallback, req *socketmode.Request, cl config.Cluster, meta modalMetadata, requested time.Duration) {
 	sub := b.subject(callback.User.ID)
 	requestID := audit.NewRequestID()
@@ -232,8 +182,8 @@ func (b *Bot) handleMultiSubmit(callback slack.InteractionCallback, req *socketm
 	envUpper := strings.ToUpper(cl.Env)
 	if len(parts) == 0 {
 		b.ack(*req)
-		header := fmt.Sprintf("ℹ️ *%s / %s* — no changes", envUpper, cl.Name)
-		if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID, slack.MsgOptionBlocks(mrkdwnSections(header, multiPreviewLines(plans))...)); err != nil {
+		header := b.t("ℹ️ *%s / %s* — no changes", envUpper, cl.Name)
+		if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID, slack.MsgOptionBlocks(mrkdwnSections(header, b.multiPreviewLines(plans))...)); err != nil {
 			slog.Error("failed to send no-change message", slog.String("error.message", err.Error()))
 		}
 		return
@@ -245,22 +195,22 @@ func (b *Bot) handleMultiSubmit(callback slack.InteractionCallback, req *socketm
 	})
 	if err != nil || len(previewMeta) > slackPrivateMetadataMaxLen {
 		b.ack(*req)
-		if _, perr := b.client.PostEphemeral(meta.ChannelID, meta.UserID, slack.MsgOptionText("⚠️ Too many changes at once. Please split them into several runs.", false)); perr != nil {
+		if _, perr := b.client.PostEphemeral(meta.ChannelID, meta.UserID, slack.MsgOptionText(b.t("⚠️ Too many changes at once. Please split them into several runs."), false)); perr != nil {
 			slog.Error("failed to post ephemeral message", slog.String("error.message", perr.Error()))
 		}
 		return
 	}
-	header := fmt.Sprintf("*%s / %s / %s* change preview:\n", envUpper, cl.Name, namespaceList(plans))
+	header := b.t("*%s / %s / %s* change preview:", envUpper, cl.Name, namespaceList(plans)) + "\n"
 	b.ack(*req, map[string]any{
 		"response_action": "update",
 		"view": slack.ModalViewRequest{
 			Type:            slack.VTModal,
 			CallbackID:      callbackPreviewModal,
-			Title:           slack.NewTextBlockObject("plain_text", "Change preview", false, false),
-			Submit:          slack.NewTextBlockObject("plain_text", "✅ Apply", false, false),
-			Close:           slack.NewTextBlockObject("plain_text", "Back", false, false),
+			Title:           slack.NewTextBlockObject("plain_text", b.t("Change preview"), false, false),
+			Submit:          slack.NewTextBlockObject("plain_text", b.t("✅ Apply"), false, false),
+			Close:           slack.NewTextBlockObject("plain_text", b.t("Back"), false, false),
 			PrivateMetadata: string(previewMeta),
-			Blocks:          slack.Blocks{BlockSet: mrkdwnSections(header, multiPreviewLines(plans))},
+			Blocks:          slack.Blocks{BlockSet: mrkdwnSections(header, b.multiPreviewLines(plans))},
 		},
 	})
 }
@@ -280,7 +230,7 @@ type appliedPart struct {
 }
 
 // resultLines renders the outcome of every namespace with the rollout progress in snap.
-func resultLines(applied []appliedPart, snap rollout.Snapshot, timeout time.Duration) []string {
+func (u ui) resultLines(applied []appliedPart, snap rollout.Snapshot, timeout time.Duration) []string {
 	var lines []string
 	for _, a := range applied {
 		var own rollout.Snapshot
@@ -292,7 +242,7 @@ func resultLines(applied []appliedPart, snap rollout.Snapshot, timeout time.Dura
 		if len(applied) > 1 {
 			lines = append(lines, "*"+a.req.Namespace+"*")
 		}
-		lines = append(lines, progressLines(a.res, own, timeout)...)
+		lines = append(lines, u.progressLines(a.res, own, timeout)...)
 	}
 	return lines
 }

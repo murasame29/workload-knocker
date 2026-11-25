@@ -52,7 +52,7 @@ func multiBot(t *testing.T, byNS map[string][]*model.Workload, policy string) *B
 	}
 	az := authz.NewHolder(p)
 	svc := frontend.NewService(&multiStore{byNS: byNS}, metrics.New(), time.Second, frontend.WithAuthorizer(az), frontend.WithMode(mode.Full))
-	return &Bot{svc: svc, authz: az}
+	return &Bot{ui: enUI, svc: svc, authz: az}
 }
 
 var multiSub = authz.Subject{Platform: authz.PlatformSlack, User: "UTEST0001"}
@@ -71,50 +71,29 @@ func checked(sel map[string][]string) map[string]map[string]slack.BlockAction {
 	return out
 }
 
-func TestMultiModal_OneGroupPerNamespace(t *testing.T) {
+func TestMultiNamespaceBlocks_OneGroupPerNamespace(t *testing.T) {
 	t.Parallel()
 	b := multiBot(t, map[string][]*model.Workload{"alpha": nsWL("alpha", 1, 0), "beta": nsWL("beta", make([]int, 12)...)}, "")
-	modal, ok := b.multiModal(multiSub, statusCluster, []string{"alpha", "beta"}, "C1", "U1")
-	if !ok {
-		t.Fatal("modal does not fit")
+	var listings []nsListing
+	for _, ns := range []string{"alpha", "beta"} {
+		listings = append(listings, nsListing{Namespace: ns, Listing: b.svc.List(multiSub, "stg", ns, frontend.Limits{PageSize: checkboxMaxOptions})})
 	}
+	blocks := enUI.multiNamespaceBlocks(listings)
 	var ids, labels []string
-	for _, blk := range modal.Blocks.BlockSet {
-		if in, ok := blk.(*slack.InputBlock); ok {
-			ids = append(ids, in.BlockID)
-			labels = append(labels, in.Label.Text)
-		}
+	for _, blk := range blocks {
+		in := blk.(*slack.InputBlock)
+		ids = append(ids, in.BlockID)
+		labels = append(labels, in.Label.Text)
 	}
-	if want := []string{"block_ns_0_0", "block_ns_1_0", "block_ns_1_1", blockDuration}; !slices.Equal(ids, want) {
+	if want := []string{"block_ns_0_0", "block_ns_1_0", "block_ns_1_1"}; !slices.Equal(ids, want) {
 		t.Errorf("block IDs = %v, want %v", ids, want)
 	}
-	if want := []string{"alpha", "beta 1-10", "beta 11-12", "Run duration (hours)"}; !slices.Equal(labels, want) {
+	if want := []string{"alpha", "beta 1-10", "beta 11-12"}; !slices.Equal(labels, want) {
 		t.Errorf("labels = %v, want %v", labels, want)
 	}
-	first := modal.Blocks.BlockSet[0].(*slack.InputBlock).Element.(*slack.CheckboxGroupsBlockElement)
+	first := blocks[0].(*slack.InputBlock).Element.(*slack.CheckboxGroupsBlockElement)
 	if len(first.InitialOptions) != 1 || first.InitialOptions[0].Value != "alpha-w00" {
 		t.Errorf("initial = %+v, want the running entry", first.InitialOptions)
-	}
-	var meta modalMetadata
-	if err := json.Unmarshal([]byte(modal.PrivateMetadata), &meta); err != nil || len(meta.Namespaces) != 2 || meta.Namespaces[1] != (nsMeta{Namespace: "beta", Rendered: 12}) {
-		t.Errorf("metadata = %+v %v", meta, err)
-	}
-}
-
-func TestMultiModal_FallsBackOverTheBlockLimit(t *testing.T) {
-	t.Parallel()
-	byNS := map[string][]*model.Workload{}
-	var names []string
-	for i := range 10 {
-		ns := fmt.Sprintf("ns-%02d", i)
-		byNS[ns] = nsWL(ns, make([]int, 91)...) // 10 blocks each: 100 in total
-		names = append(names, ns)
-	}
-	if _, ok := multiBot(t, byNS, "").multiModal(multiSub, statusCluster, names, "C1", "U1"); ok {
-		t.Error("modal over the block limit must fall back")
-	}
-	if _, ok := multiBot(t, map[string][]*model.Workload{}, "").multiModal(multiSub, statusCluster, []string{"empty"}, "C1", "U1"); ok {
-		t.Error("no entries must fall back to the namespace select notice")
 	}
 }
 
@@ -146,7 +125,7 @@ rules:
 	if !slices.Equal(plans[1].plan.ToStart, []string{"beta-w00"}) || len(plans[1].plan.ToStop) != 0 {
 		t.Errorf("beta plan = %+v, want only the authorized start", plans[1].plan)
 	}
-	lines := multiPreviewLines(plans)
+	lines := enUI.multiPreviewLines(plans)
 	for _, want := range []string{"*alpha*", "🟢 alpha-w01: stopped → *start*", "🔴 alpha-w00: running → *stop*", "*beta*", "🟢 beta-w00: stopped → *start*"} {
 		if !slices.Contains(lines, want) {
 			t.Errorf("preview lacks %q: %q", want, lines)
@@ -189,7 +168,7 @@ func TestResultLines_SplitsProgressPerNamespace(t *testing.T) {
 		{req: frontend.ApplyRequest{Namespace: "beta"}, res: frontend.ApplyResult{Applied: []frontend.Applied{{Action: frontend.ActionStart, Name: "web", Found: true}}}},
 	}
 	snap := rollout.Snapshot{{Target: rollout.Target{Namespace: "alpha", Name: "web", Direction: rollout.Start}, State: rollout.StateStarted}}
-	lines := resultLines(applied, snap, time.Minute)
+	lines := enUI.resultLines(applied, snap, time.Minute)
 	if len(lines) != 4 || lines[0] != "*alpha*" || !strings.Contains(lines[1], "started") || lines[2] != "*beta*" || lines[3] != "🟢 web → start" {
 		t.Errorf("lines = %q", lines)
 	}

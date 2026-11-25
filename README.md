@@ -25,8 +25,8 @@ Slack / Discord  <->  workload-knocker  --- EKS / kubeconfig --->  managed clust
   a modal with one checkbox group per namespace (select menus beyond 5 namespaces or 10 entries) and a plan
   preview with Confirm/Cancel; see [Discord](docs/en/configuration.md#discord).
   The bare `/<command>` no longer works (breaking change).
-- The Slack slash command (`frontends.slack.slashCommand`) opens a menu: **Start / Stop** shows a modal with every
-  namespace at once when they fit (a namespace select otherwise), **Schedule** and **Status** ask for a namespace first. Workloads that differ only by an `api` / `app` / `worker` suffix are shown as one checkbox.
+- The Slack slash command (`frontends.slack.slashCommand`) opens a menu of **Start / Stop**, **Schedule** and
+  **Status**; each asks for a namespace, then lists its workloads. `UI_LANGUAGE=ja` switches the Slack UI to Japanese. Workloads that differ only by an `api` / `app` / `worker` suffix are shown as one checkbox.
 - `/<command> status` (Discord subcommand, Slack menu or argument) lists the workloads the user may operate with their state,
   starter and stop time, plus Extend 1h and Stop buttons; `GET /api/v1/workloads` returns the same data as JSON.
   See [Status](docs/en/configuration.md#status).

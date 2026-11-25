@@ -104,6 +104,8 @@ spec:
               value: {{ .Values.settings.shutdownTimeout | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.settings.logLevel | quote }}
+            - name: UI_LANGUAGE
+              value: {{ .Values.settings.uiLanguage | default "en" | quote }}
             {{- include "workload-knocker.apiEnv" . | nindent 12 }}
             {{- if .Values.slack.secretName }}
             - name: SLACK_APP_TOKEN

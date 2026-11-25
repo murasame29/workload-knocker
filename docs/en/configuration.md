@@ -30,6 +30,7 @@
 | `EXTERNAL_SCALER_PORT` | `9090` | gRPC port of the KEDA external scaler, served only while a cluster uses `actuator: keda-external`. Chart: `externalScaler.port` |
 | `EXTERNAL_SCALER_TLS_CERT` / `EXTERNAL_SCALER_TLS_KEY` | empty | Certificate and key paths that enable TLS on that port (both or neither; re-read on every handshake). Chart: `externalScaler.tls.secretName` |
 | `EXTERNAL_SCALER_ADDRESS_MATCH` | `workload-knocker` | A trigger is served when its `scalerAddress` contains this text. The chart sets it to the Service name |
+| `UI_LANGUAGE` | `en` | Language of the Slack UI: `en` or `ja`; any other value fails at startup. Covers the Slack modals and replies, including the plan, result and status lines. Discord, the notify channel and error details from the reservation service stay English. Chart: `settings.uiLanguage` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs are JSON with `timestamp` / `message` keys; see [Audit log](audit-log.md) |
 
 `WORKLOAD_ENV` is deprecated and ignored (a warning is logged).
@@ -391,20 +392,19 @@ Notes:
 
 ## Slack workload modal
 
-A Slack slash command cannot have subcommands, so `/<command>` without an argument opens a menu with three buttons.
-Each button replaces the menu in the same modal:
+A Slack slash command cannot have subcommands, so `/<command>` without an argument opens a menu with one button per
+row (Start / Stop, Schedule, Status), each with a short description. Each button replaces the menu in the same modal,
+and every flow starts with a namespace select:
 
-- **Start / Stop** opens the workload modal described below (the state is reconciled first).
+- **Start / Stop** reconciles the state, asks for a namespace, then lists its workloads (running ones checked) with
+  the run duration. **Plan** previews the changes and **Apply** applies them.
 - **Schedule** asks for a namespace, then shows the [reservation](#reservations) form of that namespace.
 - **Status** asks for a namespace, then shows the [status](#status) of that namespace.
 
-`/<command> status` and `/<command> schedule` skip the menu and open those flows directly; any other argument gets a
-short usage message.
+Picking another namespace in the select replaces the list. `/<command> status` and `/<command> schedule` skip the
+menu and open those flows directly; any other argument gets a short usage message. `UI_LANGUAGE=ja` shows the menu
+and the forms in Japanese.
 
-- When every namespace the user may operate fits one modal (one checkbox block per 10 entries of
-  each namespace, at most 97 blocks), the modal lists all namespaces at once, labelled by namespace,
-  with running entries checked. **Plan** previews every namespace with changes and **Apply** applies
-  one request per namespace. Otherwise the modal starts with a namespace select.
 - Namespaces and workloads are sorted a to z.
 - `foo-api`, `foo-app` and `foo-worker` are merged into one `foo` checkbox when at least two of
   those suffixes exist. A partially running group is shown as 🟡 and checked.

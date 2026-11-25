@@ -2,7 +2,6 @@ package slackbot
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -16,7 +15,7 @@ import (
 )
 
 // The slash command opens a menu modal; each button replaces it with one flow, so the whole
-// interaction stays in the same view.
+// interaction stays in the same view. Every flow starts with a namespace select.
 const (
 	callbackMenuModal   = "menu_modal"
 	callbackStatusModal = "status_modal"
@@ -47,41 +46,59 @@ type statusMetadata struct {
 	Namespace string `json:"n,omitempty"`
 }
 
-// menuModal asks which flow to run: start/stop, schedule or status.
-func menuModal(cl config.Cluster, meta string) slack.ModalViewRequest {
-	buttons := []slack.BlockElement{
-		slack.NewButtonBlockElement(actionMenuStartStop, "", slack.NewTextBlockObject("plain_text", "▶️ Start / Stop", false, false)).WithStyle(slack.StylePrimary),
-		slack.NewButtonBlockElement(actionMenuSchedule, "", slack.NewTextBlockObject("plain_text", "📅 Schedule", false, false)),
-		slack.NewButtonBlockElement(actionMenuStatus, "", slack.NewTextBlockObject("plain_text", "📊 Status", false, false)),
+// menuItem is one row of the menu: a button with a short description under it.
+type menuItem struct {
+	actionID, label, description string
+	style                        slack.Style
+}
+
+// menuModal asks which flow to run. Slack has no button size, so each choice gets its own row
+// (description, then its button) to stack them vertically and give them room.
+func (u ui) menuModal(cl config.Cluster, meta string) slack.ModalViewRequest {
+	items := []menuItem{
+		{actionMenuStartStop, u.t("▶️  Start / Stop"), u.t("Pick a namespace, then the workloads to run now."), slack.StylePrimary},
+		{actionMenuSchedule, u.t("📅  Schedule"), u.t("Pick a namespace, then reserve workloads to start later."), slack.StyleDefault},
+		{actionMenuStatus, u.t("📊  Status"), u.t("Pick a namespace, then list its workloads."), slack.StyleDefault},
 	}
-	head := fmt.Sprintf("*%s / %s*\n*Start / Stop*: pick the workloads to run now.\n*Schedule*: start workloads later.\n*Status*: list the workloads of a namespace.",
-		strings.ToUpper(cl.Env), escapeMrkdwn(cl.Name))
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(slack.NewTextBlockObject("plain_text", truncateText(strings.ToUpper(cl.Env)+" / "+cl.Name, 150), false, false)),
+	}
+	for i, it := range items {
+		if i > 0 {
+			blocks = append(blocks, slack.NewDividerBlock())
+		}
+		btn := slack.NewButtonBlockElement(it.actionID, "", slack.NewTextBlockObject("plain_text", it.label, true, false))
+		if it.style != slack.StyleDefault {
+			btn = btn.WithStyle(it.style)
+		}
+		blocks = append(blocks,
+			slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", it.description, false, false), nil, nil),
+			slack.NewActionBlock("block_"+it.actionID, btn),
+		)
+	}
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
 		CallbackID:      callbackMenuModal,
 		Title:           slack.NewTextBlockObject("plain_text", modalTitle(cl), false, false),
-		Close:           slack.NewTextBlockObject("plain_text", "Cancel", false, false),
+		Close:           slack.NewTextBlockObject("plain_text", u.t("Cancel"), false, false),
 		PrivateMetadata: meta,
-		Blocks: slack.Blocks{BlockSet: []slack.Block{
-			slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", head, false, false), nil, nil),
-			slack.NewActionBlock("block_menu", buttons...),
-		}},
+		Blocks:          slack.Blocks{BlockSet: blocks},
 	}
 }
 
 // noticeModal replaces a flow with a message when it cannot continue.
-func noticeModal(cl config.Cluster, text string) slack.ModalViewRequest {
+func (u ui) noticeModal(cl config.Cluster, text string) slack.ModalViewRequest {
 	return slack.ModalViewRequest{
 		Type:   slack.VTModal,
 		Title:  slack.NewTextBlockObject("plain_text", modalTitle(cl), false, false),
-		Close:  slack.NewTextBlockObject("plain_text", "Close", false, false),
+		Close:  slack.NewTextBlockObject("plain_text", u.t("Close"), false, false),
 		Blocks: slack.Blocks{BlockSet: []slack.Block{slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", text, false, false), nil, nil)}},
 	}
 }
 
 // namespacePicker is a section with a namespace static_select that fires a block action on change,
 // so the modal needs no submit button before a namespace is chosen.
-func namespacePicker(actionID string, namespaces []string, selected string) *slack.SectionBlock {
+func (u ui) namespacePicker(actionID string, namespaces []string, selected string) *slack.SectionBlock {
 	sorted := slices.Sorted(slices.Values(namespaces))
 	if len(sorted) > slackSelectMaxOptions {
 		sorted = sorted[:slackSelectMaxOptions]
@@ -95,76 +112,65 @@ func namespacePicker(actionID string, namespaces []string, selected string) *sla
 			initial = opt
 		}
 	}
-	sel := slack.NewOptionsSelectBlockElement("static_select", slack.NewTextBlockObject("plain_text", "Select a namespace", false, false), actionID, options...)
+	sel := slack.NewOptionsSelectBlockElement("static_select", slack.NewTextBlockObject("plain_text", u.t("Select a namespace"), false, false), actionID, options...)
 	if initial != nil {
 		sel.InitialOption = initial
 	}
-	return slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", "*Namespace*", false, false), nil, slack.NewAccessory(sel), slack.SectionBlockOptionBlockID(blockPickNamespace))
+	return slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", u.t("*Namespace*"), false, false), nil, slack.NewAccessory(sel), slack.SectionBlockOptionBlockID(blockPickNamespace))
 }
 
 // noNamespaceText explains why a user sees no namespace; total is every namespace of the cluster.
-func noNamespaceText(total int) string {
+func (u ui) noNamespaceText(total int) string {
 	if total > 0 {
-		return "⚠️ You are not authorized to operate any workload in this cluster."
+		return u.t("⚠️ You are not authorized to operate any workload in this cluster.")
 	}
-	return "⚠️ No managed workloads are registered yet. Please wait for ScaledObject discovery."
+	return u.t("⚠️ No managed workloads are registered yet. Please wait for ScaledObject discovery.")
 }
 
-// startStopModal is the start/stop form: every namespace at once when it fits, otherwise the
-// namespace select first. ok is false with a notice when the user sees no namespace.
-func (b *Bot) startStopModal(sub authz.Subject, cl config.Cluster, channelID, userID string) (slack.ModalViewRequest, string) {
-	namespaces, total := b.svc.Namespaces(sub, cl.Env)
-	if len(namespaces) == 0 {
-		return slack.ModalViewRequest{}, noNamespaceText(total)
-	}
-	if modal, ok := b.multiModal(sub, cl, namespaces, channelID, userID); ok {
-		return modal, ""
-	}
-	meta, _ := json.Marshal(modalMetadata{ChannelID: channelID, UserID: userID, Cluster: cl.Env})
-	return slack.ModalViewRequest{
-		Type:            slack.VTModal,
-		CallbackID:      callbackWorkloadModal,
-		Title:           slack.NewTextBlockObject("plain_text", modalTitle(cl), false, false),
-		Submit:          slack.NewTextBlockObject("plain_text", "Plan", false, false),
-		Close:           slack.NewTextBlockObject("plain_text", "Cancel", false, false),
-		PrivateMetadata: string(meta),
-		Blocks:          slack.Blocks{BlockSet: []slack.Block{namespaceInputBlock(namespaces, "")}},
-	}, ""
-}
-
-// pickModal is the first step of schedule and status: a namespace select only.
-func pickModal(cl config.Cluster, callbackID, title, actionID string, namespaces []string, meta string) slack.ModalViewRequest {
+// pickModal is the first step of every flow: a namespace select only.
+func (u ui) pickModal(cl config.Cluster, callbackID, title, actionID string, namespaces []string, meta string) slack.ModalViewRequest {
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
 		CallbackID:      callbackID,
 		Title:           slack.NewTextBlockObject("plain_text", truncateText(title+cl.Env, slackModalTitleMaxLen), false, false),
-		Close:           slack.NewTextBlockObject("plain_text", "Close", false, false),
+		Close:           slack.NewTextBlockObject("plain_text", u.t("Close"), false, false),
 		PrivateMetadata: meta,
-		Blocks:          slack.Blocks{BlockSet: []slack.Block{namespacePicker(actionID, namespaces, "")}},
+		Blocks:          slack.Blocks{BlockSet: []slack.Block{u.namespacePicker(actionID, namespaces, "")}},
 	}
+}
+
+// startStopStart returns the namespace select of the start/stop flow, or a notice. Choosing a
+// namespace shows its workloads (handleNamespaceSelected).
+func (b *Bot) startStopStart(sub authz.Subject, cl config.Cluster, channelID, userID string) slack.ModalViewRequest {
+	namespaces, total := b.svc.Namespaces(sub, cl.Env)
+	if len(namespaces) == 0 {
+		return b.noticeModal(cl, b.noNamespaceText(total))
+	}
+	meta, _ := json.Marshal(modalMetadata{ChannelID: channelID, UserID: userID, Cluster: cl.Env})
+	return b.pickModal(cl, callbackWorkloadModal, "🚀 ", actionSelectNamespace, namespaces, string(meta))
 }
 
 // scheduleStart returns the namespace select of the schedule flow, or a notice.
 func (b *Bot) scheduleStart(sub authz.Subject, cl config.Cluster, channelID, userID string) slack.ModalViewRequest {
 	if b.reservations == nil {
-		return noticeModal(cl, "⚠️ Reservations are not available.")
+		return b.noticeModal(cl, b.t("⚠️ Reservations are not available."))
 	}
 	namespaces, total := b.svc.Namespaces(sub, cl.Env)
 	if len(namespaces) == 0 {
-		return noticeModal(cl, noNamespaceText(total))
+		return b.noticeModal(cl, b.noNamespaceText(total))
 	}
 	meta, _ := json.Marshal(scheduleMetadata{ChannelID: channelID, UserID: userID, Cluster: cl.Env})
-	return pickModal(cl, callbackScheduleModal, "📅 ", actionScheduleNamespace, namespaces, string(meta))
+	return b.pickModal(cl, callbackScheduleModal, "📅 ", actionScheduleNamespace, namespaces, string(meta))
 }
 
 // statusStart returns the namespace select of the status flow, or a notice.
 func (b *Bot) statusStart(sub authz.Subject, cl config.Cluster, channelID, userID string) slack.ModalViewRequest {
 	namespaces, total := b.svc.Namespaces(sub, cl.Env)
 	if len(namespaces) == 0 {
-		return noticeModal(cl, noNamespaceText(total))
+		return b.noticeModal(cl, b.noNamespaceText(total))
 	}
 	meta, _ := json.Marshal(statusMetadata{ChannelID: channelID, UserID: userID, Cluster: cl.Env})
-	return pickModal(cl, callbackStatusModal, "📊 ", actionStatusNamespace, namespaces, string(meta))
+	return b.pickModal(cl, callbackStatusModal, "📊 ", actionStatusNamespace, namespaces, string(meta))
 }
 
 // handleMenu replaces the menu with the chosen flow.
@@ -185,11 +191,7 @@ func (b *Bot) handleMenu(callback slack.InteractionCallback, actionID string) {
 	case actionMenuStartStop:
 		// Reflect the latest ScaledObject state before listing.
 		b.svc.Reconcile(cl.Env)
-		modal, notice := b.startStopModal(sub, cl, meta.ChannelID, meta.UserID)
-		view = modal
-		if notice != "" {
-			view = noticeModal(cl, notice)
-		}
+		view = b.startStopStart(sub, cl, meta.ChannelID, meta.UserID)
 	case actionMenuSchedule:
 		view = b.scheduleStart(sub, cl, meta.ChannelID, meta.UserID)
 	default:
@@ -221,7 +223,7 @@ func (b *Bot) handleScheduleNamespace(callback slack.InteractionCallback, namesp
 	listing := b.svc.List(sub, cl.Env, namespace, listLimits)
 	meta.Namespaces = []string{namespace}
 	raw, _ := json.Marshal(meta)
-	b.updateView(callback, scheduleModal(cl, namespaces, namespace, listing, string(raw)))
+	b.updateView(callback, b.scheduleModal(cl, namespaces, namespace, listing, string(raw)))
 }
 
 // handleStatusNamespace shows the status of the chosen namespace.
@@ -244,14 +246,14 @@ func (b *Bot) statusModal(sub authz.Subject, cl config.Cluster, meta statusMetad
 	namespaces, _ := b.svc.Namespaces(sub, cl.Env)
 	st := namespaceStatus(b.svc.Status(sub, cl.Env), meta.Namespace)
 	pending := namespaceReservations(b.visibleReservations(sub, cl.Env), meta.Namespace)
-	picker := namespacePicker(actionStatusNamespace, namespaces, meta.Namespace)
-	_, blocks := statusBlocks(cl, st, pending, notes, slackModalMaxBlocks-1)
+	picker := b.namespacePicker(actionStatusNamespace, namespaces, meta.Namespace)
+	_, blocks := b.statusBlocks(cl, st, pending, notes, slackModalMaxBlocks-1)
 	raw, _ := json.Marshal(meta)
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
 		CallbackID:      callbackStatusModal,
 		Title:           slack.NewTextBlockObject("plain_text", truncateText("📊 "+cl.Env, slackModalTitleMaxLen), false, false),
-		Close:           slack.NewTextBlockObject("plain_text", "Close", false, false),
+		Close:           slack.NewTextBlockObject("plain_text", b.t("Close"), false, false),
 		PrivateMetadata: string(raw),
 		Blocks:          slack.Blocks{BlockSet: append([]slack.Block{picker}, blocks...)},
 	}
@@ -294,6 +296,6 @@ func (b *Bot) refreshStatus(callback slack.InteractionCallback, cl config.Cluste
 		}
 		return
 	}
-	text, blocks := statusMessage(cl, b.svc.Status(sub, cl.Env), b.visibleReservations(sub, cl.Env), notes)
+	text, blocks := b.statusMessage(cl, b.svc.Status(sub, cl.Env), b.visibleReservations(sub, cl.Env), notes)
 	b.replaceOriginal(callback, text, blocks)
 }

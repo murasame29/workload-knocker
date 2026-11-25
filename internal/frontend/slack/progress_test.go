@@ -24,14 +24,14 @@ func TestProgressLines(t *testing.T) {
 		{Target: rollout.Target{Name: "c", Direction: rollout.Stop}, State: rollout.StateStopped},
 	}
 
-	got := strings.Join(progressLines(res, snap, 10*time.Minute), "\n")
+	got := strings.Join(enUI.progressLines(res, snap, 10*time.Minute), "\n")
 
 	for _, want := range []string{"✅ a started", "⚠ b not ready after 10m (0/1 ready, ImagePullBackOff)", "⏹ c stopped", "🟢 d → start"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lines missing %q:\n%s", want, got)
 		}
 	}
-	if plain := strings.Join(progressLines(res, nil, 0), "\n"); !strings.Contains(plain, "🟢 a → start") || !strings.Contains(plain, "🔴 c → stop") {
+	if plain := strings.Join(enUI.progressLines(res, nil, 0), "\n"); !strings.Contains(plain, "🟢 a → start") || !strings.Contains(plain, "🔴 c → stop") {
 		t.Errorf("without a snapshot the plain lines remain:\n%s", plain)
 	}
 }
