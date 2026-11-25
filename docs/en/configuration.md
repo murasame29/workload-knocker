@@ -476,7 +476,7 @@ A one-off reservation makes workloads **Ready at a requested time**. Create one 
 Discord or Slack, or [`POST /api/v1/reservations`](#apiv1reservations).
 
 - **Slack form**: **Schedule** in the menu (or `/<slashCommand> schedule`) asks for a namespace, then lists its
-  workloads as unchecked checkboxes with **Ready in (hours)** (how long from now until the workloads are Ready,
+  workloads as unchecked checkboxes with **Start in (hours)** (how long from now until the reserved time; starting begins a few minutes earlier,
   at least `0.25`) and **Run duration (hours)** (how long they run once Ready; empty uses the workload default).
   One reservation is created for the namespace.
 

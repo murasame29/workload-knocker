@@ -461,7 +461,7 @@ start には実行時間を付けられます。コントローラは workload �
 [`POST /api/v1/reservations`](#apiv1reservations) で作ります。
 
 - **Slack のフォーム**: メニューの **Schedule** (または `/<slashCommand> schedule`) で namespace を選ぶと、その workload を
-  未チェックのチェックボックスで並べ、**Ready in (hours)** (今から Ready になるまでの時間、最小 `0.25`) と
+  未チェックのチェックボックスで並べ、**Start in (hours)** (日本語表示は「起動までの時間」。今から予約時刻までの時間で、数分前に起動を始めます。最小 `0.25`) と
   **Run duration (hours)** (Ready になってから停止するまでの時間、空は workload の既定) を入力します。予約はその namespace に 1 件作成します。
 
 - **Discord のフォーム**: namespace ごとのチェックボックス (namespace 3 個、各 10 件まで。超える場合は API を使う)、
