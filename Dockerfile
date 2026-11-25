@@ -2,8 +2,11 @@ ARG GO_VERSION=1.27.4
 ARG DEBIAN_VERSION=trixie
 ARG GO_LICENSES_VERSION=v2.0.1
 
-# build
-FROM golang:${GO_VERSION}-${DEBIAN_VERSION} AS build
+# build: runs on the builder's own platform and cross-compiles for the target, so a
+# multi-arch build needs no QEMU (the binary is pure Go and the runtime stage runs nothing).
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-${DEBIAN_VERSION} AS build
+ARG TARGETOS
+ARG TARGETARCH
 ARG GO_LICENSES_VERSION
 ARG VERSION=dev
 ARG COMMIT=unknown
@@ -13,7 +16,7 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build \
     -trimpath \
     -buildvcs=false \
     -o /build/main \
