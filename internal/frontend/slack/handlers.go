@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,10 +88,12 @@ func truncateOptionText(s string) string {
 }
 
 // workloadCheckboxBlocks renders one input block per page of entries.
-// block_id / action_id are blockSelectWorkloads / actionSelectWorkloads plus a sequence number
-// (e.g. "block_workloads_0"); submit collects them by prefix. The option value is only the
-// representative workload name (option values are capped at 75 chars, so no full tuple).
-func (u ui) workloadCheckboxBlocks(namespace string, listing frontend.Listing) []slack.Block {
+// block_id is blockSelectWorkloads, the render ID and a sequence number (e.g.
+// "block_workloads_3f2a9c1e_0"); submit collects them by prefix. Slack keeps the state of an input
+// whose block_id survives views.update and ignores its initial_options, so a namespace chosen
+// again would show the checks of the previous one: a new render ID per update avoids that.
+// The option value is only the representative workload name (option values are capped at 75 chars).
+func (u ui) workloadCheckboxBlocks(namespace, render string, listing frontend.Listing) []slack.Block {
 	pages := listing.Pages()
 	blocks := make([]slack.Block, 0, len(pages))
 	total := len(listing.Entries)
@@ -133,7 +137,7 @@ func (u ui) workloadCheckboxBlocks(namespace string, listing frontend.Listing) [
 		}
 
 		block := slack.NewInputBlock(
-			fmt.Sprintf("%s_%d", blockSelectWorkloads, idx),
+			fmt.Sprintf("%s_%s_%d", blockSelectWorkloads, render, idx),
 			slack.NewTextBlockObject("plain_text", label, false, false),
 			hint,
 			checkboxes,
@@ -182,6 +186,9 @@ func durationErrors(starts []frontend.Schedule) map[string]string {
 	}
 	return nil
 }
+
+// newRenderID returns a short random ID that makes the block_ids of one render unique.
+func newRenderID() string { return strconv.FormatUint(rand.Uint64()&0xffffffff, 16) }
 
 // selectedWorkloadNames folds the selection of all split checkbox blocks into one set.
 // It scans by prefix, so submissions from the old single block ("block_workloads") also work.
@@ -423,7 +430,7 @@ func (b *Bot) handleNamespaceSelected(callback slack.InteractionCallback, namesp
 	// Slack checkboxes allow 10 options max, so split across multiple blocks.
 	blocks := make([]slack.Block, 0, 2+maxWorkloadCheckboxBlocks)
 	blocks = append(blocks, nsBlock)
-	blocks = append(blocks, b.workloadCheckboxBlocks(namespace, listing)...)
+	blocks = append(blocks, b.workloadCheckboxBlocks(namespace, newRenderID(), listing)...)
 	if len(listing.Entries) > 0 {
 		blocks = append(blocks, b.durationInputBlock())
 	}

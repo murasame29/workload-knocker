@@ -416,7 +416,7 @@ Start / Stop、Schedule、Status のボタンを 1 行に 1 つずつ、短い�
 制限と注意:
 
 - Discord は 1 メッセージ 25 ボタン・本文 2000 文字、Slack のモーダルは 100 block までです。超えたエントリも一覧には出ますが (本文が切れる場合は末尾に `… and N more`)、ボタンは付かず、その旨を表示します。その場合は `/<command> start` を使ってください。
-- 起動した人と起動時刻は start 適用時に記録し、`workload-state` ConfigMap (`startedBy`、`startedAt`) に保存します。controller が最初から起動中として検出した workload や、古いバージョンが書いた state では、起動した人と起動時刻は表示されません。起動した人は Discord ではユーザー ID (メンション表示)、Slack ではユーザー名、API では呼び出しの `user` です。
+- 起動した人と起動時刻は start 適用時に記録し、`workload-state` ConfigMap (`startedBy`、`startedAt`) に保存します。controller が最初から起動中として検出した workload や、古いバージョンが書いた state では、起動した人と起動時刻は表示されません。起動した人は Discord ではユーザー ID (メンション表示)、Slack ではユーザー名、API では呼び出しの `user` です。予約は作成者のチャットのユーザー ID を記録します。Slack はユーザー ID をメンションとして表示するため、一覧には名前が出ます。
 - [認可ポリシー](#認可)で見えるエントリだけを表示します。
 - Discord はボタンのペイロードを 24 時間メモリに保持します。それを過ぎた後や再起動後に古いボタンを押すと、失効した旨を返します。Slack のボタンはペイロードを持つため引き続き動作します。
 

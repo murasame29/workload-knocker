@@ -427,7 +427,7 @@ After a press the list (Discord message or Slack modal) is replaced in place wit
 Limits and caveats:
 
 - Discord allows 25 buttons per message and 2000 characters of text; a Slack modal allows 100 blocks. Entries beyond that still appear in the list (the text ends with a `… and N more` line when it is cut) but have no buttons; the message says so. Use `/<command> start` for those.
-- The starter and start time are recorded when a start is applied and stored in the `workload-state` ConfigMap (`startedBy`, `startedAt`). Workloads that were found already running when the controller first saw them, and state written by older versions, show no starter or start time. The starter is the Discord user ID (shown as a mention), the Slack user name, or the `user` of an API call.
+- The starter and start time are recorded when a start is applied and stored in the `workload-state` ConfigMap (`startedBy`, `startedAt`). Workloads that were found already running when the controller first saw them, and state written by older versions, show no starter or start time. The starter is the Discord user ID (shown as a mention), the Slack user name, or the `user` of an API call. A reservation records the creator's chat user ID; Slack shows a Slack user ID as a mention, so the list displays the user's name.
 - Only the entries that are visible after the [authorization policy](#authorization) are listed.
 - Discord keeps the button payloads in memory for 24 hours; after that, or after a restart, a stale button answers that it expired. Slack buttons carry their payload and keep working.
 

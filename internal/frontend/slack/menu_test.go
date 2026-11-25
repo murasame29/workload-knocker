@@ -143,6 +143,45 @@ func TestStartStopNamespace_ListsOnlyThatNamespace(t *testing.T) {
 	}
 }
 
+// Slack keeps the state of an input whose block_id survives views.update and then ignores its
+// initial_options, so every namespace choice must render new checkbox block_ids.
+func TestStartStopNamespace_ChoosingAgainRechecksRunningWorkloads(t *testing.T) {
+	t.Parallel()
+	b, views := menuBot(t, map[string][]*model.Workload{"alpha": nsWL("alpha", 1, 0), "beta": nsWL("beta", 1)})
+	cb := viewCallback(t, callbackWorkloadModal, modalMetadata{Cluster: "stg"})
+
+	seen := map[string]bool{}
+	for _, ns := range []string{"alpha", "beta", "alpha"} {
+		b.handleNamespaceSelected(cb, ns)
+		var checked []string
+		for _, blk := range views.last(t).Blocks.BlockSet {
+			in, ok := blk.(*slack.InputBlock)
+			if !ok || !strings.HasPrefix(in.BlockID, blockSelectWorkloads) {
+				continue
+			}
+			if seen[in.BlockID] {
+				t.Errorf("%s: block_id %q reused from an earlier render", ns, in.BlockID)
+			}
+			seen[in.BlockID] = true
+			for _, o := range in.Element.(*slack.CheckboxGroupsBlockElement).InitialOptions {
+				checked = append(checked, o.Value)
+			}
+		}
+		if want := ns + "-w00"; len(checked) != 1 || checked[0] != want {
+			t.Errorf("%s: checked = %v, want [%s]", ns, checked, want)
+		}
+	}
+
+	// Submit still collects the per-render block_ids.
+	values := map[string]map[string]slack.BlockAction{}
+	for id := range seen {
+		values[id] = map[string]slack.BlockAction{actionSelectWorkloads + "_0": {SelectedOptions: []slack.OptionBlockObject{{Value: id}}}}
+	}
+	if got := selectedWorkloadNames(values); len(got) != len(seen) {
+		t.Errorf("selected = %v, want %d entries", got, len(seen))
+	}
+}
+
 func TestMenu_Japanese(t *testing.T) {
 	t.Parallel()
 	b, views := menuBot(t, map[string][]*model.Workload{"alpha": nsWL("alpha", 0)})
