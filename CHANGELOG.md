@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/murasame29/workload-knocker/compare/v0.2.0...v0.2.1) (2026-11-25)
+
+
+### Features
+
+* add a Slack menu and let the nightly stop keep reservation runs ([#92](https://github.com/murasame29/workload-knocker/issues/92)) ([89e9b2e](https://github.com/murasame29/workload-knocker/commit/89e9b2eaf33e82d2ecabaeeb9f69ab41a8e705fb))
+
 ## [0.2.0](https://github.com/murasame29/workload-knocker/compare/v0.1.11...v0.2.0) (2026-11-12)
 
 
