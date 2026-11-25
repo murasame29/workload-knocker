@@ -3,7 +3,6 @@ package frontend
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"time"
 
@@ -112,32 +111,8 @@ func DecodeStatusRef(payload string) (StatusRef, error) {
 
 // Lines renders the outcome of an extend, one line per workload; format renders the new stop time.
 func (r ExtendResult) Lines(format func(time.Time) string) []string {
-	var lines []string
-	for _, x := range r.Extended {
-		if x.Err != nil {
-			lines = append(lines, fmt.Sprintf("⚠ %s: %v", x.Name, x.Err))
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("⏰ %s now stops at %s", x.Name, format(x.StopAt)))
-	}
-	for _, rej := range r.Rejected {
-		lines = append(lines, fmt.Sprintf("⛔ %s: %s", rej.Label, rej.Message()))
-	}
-	return lines
+	return Markup{}.ExtendLines(r, format)
 }
 
 // StopLines renders the outcome of a stop, one line per workload.
-func (r ApplyResult) StopLines() []string {
-	var lines []string
-	for _, a := range r.Applied {
-		if !a.Found {
-			lines = append(lines, fmt.Sprintf("⚠ %s: not found", a.Name))
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
-	}
-	for _, rej := range r.Rejected {
-		lines = append(lines, fmt.Sprintf("⛔ %s: %s", rej.Label, rej.Message()))
-	}
-	return lines
-}
+func (r ApplyResult) StopLines() []string { return Markup{}.StopLines(r) }

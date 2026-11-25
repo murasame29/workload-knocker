@@ -150,7 +150,7 @@ func TestRejectionAndApplyLines(t *testing.T) {
 			{Action: frontend.ActionStart, Label: "c", Reason: frontend.ReasonUnauthorized},
 		},
 	}
-	got := strings.Join(applyLines(res), "\n")
+	got := strings.Join(enUI.applyLines(res), "\n")
 	for _, want := range []string{"🟢 a → start", "⛔ b: stopping from chat is disabled", "nightly job", "⛔ c: you are not authorized to start this"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lines missing %q:\n%s", want, got)
@@ -161,13 +161,13 @@ func TestRejectionAndApplyLines(t *testing.T) {
 func TestModalNote(t *testing.T) {
 	t.Parallel()
 
-	if got := modalNote(frontend.Listing{Entries: make([]frontend.Entry, 1)}, true); got != "" {
+	if got := enUI.modalNote(frontend.Listing{Entries: make([]frontend.Entry, 1)}, true); got != "" {
 		t.Errorf("note = %q, want none", got)
 	}
-	if got := modalNote(frontend.Listing{}, true); !strings.Contains(got, "not authorized") {
+	if got := enUI.modalNote(frontend.Listing{}, true); !strings.Contains(got, "not authorized") {
 		t.Errorf("empty listing note = %q", got)
 	}
-	if got := modalNote(frontend.Listing{Entries: make([]frontend.Entry, 1)}, false); !strings.Contains(got, "nightly job") {
+	if got := enUI.modalNote(frontend.Listing{Entries: make([]frontend.Entry, 1)}, false); !strings.Contains(got, "nightly job") {
 		t.Errorf("scheduled-stop note = %q", got)
 	}
 }

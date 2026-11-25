@@ -73,17 +73,17 @@ func TestParseSchedule(t *testing.T) {
 	meta := scheduleMetadata{Namespaces: []string{"alpha", "beta"}}
 	now := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
 
-	in, errs := parseSchedule(meta, scheduleValues("1.5", "3", map[string][]string{"block_ns_1_0": {"beta-w00"}, "block_ns_9_0": {"x"}}), now)
+	in, errs := enUI.parseSchedule(meta, scheduleValues("1.5", "3", map[string][]string{"block_ns_1_0": {"beta-w00"}, "block_ns_9_0": {"x"}}), now)
 	if len(errs) != 0 || !in.at.Equal(now.Add(90*time.Minute)) || in.hours != 3*time.Hour || len(in.names) != 1 || !slices.Equal(in.names["beta"], []string{"beta-w00"}) {
 		t.Errorf("parsed = %+v %v", in, errs)
 	}
-	if _, errs := parseSchedule(meta, scheduleValues("", "x", map[string][]string{"block_ns_0_0": {"a"}}), now); errs[blockReserveIn] == "" || errs[blockReserveHours] == "" {
+	if _, errs := enUI.parseSchedule(meta, scheduleValues("", "x", map[string][]string{"block_ns_0_0": {"a"}}), now); errs[blockReserveIn] == "" || errs[blockReserveHours] == "" {
 		t.Errorf("errs = %v, want ready-in and hours errors", errs)
 	}
-	if _, errs := parseSchedule(meta, scheduleValues("0.1", "", map[string][]string{"block_ns_0_0": {"a"}}), now); !strings.Contains(errs[blockReserveIn], "at least") {
+	if _, errs := enUI.parseSchedule(meta, scheduleValues("0.1", "", map[string][]string{"block_ns_0_0": {"a"}}), now); !strings.Contains(errs[blockReserveIn], "at least") {
 		t.Errorf("errs = %v, want the minimum error", errs)
 	}
-	if _, errs := parseSchedule(meta, scheduleValues("2", "", nil), now); !strings.Contains(errs[blockReserveIn], "at least one workload") {
+	if _, errs := enUI.parseSchedule(meta, scheduleValues("2", "", nil), now); !strings.Contains(errs[blockReserveIn], "at least one workload") {
 		t.Errorf("errs = %v, want a missing selection error", errs)
 	}
 }
@@ -92,7 +92,7 @@ func TestScheduleModal_OneNamespaceUncheckedWithReadyInAndHours(t *testing.T) {
 	t.Parallel()
 	b := multiBot(t, map[string][]*model.Workload{"alpha": nsWL("alpha", 1)}, "")
 	listing := b.svc.List(multiSub, "stg", "alpha", listLimits)
-	m := scheduleModal(statusCluster, []string{"beta", "alpha"}, "alpha", listing, "{}")
+	m := enUI.scheduleModal(statusCluster, []string{"beta", "alpha"}, "alpha", listing, "{}")
 	raw, _ := json.Marshal(m)
 	s := string(raw)
 	for _, want := range []string{`"callback_id":"schedule_modal"`, `"action_id":"schedule_namespace"`, `"initial_option":{"text":{"type":"plain_text","text":"alpha"`, `"block_id":"block_ns_0_0"`, `"block_id":"block_reserve_in"`, `"block_id":"block_reserve_hours"`, `"submit"`} {
@@ -104,7 +104,7 @@ func TestScheduleModal_OneNamespaceUncheckedWithReadyInAndHours(t *testing.T) {
 		t.Errorf("reservation checkboxes must start unchecked and use hours: %s", s)
 	}
 
-	empty := scheduleModal(statusCluster, []string{"alpha"}, "alpha", frontend.Listing{}, "{}")
+	empty := enUI.scheduleModal(statusCluster, []string{"alpha"}, "alpha", frontend.Listing{}, "{}")
 	if empty.Submit != nil || !strings.Contains(blockTexts(empty.Blocks.BlockSet), "not authorized") {
 		t.Errorf("empty namespace modal = %+v", empty)
 	}
@@ -142,7 +142,7 @@ func TestStatusMessage_ListsReservationsWithCancel(t *testing.T) {
 	res := &fakeReservations{list: []reservation.Reservation{{ID: "r1", Namespace: "labs", Workloads: []string{"web"}, At: at, Creator: reservation.Creator{Platform: authz.PlatformSlack, User: "UTEST0001"}}}}
 	b.SetReservations(res)
 
-	_, blocks := statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), b.visibleReservations(slackUser, "stg"), nil)
+	_, blocks := enUI.statusMessage(statusCluster, b.svc.Status(slackUser, "stg"), b.visibleReservations(slackUser, "stg"), nil)
 	raw, _ := json.Marshal(blocks)
 	s := string(raw)
 	if !strings.Contains(s, "*Reservations*") || !strings.Contains(s, "by \\u003c@UTEST0001\\u003e") || !strings.Contains(s, `"action_id":"reservation_cancel"`) {
@@ -162,10 +162,10 @@ func TestStatusMessage_ListsReservationsWithCancel(t *testing.T) {
 func TestReservationBlocks_RespectsTheBlockBudget(t *testing.T) {
 	t.Parallel()
 	list := []reservation.Reservation{{ID: "r1", Namespace: "labs", Workloads: []string{"web"}}}
-	if got := reservationBlocks("stg", list, 1); got != nil {
+	if got := enUI.reservationBlocks("stg", list, 1); got != nil {
 		t.Errorf("blocks with no room = %d, want none", len(got))
 	}
-	if got := reservationBlocks("stg", list, 5); len(got) != 2 {
+	if got := enUI.reservationBlocks("stg", list, 5); len(got) != 2 {
 		t.Errorf("blocks = %d, want a section and an actions block", len(got))
 	}
 }

@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/slack-go/slack"
-
 	"github.com/murasame29/workload-knocker/internal/frontend"
 	"github.com/murasame29/workload-knocker/internal/workload/model"
 )
@@ -41,7 +39,7 @@ func TestGroupWorkloads_ReducesCheckboxBlocks(t *testing.T) {
 		in = append(in, wl(svc+"-api", 0), wl(svc+"-app", 0))
 	}
 
-	if got := len(workloadCheckboxBlocks("labs", listingOf(in))); got != 1 {
+	if got := len(enUI.workloadCheckboxBlocks("labs", listingOf(in))); got != 1 {
 		t.Errorf("merged: block count = %d, want 1", got)
 	}
 	// Without merging, 12 options would need 2 blocks (kept for contrast).
@@ -50,17 +48,17 @@ func TestGroupWorkloads_ReducesCheckboxBlocks(t *testing.T) {
 	}
 }
 
-// TestNamespaceInputBlock_SortedAToZ verifies the namespace dropdown is sorted a-z
+// TestNamespacePicker_SortedAToZ verifies the namespace dropdown is sorted a-z
 // and the selected namespace is the initial selection.
-func TestNamespaceInputBlock_SortedAToZ(t *testing.T) {
+func TestNamespacePicker_SortedAToZ(t *testing.T) {
 	t.Parallel()
 
 	in := []string{"labs", "inhouse-solutions", "gees", "acme"}
-	block := namespaceInputBlock(in, "labs")
+	block := enUI.namespacePicker(actionSelectNamespace, in, "labs")
 
-	sel, ok := block.Element.(*slack.SelectBlockElement)
+	sel, ok := block.Accessory.SelectElement, block.Accessory != nil && block.Accessory.SelectElement != nil
 	if !ok {
-		t.Fatalf("block.Element: got %T, want *slack.SelectBlockElement", block.Element)
+		t.Fatalf("block.Accessory: got %+v, want a select element", block.Accessory)
 	}
 
 	var got []string

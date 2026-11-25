@@ -62,18 +62,18 @@ func (b *Bot) handleSchedule(cmd slack.SlashCommand, cl config.Cluster) {
 
 // scheduleModal renders the reservation form of one namespace: the namespace select, the
 // unchecked workloads, the hours until they are Ready and the run duration.
-func scheduleModal(cl config.Cluster, namespaces []string, namespace string, listing frontend.Listing, meta string) slack.ModalViewRequest {
-	blocks := []slack.Block{namespacePicker(actionScheduleNamespace, namespaces, namespace)}
+func (u ui) scheduleModal(cl config.Cluster, namespaces []string, namespace string, listing frontend.Listing, meta string) slack.ModalViewRequest {
+	blocks := []slack.Block{u.namespacePicker(actionScheduleNamespace, namespaces, namespace)}
 	if len(listing.Entries) == 0 {
-		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", "ℹ️ You are not authorized to start any workload in this namespace.", false, false), nil, nil))
+		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn", u.t("ℹ️ You are not authorized to start any workload in this namespace."), false, false), nil, nil))
 		return slack.ModalViewRequest{
 			Type: slack.VTModal, CallbackID: callbackScheduleModal, PrivateMetadata: meta,
 			Title:  slack.NewTextBlockObject("plain_text", truncateText("📅 "+cl.Env, slackModalTitleMaxLen), false, false),
-			Close:  slack.NewTextBlockObject("plain_text", "Close", false, false),
+			Close:  slack.NewTextBlockObject("plain_text", u.t("Close"), false, false),
 			Blocks: slack.Blocks{BlockSet: blocks},
 		}
 	}
-	checks := multiNamespaceBlocks([]nsListing{{Namespace: namespace, Listing: listing}})
+	checks := u.multiNamespaceBlocks([]nsListing{{Namespace: namespace, Listing: listing}})
 	for _, blk := range checks {
 		if in, ok := blk.(*slack.InputBlock); ok {
 			if cb, ok := in.Element.(*slack.CheckboxGroupsBlockElement); ok {
@@ -82,25 +82,25 @@ func scheduleModal(cl config.Cluster, namespaces []string, namespace string, lis
 			in.Hint = nil
 		}
 	}
-	readyIn := slack.NewInputBlock(blockReserveIn, slack.NewTextBlockObject("plain_text", "Ready in (hours)", false, false),
-		slack.NewTextBlockObject("plain_text", "Hours from now until the workloads are ready; they start a few minutes earlier. Minimum 0.25.", false, false),
+	readyIn := slack.NewInputBlock(blockReserveIn, slack.NewTextBlockObject("plain_text", u.t("Ready in (hours)"), false, false),
+		slack.NewTextBlockObject("plain_text", u.t("Hours from now until the workloads are ready; they start a few minutes earlier. Minimum 0.25."), false, false),
 		slack.NewNumberInputBlockElement(slack.NewTextBlockObject("plain_text", "1", false, false), actionReserveIn, true).WithMinValue("0.25"))
-	hours := slack.NewInputBlock(blockReserveHours, slack.NewTextBlockObject("plain_text", "Run duration (hours)", false, false),
-		slack.NewTextBlockObject("plain_text", "Hours they run once ready, then they stop. Empty = workload default. Minimum 0.25.", false, false),
+	hours := slack.NewInputBlock(blockReserveHours, slack.NewTextBlockObject("plain_text", u.t("Run duration (hours)"), false, false),
+		slack.NewTextBlockObject("plain_text", u.t("Hours they run once ready, then they stop. Empty = workload default. Minimum 0.25."), false, false),
 		slack.NewNumberInputBlockElement(slack.NewTextBlockObject("plain_text", "3", false, false), actionReserveHours, true).WithMinValue("0.25"))
 	hours.Optional = true
 	blocks = append(blocks, checks...)
 	blocks = append(blocks, readyIn, hours)
 	if listing.Truncated > 0 {
 		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject("mrkdwn",
-			fmt.Sprintf(":warning: %d entries do not fit this form. Use POST /api/v1/reservations for those.", listing.Truncated), false, false), nil, nil))
+			u.t(":warning: %d entries do not fit this form. Use POST /api/v1/reservations for those.", listing.Truncated), false, false), nil, nil))
 	}
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
 		CallbackID:      callbackScheduleModal,
 		Title:           slack.NewTextBlockObject("plain_text", truncateText("📅 "+cl.Env, slackModalTitleMaxLen), false, false),
-		Submit:          slack.NewTextBlockObject("plain_text", "Reserve", false, false),
-		Close:           slack.NewTextBlockObject("plain_text", "Cancel", false, false),
+		Submit:          slack.NewTextBlockObject("plain_text", u.t("Reserve"), false, false),
+		Close:           slack.NewTextBlockObject("plain_text", u.t("Cancel"), false, false),
 		PrivateMetadata: meta,
 		Blocks:          slack.Blocks{BlockSet: blocks},
 	}
@@ -115,14 +115,14 @@ type scheduleInput struct {
 
 // parseSchedule reads the form; the ready time is now plus the entered hours. errs maps an
 // input block to its message (response_action errors).
-func parseSchedule(meta scheduleMetadata, values map[string]map[string]slack.BlockAction, now time.Time) (scheduleInput, map[string]string) {
+func (u ui) parseSchedule(meta scheduleMetadata, values map[string]map[string]slack.BlockAction, now time.Time) (scheduleInput, map[string]string) {
 	in := scheduleInput{names: map[string][]string{}}
 	errs := map[string]string{}
 	switch readyIn, err := runlimit.ParseHours(values[blockReserveIn][actionReserveIn].Value); {
 	case err != nil:
 		errs[blockReserveIn] = err.Error()
 	case readyIn == 0:
-		errs[blockReserveIn] = "Enter the hours until the workloads are ready."
+		errs[blockReserveIn] = u.t("Enter the hours until the workloads are ready.")
 	default:
 		in.at = now.Add(readyIn).UTC()
 	}
@@ -140,7 +140,7 @@ func parseSchedule(meta scheduleMetadata, values map[string]map[string]slack.Blo
 		}
 	}
 	if len(errs) == 0 && len(in.names) == 0 {
-		errs[blockReserveIn] = "Check at least one workload."
+		errs[blockReserveIn] = u.t("Check at least one workload.")
 	}
 	return in, errs
 }
@@ -153,7 +153,7 @@ func (b *Bot) handleScheduleSubmit(callback slack.InteractionCallback, req *sock
 		b.ack(*req)
 		return
 	}
-	in, errs := parseSchedule(meta, callback.View.State.Values, b.svc.Now())
+	in, errs := b.parseSchedule(meta, callback.View.State.Values, b.svc.Now())
 	if len(errs) > 0 {
 		b.ack(*req, map[string]any{"response_action": "errors", "errors": errs})
 		return
@@ -161,12 +161,12 @@ func (b *Bot) handleScheduleSubmit(callback slack.InteractionCallback, req *sock
 	cl, ok := b.registry.ByEnv(meta.Cluster)
 	if !ok {
 		b.ack(*req)
-		b.ephemeral(meta.ChannelID, meta.UserID, "⚠️ The target Cluster is no longer in the Registry. Please run the command again.")
+		b.ephemeral(meta.ChannelID, meta.UserID, b.t("⚠️ The target Cluster is no longer in the Registry. Please run the command again."))
 		return
 	}
 	b.ack(*req)
 	lines := b.createReservations(b.subject(callback.User.ID), cl, meta.Namespaces, in)
-	header := fmt.Sprintf("*%s / %s* reservation", strings.ToUpper(cl.Env), cl.Name)
+	header := b.t("*%s / %s* reservation", strings.ToUpper(cl.Env), cl.Name)
 	if _, err := b.client.PostEphemeral(meta.ChannelID, meta.UserID, slack.MsgOptionBlocks(mrkdwnSections(header, lines)...)); err != nil {
 		slog.Error("failed to post the reservation result", slog.String("error.message", err.Error()))
 	}
@@ -193,10 +193,10 @@ func (b *Bot) createReservations(sub authz.Subject, cl config.Cluster, order []s
 		r, err := b.reservations.Create(ctx, reservation.CreateRequest{Env: cl.Env, Namespace: ns, Workloads: names, At: in.at, Duration: in.hours, Subject: sub, Source: audit.SourceSlack})
 		cancel()
 		if err != nil {
-			lines = append(lines, fmt.Sprintf("⛔ %s: %s", escapeMrkdwn(ns), escapeMrkdwn(frontend.ReservationError(err))))
+			lines = append(lines, fmt.Sprintf("⛔ %s: %s", escapeMrkdwn(ns), escapeMrkdwn(b.markup.ReservationError(err))))
 			continue
 		}
-		lines = append(lines, markup.ReservedLine(r, b.reservations.Warmup(cl.Env, r.Namespace, r.Workloads)))
+		lines = append(lines, b.markup.ReservedLine(r, b.reservations.Warmup(cl.Env, r.Namespace, r.Workloads)))
 	}
 	return lines
 }
@@ -219,19 +219,19 @@ func (b *Bot) visibleReservations(sub authz.Subject, env string) []reservation.R
 
 // reservationBlocks renders the pending reservations of status with a Cancel button each; free is
 // the number of blocks left in the message.
-func reservationBlocks(env string, list []reservation.Reservation, free int) []slack.Block {
+func (u ui) reservationBlocks(env string, list []reservation.Reservation, free int) []slack.Block {
 	if len(list) == 0 || free < 2 {
 		return nil
 	}
 	lines := make([]string, 0, len(list))
 	var buttons []slack.BlockElement
 	for _, r := range list {
-		lines = append(lines, markup.PendingLine(r))
+		lines = append(lines, u.markup.PendingLine(r))
 		value, _ := json.Marshal(reservationRef{Env: env, ID: r.ID})
-		label := truncateText("Cancel: "+r.Namespace+" "+r.At.UTC().Format("01-02 15:04")+" UTC", slackButtonTextMaxLen)
+		label := truncateText(u.t("Cancel: %s %s UTC", r.Namespace, r.At.UTC().Format("01-02 15:04")), slackButtonTextMaxLen)
 		buttons = append(buttons, slack.NewButtonBlockElement(actionReservationStop, string(value), slack.NewTextBlockObject("plain_text", label, false, false)).WithStyle(slack.StyleDanger))
 	}
-	blocks := mrkdwnSections("*Reservations*", lines)
+	blocks := mrkdwnSections(u.t("*Reservations*"), lines)
 	for start := 0; start < len(buttons) && len(blocks) < free; start += buttonsPerActionBlock {
 		blocks = append(blocks, slack.NewActionBlock("", buttons[start:min(start+buttonsPerActionBlock, len(buttons))]...))
 	}
@@ -250,16 +250,16 @@ func (b *Bot) handleReservationCancel(callback slack.InteractionCallback, value 
 	}
 	cl, ok := b.registry.ByEnv(ref.Env)
 	if !ok {
-		b.replaceOriginal(callback, "⚠️ The target Cluster is no longer in the Registry. Please run the command again.", nil)
+		b.replaceOriginal(callback, b.t("⚠️ The target Cluster is no longer in the Registry. Please run the command again."), nil)
 		return
 	}
 	sub := b.subject(callback.User.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), reservationCallTimeout)
 	r, err := b.reservations.Cancel(ctx, ref.Env, ref.ID, sub, audit.SourceSlack)
 	cancel()
-	note := markup.CancelledLine(r)
+	note := b.markup.CancelledLine(r)
 	if err != nil {
-		note = "⛔ " + escapeMrkdwn(frontend.ReservationError(err))
+		note = "⛔ " + escapeMrkdwn(b.markup.ReservationError(err))
 	}
 	b.refreshStatus(callback, cl, sub, []string{note})
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/murasame29/workload-knocker/internal/config"
+	"github.com/murasame29/workload-knocker/internal/frontend/i18n"
 	"github.com/murasame29/workload-knocker/internal/frontend/notify"
 	"github.com/murasame29/workload-knocker/internal/observability/audit"
 	"github.com/murasame29/workload-knocker/internal/observability/metrics"
@@ -95,14 +96,17 @@ type Rejection struct {
 }
 
 // Message is the user-facing explanation, safe to show in a chat.
-func (r Rejection) Message() string {
+func (r Rejection) Message() string { return r.MessageIn(i18n.En) }
+
+// MessageIn is Message in language l; Detail (a duration or actuator error) stays as reported.
+func (r Rejection) MessageIn(l i18n.Lang) string {
 	switch r.Reason {
 	case ReasonChatStopDisabled:
-		return "stopping from chat is disabled (OPERATION_MODE=scheduled-stop); workloads are stopped by the nightly job"
+		return l.T("stopping from chat is disabled (OPERATION_MODE=scheduled-stop); workloads are stopped by the nightly job")
 	case ReasonInvalidDuration, ReasonRefused:
 		return r.Detail
 	}
-	return "you are not authorized to " + string(r.Action) + " this"
+	return l.T("you are not authorized to %s this", l.T(string(r.Action)))
 }
 
 // Plan is the diff between the desired and current state of one namespace.

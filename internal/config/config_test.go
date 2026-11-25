@@ -150,6 +150,22 @@ func TestLoadEnv_OperationMode(t *testing.T) {
 	}
 }
 
+func TestLoadEnv_UILanguage(t *testing.T) {
+	t.Setenv("SLACK_APP_TOKEN", "x")
+	t.Setenv("SLACK_BOT_TOKEN", "x")
+	if e, err := LoadEnv(); err != nil || e.UILanguage != "en" {
+		t.Fatalf("default = %v, %v; want en", e, err)
+	}
+	t.Setenv("UI_LANGUAGE", "fr")
+	if _, err := LoadEnv(); err == nil || !strings.Contains(err.Error(), "en, ja") {
+		t.Fatalf("expected the supported languages in the error, got %v", err)
+	}
+	t.Setenv("UI_LANGUAGE", "ja")
+	if e, err := LoadEnv(); err != nil || e.UILanguage != "ja" {
+		t.Fatalf("got %v, %v; want ja", e, err)
+	}
+}
+
 func TestLoadEnv_ReconcileInterval(t *testing.T) {
 	e, err := LoadEnv()
 	if err != nil || e.ReconcileInterval != time.Minute {

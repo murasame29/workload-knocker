@@ -11,6 +11,7 @@ import (
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
 
+	"github.com/murasame29/workload-knocker/internal/frontend/i18n"
 	"github.com/murasame29/workload-knocker/internal/policy/mode"
 	"github.com/murasame29/workload-knocker/internal/policy/runlimit"
 )
@@ -71,6 +72,9 @@ type Env struct {
 
 	// OperationMode is full | scheduled-stop | off; see internal/policy/mode.
 	OperationMode mode.Mode `env:"OPERATION_MODE" envDefault:"full"`
+
+	// UILanguage is the language of the chat UI: en | ja (Slack; Discord stays English).
+	UILanguage i18n.Lang `env:"UI_LANGUAGE" envDefault:"en"`
 
 	// APIToken is the bearer token for /api/v1/*; empty disables the API (fail closed).
 	APIToken string `env:"API_TOKEN"`
