@@ -48,36 +48,33 @@ func (b *Bot) foreignStarters(sub authz.Subject, userID string, ref frontend.Sta
 }
 
 // stopConfirmView asks whether to stop a workload someone else started.
-func stopConfirmView(cl config.Cluster, token, label string, starters []string) view {
+func (u ui) stopConfirmView(cl config.Cluster, token, label string, starters []string) view {
 	shown := make([]string, 0, len(starters))
 	for _, s := range starters {
 		shown = append(shown, displayStarter(s))
 	}
-	content := header(cl) + "\n" +
-		"Stop: **" + label + "**  Started by: " + strings.Join(shown, ", ") + "\n" +
-		"You did not start this workload.\n" +
-		"Do you want to stop it?"
+	content := header(cl) + "\n" + u.t("Stop: **%s**  Started by: %s\nYou did not start this workload.\nDo you want to stop it?", label, strings.Join(shown, ", "))
 	return view{
 		Content: truncateRunes(content, contentMaxLen),
 		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-			button("Cancel", discordgo.SecondaryButton, customID{kindStatusBack, token, 0}, false),
-			button("Stop", discordgo.DangerButton, customID{kindStatusStopConfirmed, token, 0}, false),
+			button(u.t("Cancel"), discordgo.SecondaryButton, customID{kindStatusBack, token, 0}, false),
+			button(u.t("Stop"), discordgo.DangerButton, customID{kindStatusStopConfirmed, token, 0}, false),
 		}}},
 	}
 }
 
 // foreignStopLines warns, in the change preview, about the stops of workloads someone else started.
-func foreignStopLines(changes []frontend.Change, entries []frontend.Entry, userID string) []string {
+func (u ui) foreignStopLines(changes []frontend.Change, entries []frontend.Entry, userID string) []string {
 	var lines []string
 	for _, fs := range frontend.ForeignStops(changes, entries, func(s string) bool { return startedBy(userID, s) }) {
 		shown := make([]string, 0, len(fs.Starters))
 		for _, s := range fs.Starters {
 			shown = append(shown, displayStarter(s))
 		}
-		lines = append(lines, "⚠ Stop: **"+fs.Label+"**  Started by: "+strings.Join(shown, ", "))
+		lines = append(lines, u.t("⚠ Stop: **%s**  Started by: %s", fs.Label, strings.Join(shown, ", ")))
 	}
 	if len(lines) == 0 {
 		return nil
 	}
-	return append(lines, "You did not start the workloads above. Confirm stops them anyway.")
+	return append(lines, u.t("You did not start the workloads above. Confirm stops them anyway."))
 }

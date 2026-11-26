@@ -30,7 +30,7 @@
 | `EXTERNAL_SCALER_PORT` | `9090` | KEDA external scaler の gRPC ポート。`actuator: keda-external` の cluster がある間だけ待ち受ける。Chart: `externalScaler.port` |
 | `EXTERNAL_SCALER_TLS_CERT` / `EXTERNAL_SCALER_TLS_KEY` | 空 | このポートで TLS を有効にする証明書と鍵のパス (両方指定するか、どちらも指定しない。ハンドシェイクごとに再読込)。Chart: `externalScaler.tls.secretName` |
 | `EXTERNAL_SCALER_ADDRESS_MATCH` | `workload-knocker` | trigger の `scalerAddress` にこの文字列を含むものを担当する。Chart は Service 名を設定する |
-| `UI_LANGUAGE` | `en` | Slack の UI の言語。`en` か `ja` で、それ以外は起動時にエラー。Slack のモーダルと返信 (変更内容・結果・状態の行を含む) に適用します。Discord、通知チャンネル、予約サービスが返すエラーの詳細は英語のままです。chart: `settings.uiLanguage` |
+| `UI_LANGUAGE` | `en` | Slack と Discord の UI の言語。`en` か `ja` で、それ以外は起動時にエラー。モーダル、メッセージ、ボタン、返信 (変更内容・結果・状態の行を含む) と Discord の slash command の説明に適用します。通知チャンネル、延長ボタンの返信、予約サービスが返すエラーの詳細は英語のままです。chart: `settings.uiLanguage` |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`。ログは `timestamp` / `message` キーの JSON です ([監査ログ](audit-log.md)) |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。

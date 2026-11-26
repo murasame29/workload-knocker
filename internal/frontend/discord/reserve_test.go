@@ -127,7 +127,7 @@ func TestParseAt(t *testing.T) {
 		{in: "tonight", bad: true},
 	}
 	for _, tc := range cases {
-		got, err := parseAt(tc.in, reserveNow, tokyo)
+		got, err := enUI.parseAt(tc.in, reserveNow, tokyo)
 		if tc.bad {
 			if err == nil {
 				t.Errorf("%q: got %v, want an error", tc.in, got)

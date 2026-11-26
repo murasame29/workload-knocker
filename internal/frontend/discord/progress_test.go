@@ -125,7 +125,7 @@ func TestProgressText_UnknownWorkloadStaysNotFound(t *testing.T) {
 	t.Parallel()
 
 	res := frontend.ApplyResult{Applied: []frontend.Applied{{Action: frontend.ActionStart, Name: "gone", Found: false}}}
-	got := progressText("u1", config.Cluster{Env: "stg", Name: "c"}, []applied{{namespace: "labs", res: res}}, nil, 0)
+	got := enUI.progressText("u1", config.Cluster{Env: "stg", Name: "c"}, []applied{{namespace: "labs", res: res}}, nil, 0)
 	if !strings.Contains(got, "⚠ gone → start (not found)") {
 		t.Errorf("got %q", got)
 	}

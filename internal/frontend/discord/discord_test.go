@@ -100,7 +100,7 @@ func TestNamespaceView_Pagination(t *testing.T) {
 	for i := range 30 {
 		ns = append(ns, fmt.Sprintf("ns-%02d", i))
 	}
-	v := namespaceView("tok", testCluster(), ns, 1, 0)
+	v := enUI.namespaceView("tok", testCluster(), ns, 1, 0)
 	r := rows(v)
 	menu := r[0].Components[0].(discordgo.SelectMenu)
 	if len(menu.Options) != 5 || menu.Options[0].Value != "ns-25" || menu.MaxValues != 1 {
@@ -115,7 +115,7 @@ func TestNamespaceView_Pagination(t *testing.T) {
 		t.Errorf("content %q lacks page info", v.Content)
 	}
 
-	one := rows(namespaceView("tok", testCluster(), ns[:3], 0, 0))
+	one := rows(enUI.namespaceView("tok", testCluster(), ns[:3], 0, 0))
 	if len(one[1].Components) != 1 {
 		t.Errorf("single page: want only Cancel, got %d buttons", len(one[1].Components))
 	}
@@ -136,7 +136,7 @@ func TestWorkloadView_OptionsLimitsAndDefaults(t *testing.T) {
 	entries := frontend.GroupEntries(ws)
 	selected := map[string]bool{"svc-01": true}
 
-	r := rows(workloadView("tok", testCluster(), "labs", entries, selected, 0, true))
+	r := rows(enUI.workloadView("tok", testCluster(), "labs", entries, selected, 0, true))
 	menu := r[0].Components[0].(discordgo.SelectMenu)
 	if len(menu.Options) != 25 || menu.MaxValues != 25 || *menu.MinValues != 0 {
 		t.Fatalf("options=%d max=%d min=%d", len(menu.Options), menu.MaxValues, *menu.MinValues)
@@ -150,7 +150,7 @@ func TestWorkloadView_OptionsLimitsAndDefaults(t *testing.T) {
 		}
 	}
 
-	last := rows(workloadView("tok", testCluster(), "labs", entries, selected, 1, true))[0].Components[0].(discordgo.SelectMenu)
+	last := rows(enUI.workloadView("tok", testCluster(), "labs", entries, selected, 1, true))[0].Components[0].(discordgo.SelectMenu)
 	if len(last.Options) != 16 {
 		t.Fatalf("page 1 options = %d, want 16", len(last.Options))
 	}
@@ -163,7 +163,7 @@ func TestWorkloadView_OptionsLimitsAndDefaults(t *testing.T) {
 		t.Errorf("buttons = %+v, want Previous, Next, Apply, Other namespace, Cancel", r[1].Components)
 	}
 
-	empty := workloadView("tok", testCluster(), "labs", nil, nil, 0, true)
+	empty := enUI.workloadView("tok", testCluster(), "labs", nil, nil, 0, true)
 	if got := len(rows(empty)[0].Components); got != 2 || !strings.Contains(empty.Content, "No workloads") {
 		t.Errorf("empty view: %d components, content %q", got, empty.Content)
 	}
@@ -176,7 +176,7 @@ func TestPreviewView_TextAndTruncation(t *testing.T) {
 		{Action: frontend.ActionStart, Label: "checkout (app, worker)"},
 		{Action: frontend.ActionStop, Label: "batch"},
 	}
-	v := previewView("tok", testCluster(), []section{{namespace: "labs", changes: changes, rejected: nil, starts: nil}})
+	v := enUI.previewView("tok", testCluster(), []section{{namespace: "labs", changes: changes, rejected: nil, starts: nil}})
 	for _, want := range []string{"**STG / example-staging**", "labs change preview:", "🟢 checkout (app, worker): stopped → **start**", "🔴 batch: running → **stop**"} {
 		if !strings.Contains(v.Content, want) {
 			t.Errorf("preview lacks %q:\n%s", want, v.Content)
@@ -191,7 +191,7 @@ func TestPreviewView_TextAndTruncation(t *testing.T) {
 	for i := range 200 {
 		many = append(many, frontend.Change{Action: frontend.ActionStart, Label: fmt.Sprintf("workload-with-a-long-name-%03d", i)})
 	}
-	big := previewView("tok", testCluster(), []section{{namespace: "labs", changes: many, rejected: nil, starts: nil}}).Content
+	big := enUI.previewView("tok", testCluster(), []section{{namespace: "labs", changes: many, rejected: nil, starts: nil}}).Content
 	if len(big) > contentMaxLen || !strings.Contains(big, "more") {
 		t.Errorf("long preview len=%d, want <= %d with a remainder note", len(big), contentMaxLen)
 	}

@@ -61,10 +61,11 @@ func (b *Bot) deferUpdate(i *discordgo.Interaction) bool {
 	return b.respond(i, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseDeferredMessageUpdate})
 }
 
+// replyEphemeral answers with msg, translated when it is a message key (the msg constants).
 func (b *Bot) replyEphemeral(i *discordgo.Interaction, msg string) {
 	b.respond(i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{Content: msg, Flags: discordgo.MessageFlagsEphemeral, AllowedMentions: noMentions()},
+		Data: &discordgo.InteractionResponseData{Content: b.t(msg), Flags: discordgo.MessageFlagsEphemeral, AllowedMentions: noMentions()},
 	})
 }
 
@@ -98,7 +99,7 @@ func (b *Bot) handleCommand(i *discordgo.Interaction) {
 	cl, ok := b.registry.ByDiscordCommand(data.Name)
 	if !ok {
 		slog.Warn("unknown discord command", slog.String("command", data.Name))
-		b.replyEphemeral(i, "⚠ This command is not registered in the Cluster Registry")
+		b.replyEphemeral(i, b.t("⚠ This command is not registered in the Cluster Registry"))
 		return
 	}
 	userID, userName := interactionUser(i)
@@ -135,19 +136,19 @@ func (b *Bot) handleCommand(i *discordgo.Interaction) {
 	namespaces, total := b.svc.Namespaces(subject(i), cl.Env)
 	if len(namespaces) == 0 {
 		if total > 0 {
-			b.edit(i, text(msgNotAuthorized))
+			b.edit(i, text(b.t(msgNotAuthorized)))
 		} else {
-			b.edit(i, text("⚠ No managed workloads are registered yet. Please wait for ScaledObject discovery."))
+			b.edit(i, text(b.t("⚠ No managed workloads are registered yet. Please wait for ScaledObject discovery.")))
 		}
 		return
 	}
 	token, err := b.flows.create(&flow{userID: userID, env: cl.Env, cur: -1})
 	if err != nil {
 		slog.Error("failed to create discord flow", slog.String("error.message", err.Error()))
-		b.edit(i, text("⚠ Internal error. Please try again."))
+		b.edit(i, text(b.t("⚠ Internal error. Please try again.")))
 		return
 	}
-	b.edit(i, namespaceView(token, cl, namespaces, 0, 0))
+	b.edit(i, b.namespaceView(token, cl, namespaces, 0, 0))
 }
 
 // handleComponent handles select menus and buttons of an open flow.
@@ -210,7 +211,7 @@ func (b *Bot) flowResponse(i *discordgo.Interaction, token, userID string, updat
 		cl, found := b.registry.ByEnv(f.env)
 		if !found {
 			f.expires = time.Time{}
-			v := text(msgClusterGone)
+			v := text(b.t(msgClusterGone))
 			resp = &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseUpdateMessage,
 				Data: &discordgo.InteractionResponseData{Content: v.Content, Components: v.Components, AllowedMentions: noMentions()},
@@ -223,7 +224,7 @@ func (b *Bot) flowResponse(i *discordgo.Interaction, token, userID string, updat
 	case denied:
 		b.replyEphemeral(i, msgForeign)
 	case !ok && updateOnExpire:
-		b.update(i, text(msgExpired))
+		b.update(i, text(b.t(msgExpired)))
 	case !ok:
 		b.replyEphemeral(i, msgExpired)
 	default:
@@ -268,7 +269,7 @@ func (b *Bot) step(id customID, values []string, sub authz.Subject, f *flow, cl 
 
 	default: // kindCancel
 		f.expires = time.Time{}
-		return text("Cancelled.")
+		return text(b.t("Cancelled."))
 	}
 }
 
@@ -292,17 +293,17 @@ func (b *Bot) selectNamespace(token string, sub authz.Subject, f *flow, cl confi
 // namespaces renders the namespace menu, or the not-authorized notice when the policy leaves none.
 func (b *Bot) namespaces(token string, cl config.Cluster, namespaces []string, f *flow) view {
 	if len(namespaces) == 0 {
-		return text(msgNotAuthorized)
+		return text(b.t(msgNotAuthorized))
 	}
-	return namespaceView(token, cl, namespaces, f.nsPage, len(f.parts))
+	return b.namespaceView(token, cl, namespaces, f.nsPage, len(f.parts))
 }
 
 func (b *Bot) workloads(token string, cl config.Cluster, f *flow) view {
 	p := f.current()
 	if p == nil {
-		return text(msgUnrecognized)
+		return text(b.t(msgUnrecognized))
 	}
-	return workloadView(token, cl, p.namespace, p.entries, p.selected, p.page, b.svc.ChatStopAllowed())
+	return b.workloadView(token, cl, p.namespace, p.entries, p.selected, p.page, b.svc.ChatStopAllowed())
 }
 
 // applyPageSelection folds the values submitted by the visible page's menu into p.selected.
@@ -354,9 +355,9 @@ func (b *Bot) previewPlan(token string, sub authz.Subject, f *flow, cl config.Cl
 	var lines []string
 	for _, p := range f.parts {
 		names = append(names, p.namespace)
-		lines = append(lines, frontend.RejectionLines(p.rejected)...)
+		lines = append(lines, b.markup.RejectionLines(p.rejected)...)
 	}
-	return text(fitLines(fmt.Sprintf("ℹ %s — no changes", namespaceHead(cl, names)), lines, contentMaxLen))
+	return text(b.fitLines(b.t("ℹ %s — no changes", namespaceHead(cl, names)), lines, contentMaxLen))
 }
 
 // preview renders the stored plans with the auto-stop of each start; namespaces with neither a
@@ -372,10 +373,10 @@ func (b *Bot) preview(token string, cl config.Cluster, f *flow) view {
 			changes:   p.changes,
 			rejected:  p.rejected,
 			starts:    b.svc.Schedules(cl.Env, p.namespace, p.toStart, p.durations),
-			foreign:   foreignStopLines(p.changes, p.entries, f.userID),
+			foreign:   b.foreignStopLines(p.changes, p.entries, f.userID),
 		})
 	}
-	return previewView(token, cl, sections)
+	return b.previewView(token, cl, sections)
 }
 
 // durationStarts lists the schedules of the previewed starts in preview order. With several
@@ -401,14 +402,14 @@ func (b *Bot) openDurationModal(i *discordgo.Interaction, id customID, userID st
 		if len(starts) == 0 {
 			return &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{Content: msgUnrecognized, Flags: discordgo.MessageFlagsEphemeral},
+				Data: &discordgo.InteractionResponseData{Content: b.t(msgUnrecognized), Flags: discordgo.MessageFlagsEphemeral},
 			}
 		}
 		var drafts []string
 		if id.Kind == kindDurationRetry {
 			drafts = f.draft
 		}
-		return durationModal(id.Token, starts, drafts)
+		return b.durationModal(id.Token, starts, drafts)
 	})
 }
 
@@ -468,7 +469,7 @@ func (b *Bot) handleModal(i *discordgo.Interaction) {
 		}
 		if len(problems) > 0 {
 			f.draft = raw
-			v := retryView(id.Token, problems)
+			v := b.retryView(id.Token, problems)
 			return &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: v.Content, Components: v.Components, Flags: discordgo.MessageFlagsEphemeral, AllowedMentions: noMentions()},
@@ -541,13 +542,13 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 	})
 	switch {
 	case !ok:
-		b.update(i, text(msgExpired))
+		b.update(i, text(b.t(msgExpired)))
 		return
 	case problem == msgForeign:
 		b.replyEphemeral(i, problem)
 		return
 	case problem != "":
-		b.update(i, text(problem))
+		b.update(i, text(b.t(problem)))
 		return
 	}
 
@@ -566,7 +567,7 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 		renderers[req.Namespace] = b.svc.NewReadyRenderer(req)
 	}
 	if !b.svc.RolloutEnabled() || len(targets) == 0 {
-		b.edit(i, text(resultText(userID, cl, results)))
+		b.edit(i, text(b.resultText(userID, cl, results)))
 		return
 	}
 	b.watchers.Add(1)
@@ -579,7 +580,7 @@ func (b *Bot) handleConfirm(i *discordgo.Interaction, id customID, userID string
 		}()
 		timeout := b.svc.RolloutTimeout()
 		b.svc.Track(b.watchCtx, targets, func(snap rollout.Snapshot) {
-			b.edit(i, text(progressText(userID, cl, results, decorate(snap, renderers), timeout)))
+			b.edit(i, text(b.progressText(userID, cl, results, decorate(snap, renderers), timeout)))
 		})
 	}()
 }

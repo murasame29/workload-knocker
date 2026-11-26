@@ -12,6 +12,7 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
+	"github.com/murasame29/workload-knocker/internal/frontend/i18n"
 	"github.com/murasame29/workload-knocker/internal/observability/audit"
 	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 	"github.com/murasame29/workload-knocker/internal/policy/authz"
@@ -415,11 +416,37 @@ func TestForeignStopLines_WarnsInThePreview(t *testing.T) {
 		{Action: frontend.ActionStop, Label: "mine", Names: []string{"mine"}},
 		{Action: frontend.ActionStop, Label: "found", Names: []string{"found"}},
 	}
-	lines := foreignStopLines(changes, entries, "u1")
+	lines := enUI.foreignStopLines(changes, entries, "u1")
 	if len(lines) != 2 || lines[0] != "⚠ Stop: **web**  Started by: <@"+starterID+">" || !strings.Contains(lines[1], "Confirm stops them anyway") {
 		t.Errorf("lines = %q", lines)
 	}
-	if got := foreignStopLines(changes[1:], entries, "u1"); got != nil {
+	if got := enUI.foreignStopLines(changes[1:], entries, "u1"); got != nil {
 		t.Errorf("own and unknown starters warned: %q", got)
+	}
+}
+
+func TestStatus_Japanese(t *testing.T) {
+	t.Parallel()
+
+	b, sess, _, _ := newStatusBot(t, []*model.Workload{runningWL("web", time.Now().Add(time.Hour))}, "", mode.Full)
+	b.ui = newUI(i18n.Ja)
+	b.dispatch(statusCommand("u1"))
+	list := sess.responses[0].Data
+	if !strings.Contains(list.Content, "の状態") || !strings.Contains(list.Content, "🟢 起動中") {
+		t.Errorf("status = %s", list.Content)
+	}
+	stop := statusButtons(list)["停止: web"]
+	if stop.Label == "" {
+		t.Fatalf("buttons = %v, want 停止: web", statusButtons(list))
+	}
+	b.dispatch(component("u1", stop.CustomID))
+	q := sess.responses[len(sess.responses)-1].Data
+	for _, want := range []string{"停止: **web**  起動者: <@" + starterID + ">", "あなたは、このworkloadを起動した本人ではないです。", "このworkloadを停止してもよろしいでしょうか？"} {
+		if !strings.Contains(q.Content, want) {
+			t.Errorf("question lacks %q:\n%s", want, q.Content)
+		}
+	}
+	if got := statusButtons(q); got["キャンセル"].Label == "" || got["停止"].Label == "" {
+		t.Errorf("buttons = %v, want キャンセル and 停止", got)
 	}
 }
