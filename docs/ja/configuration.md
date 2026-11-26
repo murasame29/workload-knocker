@@ -30,7 +30,7 @@
 | `EXTERNAL_SCALER_PORT` | `9090` | KEDA external scaler の gRPC ポート。`actuator: keda-external` の cluster がある間だけ待ち受ける。Chart: `externalScaler.port` |
 | `EXTERNAL_SCALER_TLS_CERT` / `EXTERNAL_SCALER_TLS_KEY` | 空 | このポートで TLS を有効にする証明書と鍵のパス (両方指定するか、どちらも指定しない。ハンドシェイクごとに再読込)。Chart: `externalScaler.tls.secretName` |
 | `EXTERNAL_SCALER_ADDRESS_MATCH` | `workload-knocker` | trigger の `scalerAddress` にこの文字列を含むものを担当する。Chart は Service 名を設定する |
-| `UI_LANGUAGE` | `en` | Slack の UI の言語。`en` か `ja` で、それ以外は起動時にエラー。Slack のモーダルと返信 (変更内容・結果・状態の行を含む) に適用します。Discord、通知チャンネル、予約サービスが返すエラーの詳細は英語のままです。chart: `settings.uiLanguage` |
+| `UI_LANGUAGE` | `en` | Slack と Discord の UI の言語。`en` か `ja` で、それ以外は起動時にエラー。モーダル、メッセージ、ボタン、返信 (変更内容・結果・状態の行を含む) と Discord の slash command の説明に適用します。通知チャンネル、延長ボタンの返信、予約サービスが返すエラーの詳細は英語のままです。chart: `settings.uiLanguage` |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`。ログは `timestamp` / `message` キーの JSON です ([監査ログ](audit-log.md)) |
 
 `WORKLOAD_ENV` は非推奨で無視されます (警告ログのみ)。
@@ -387,7 +387,8 @@ Start / Stop、Schedule、Status のボタンを 1 行に 1 つずつ、短い�
 どの画面も namespace の選択から始まります。
 
 - **Start / Stop**: 状態を reconcile してから namespace を選ばせ、その workload を一覧します (起動中はチェック済み)。
-  稼働時間も入力できます。**Plan** で変更内容を確認し、**Apply** で適用します。
+  稼働時間も入力できます。**Plan** で変更内容を確認し、**Apply** で適用します。ほかの人が起動した workload を停止する場合は、
+  確認画面に起動者付きの警告を出します。
 - **Schedule**: namespace を選ぶと、その namespace の[予約](#予約)フォームを表示します。
 - **Status**: namespace を選ぶと、その namespace の[ステータス](#ステータス)を表示します。
 
@@ -409,7 +410,7 @@ Start / Stop、Schedule、Status のボタンを 1 行に 1 つずつ、短い�
 起動中のエントリにはボタンが付きます (ラベルにエントリ名が入ります):
 
 - **Extend 1h**: `POST /api/v1/extend` と同様に停止時刻を 1 時間延ばします。自動停止があるエントリにだけ表示します。
-- **Stop**: 確認なしで直接停止します。通常の停止と同じ経路 (ポリシー判定、動作モード判定、source が `discord` / `slack` の `workload.stop` 監査イベント、通知チャンネル) を通ります。`scheduled-stop` モードでは表示しません。
+- **Stop**: 確認なしで直接停止します。通常の停止と同じ経路 (ポリシー判定、動作モード判定、source が `discord` / `slack` の `workload.stop` 監査イベント、通知チャンネル) を通ります。`scheduled-stop` モードでは表示しません。ほかの人が起動したエントリの場合、押すとまず workload と起動者を示して確認します。Slack は確認ダイアログを開き、Discord は一覧を質問と **Cancel** / **Stop** ボタンに置き換えます。最初から起動中として検出した workload は起動者が分からないため確認しません。両方の start/stop の確認画面でも、このような停止には警告を出します。
 
 押下後は、その場で一覧 (Discord のメッセージ、Slack のモーダル) を結果と最新の状態に置き換えます。判定は押下時にも再実行するため、古い一覧で権限を広げることはできません。
 
@@ -460,7 +461,7 @@ start には実行時間を付けられます。コントローラは workload �
 [`POST /api/v1/reservations`](#apiv1reservations) で作ります。
 
 - **Slack のフォーム**: メニューの **Schedule** (または `/<slashCommand> schedule`) で namespace を選ぶと、その workload を
-  未チェックのチェックボックスで並べ、**Ready in (hours)** (今から Ready になるまでの時間、最小 `0.25`) と
+  未チェックのチェックボックスで並べ、**Start in (hours)** (日本語表示は「起動までの時間」。今から予約時刻までの時間で、数分前に起動を始めます。最小 `0.25`) と
   **Run duration (hours)** (Ready になってから停止するまでの時間、空は workload の既定) を入力します。予約はその namespace に 1 件作成します。
 
 - **Discord のフォーム**: namespace ごとのチェックボックス (namespace 3 個、各 10 件まで。超える場合は API を使う)、

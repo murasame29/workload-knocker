@@ -16,6 +16,7 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
+	"github.com/murasame29/workload-knocker/internal/frontend/i18n"
 	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 	"github.com/murasame29/workload-knocker/internal/policy/authz"
 )
@@ -91,6 +92,7 @@ func (s liveSession) EditMessage(e *discordgo.MessageEdit) error {
 
 // Bot is the workload control bot running on the Discord gateway.
 type Bot struct {
+	ui
 	sess     session
 	svc      *frontend.Service
 	registry registry
@@ -129,12 +131,15 @@ func New(cfg *config.Env, store frontend.Store, registry registry, az *authz.Hol
 	s.Identify.Intents = discordgo.IntentsGuilds
 	svc := frontend.NewService(store, m, cfg.ClusterReconcileTimeout,
 		append([]frontend.Option{frontend.WithAuthorizer(az), frontend.WithMode(cfg.OperationMode)}, opts...)...)
-	return newBot(liveSession{s}, svc, registry, cfg.DiscordGuildID), nil
+	b := newBot(liveSession{s}, svc, registry, cfg.DiscordGuildID)
+	b.ui = newUI(cfg.UILanguage)
+	return b, nil
 }
 
 func newBot(sess session, svc *frontend.Service, registry registry, guildID string) *Bot {
 	watchCtx, watchCancel := context.WithCancel(context.Background())
 	return &Bot{
+		ui:       newUI(i18n.En),
 		sess:     sess,
 		svc:      svc,
 		registry: registry,
@@ -223,8 +228,8 @@ func (b *Bot) commands(names []string) []*discordgo.ApplicationCommand {
 		cmds = append(cmds, &discordgo.ApplicationCommand{
 			Name:        name,
 			Type:        discordgo.ChatApplicationCommand,
-			Description: truncateRunes("Start or stop workloads in "+cl.Env, 100),
-			Options:     subcommandChoices(cl.Env),
+			Description: truncateRunes(b.t("Start or stop workloads in %s", cl.Env), 100),
+			Options:     b.subcommandChoices(cl.Env),
 		})
 	}
 	return cmds

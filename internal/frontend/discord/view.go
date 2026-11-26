@@ -63,13 +63,13 @@ func button(label string, style discordgo.ButtonStyle, id customID, disabled boo
 	return discordgo.Button{Label: label, Style: style, CustomID: id.String(), Disabled: disabled}
 }
 
-func pageButtons(kind, token string, page, pages int) []discordgo.MessageComponent {
+func (u ui) pageButtons(kind, token string, page, pages int) []discordgo.MessageComponent {
 	if pages <= 1 {
 		return nil
 	}
 	return []discordgo.MessageComponent{
-		button("◀ Previous", discordgo.SecondaryButton, customID{kind, token, page - 1}, page == 0),
-		button("Next ▶", discordgo.SecondaryButton, customID{kind, token, page + 1}, page >= pages-1),
+		button(u.t("◀ Previous"), discordgo.SecondaryButton, customID{kind, token, page - 1}, page == 0),
+		button(u.t("Next ▶"), discordgo.SecondaryButton, customID{kind, token, page + 1}, page >= pages-1),
 	}
 }
 
@@ -86,27 +86,27 @@ func selectMenu(id customID, placeholder string, minValues int, options []discor
 
 // namespaceView lists one page of namespaces (already sorted) as a single-choice select menu.
 // opened counts the namespaces already opened in this flow; with any, Apply previews them.
-func namespaceView(token string, cl config.Cluster, namespaces []string, page, opened int) view {
+func (u ui) namespaceView(token string, cl config.Cluster, namespaces []string, page, opened int) view {
 	page, start, end, pages := pageBounds(len(namespaces), selectMaxOptions, page)
 	options := make([]discordgo.SelectMenuOption, 0, end-start)
 	for _, ns := range namespaces[start:end] {
 		options = append(options, discordgo.SelectMenuOption{Label: truncateRunes(ns, optionLabelMaxLen), Value: ns})
 	}
-	menu := selectMenu(customID{kindNamespaceSelect, token, 0}, "Select a namespace", 1, options)
+	menu := selectMenu(customID{kindNamespaceSelect, token, 0}, u.t("Select a namespace"), 1, options)
 	menu.MaxValues = 1
 
-	content := header(cl) + "\nSelect a namespace."
+	content := header(cl) + "\n" + u.t("Select a namespace.")
 	if pages > 1 {
-		content += fmt.Sprintf(" (page %d/%d)", page+1, pages)
+		content += u.t(" (page %d/%d)", page+1, pages)
 	}
 	if opened > 0 {
-		content += fmt.Sprintf("\n%d namespace(s) selected; Apply previews all of them.", opened)
+		content += "\n" + u.t("%d namespace(s) selected; Apply previews all of them.", opened)
 	}
-	buttons := pageButtons(kindNamespacePage, token, page, pages)
+	buttons := u.pageButtons(kindNamespacePage, token, page, pages)
 	if opened > 0 {
-		buttons = append(buttons, button("Apply", discordgo.PrimaryButton, customID{kindPlan, token, 0}, false))
+		buttons = append(buttons, button(u.t("Apply"), discordgo.PrimaryButton, customID{kindPlan, token, 0}, false))
 	}
-	buttons = append(buttons, button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false))
+	buttons = append(buttons, button(u.t("Cancel"), discordgo.DangerButton, customID{kindCancel, token, 0}, false))
 	return view{Content: content, Components: []discordgo.MessageComponent{
 		discordgo.ActionsRow{Components: []discordgo.MessageComponent{menu}},
 		discordgo.ActionsRow{Components: buttons},
@@ -115,16 +115,16 @@ func namespaceView(token string, cl config.Cluster, namespaces []string, page, o
 
 // workloadView renders one page of entries as a multi-select. Option values are indexes into
 // entries because workload names can exceed the 100-char option value limit.
-func workloadView(token string, cl config.Cluster, namespace string, entries []frontend.Entry, selected map[string]bool, page int, chatStop bool) view {
-	content := fmt.Sprintf("%s / %s\n🟢 running  🟡 partial  🔴 stopped", header(cl), namespace)
+func (u ui) workloadView(token string, cl config.Cluster, namespace string, entries []frontend.Entry, selected map[string]bool, page int, chatStop bool) view {
+	content := fmt.Sprintf("%s / %s\n", header(cl), namespace) + u.t("🟢 running  🟡 partial  🔴 stopped")
 	if !chatStop {
-		content += "\nℹ Stopping from chat is disabled: running workloads are stopped by the nightly job."
+		content += "\n" + u.t("ℹ Stopping from chat is disabled: running workloads are stopped by the nightly job.")
 	}
-	cancel := button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false)
-	other := button("Other namespace", discordgo.SecondaryButton, customID{kindNamespaces, token, 0}, false)
+	cancel := button(u.t("Cancel"), discordgo.DangerButton, customID{kindCancel, token, 0}, false)
+	other := button(u.t("Other namespace"), discordgo.SecondaryButton, customID{kindNamespaces, token, 0}, false)
 	if len(entries) == 0 {
 		return view{
-			Content: content + "\nNo workloads you may operate in this namespace.",
+			Content: content + "\n" + u.t("No workloads you may operate in this namespace."),
 			Components: []discordgo.MessageComponent{
 				discordgo.ActionsRow{Components: []discordgo.MessageComponent{other, cancel}},
 			},
@@ -140,15 +140,15 @@ func workloadView(token string, cl config.Cluster, namespace string, entries []f
 			Default: selected[entries[i].Value()],
 		})
 	}
-	menu := selectMenu(customID{kindWorkloadSelect, token, 0}, "Workloads to keep running", 0, options)
+	menu := selectMenu(customID{kindWorkloadSelect, token, 0}, u.t("Workloads to keep running"), 0, options)
 
-	content += "\nChecked workloads run; unchecked ones stop."
+	content += "\n" + u.t("Checked workloads run; unchecked ones stop.")
 	if pages > 1 {
-		content += fmt.Sprintf(" (page %d/%d)", page+1, pages)
+		content += u.t(" (page %d/%d)", page+1, pages)
 	}
-	buttons := pageButtons(kindWorkloadPage, token, page, pages)
+	buttons := u.pageButtons(kindWorkloadPage, token, page, pages)
 	buttons = append(buttons,
-		button("Apply", discordgo.PrimaryButton, customID{kindPlan, token, 0}, false),
+		button(u.t("Apply"), discordgo.PrimaryButton, customID{kindPlan, token, 0}, false),
 		other,
 		cancel)
 	return view{Content: content, Components: []discordgo.MessageComponent{
@@ -166,6 +166,8 @@ type section struct {
 	changes   []frontend.Change
 	rejected  []frontend.Rejection
 	starts    []frontend.Schedule
+	// foreign warns about stops of workloads someone else started.
+	foreign []string
 }
 
 // namespaceHead names the namespaces of sections in a header line.
@@ -175,7 +177,7 @@ func namespaceHead(cl config.Cluster, namespaces []string) string {
 
 // previewView shows the plan of every section with the auto-stop of each start, Confirm,
 // Change duration and Cancel. Several sections get a bold namespace line each.
-func previewView(token string, cl config.Cluster, sections []section) view {
+func (u ui) previewView(token string, cl config.Cluster, sections []section) view {
 	names := make([]string, 0, len(sections))
 	var lines []string
 	starts := 0
@@ -184,21 +186,22 @@ func previewView(token string, cl config.Cluster, sections []section) view {
 		if len(sections) > 1 {
 			lines = append(lines, "**"+s.namespace+"**")
 		}
-		lines = append(lines, markup.PlanLines(s.changes)...)
-		lines = append(lines, markup.ScheduleLines(s.starts)...)
-		lines = append(lines, frontend.RejectionLines(s.rejected)...)
+		lines = append(lines, s.foreign...)
+		lines = append(lines, u.markup.PlanLines(s.changes)...)
+		lines = append(lines, u.markup.ScheduleLines(s.starts)...)
+		lines = append(lines, u.markup.RejectionLines(s.rejected)...)
 		starts += len(s.starts)
 	}
 	if starts > maxDurationInputs {
-		lines = append(lines, fmt.Sprintf("ℹ Change duration covers the first %d starts; the others use their default.", maxDurationInputs))
+		lines = append(lines, u.t("ℹ Change duration covers the first %d starts; the others use their default.", maxDurationInputs))
 	}
-	buttons := []discordgo.MessageComponent{button("Confirm", discordgo.SuccessButton, customID{kindConfirm, token, 0}, false)}
+	buttons := []discordgo.MessageComponent{button(u.t("Confirm"), discordgo.SuccessButton, customID{kindConfirm, token, 0}, false)}
 	if starts > 0 {
-		buttons = append(buttons, button("Change duration", discordgo.SecondaryButton, customID{kindDuration, token, 0}, false))
+		buttons = append(buttons, button(u.t("Change duration"), discordgo.SecondaryButton, customID{kindDuration, token, 0}, false))
 	}
-	buttons = append(buttons, button("Cancel", discordgo.DangerButton, customID{kindCancel, token, 0}, false))
+	buttons = append(buttons, button(u.t("Cancel"), discordgo.DangerButton, customID{kindCancel, token, 0}, false))
 	return view{
-		Content:    fitLines(namespaceHead(cl, names)+" change preview:", lines, contentMaxLen),
+		Content:    u.fitLines(u.t("%s change preview:", namespaceHead(cl, names)), lines, contentMaxLen),
 		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: buttons}},
 	}
 }
@@ -208,7 +211,7 @@ func stopTime(t time.Time) string { return fmt.Sprintf("<t:%d:f>", t.Unix()) }
 
 // durationModal asks for the run duration in hours of each of the first starts. drafts hold the
 // raw inputs of a rejected submission and win over the current value.
-func durationModal(token string, starts []frontend.Schedule, drafts []string) *discordgo.InteractionResponse {
+func (u ui) durationModal(token string, starts []frontend.Schedule, drafts []string) *discordgo.InteractionResponse {
 	rows := make([]discordgo.MessageComponent, 0, maxDurationInputs)
 	for i, s := range starts[:min(len(starts), maxDurationInputs)] {
 		value := ""
@@ -222,7 +225,7 @@ func durationModal(token string, starts []frontend.Schedule, drafts []string) *d
 			CustomID:    strconv.Itoa(i),
 			Label:       truncateRunes(s.Name, 45),
 			Style:       discordgo.TextInputShort,
-			Placeholder: durationPlaceholder(s),
+			Placeholder: u.durationPlaceholder(s),
 			Value:       value,
 			MaxLength:   8,
 		}}})
@@ -231,30 +234,30 @@ func durationModal(token string, starts []frontend.Schedule, drafts []string) *d
 		Type: discordgo.InteractionResponseModal,
 		Data: &discordgo.InteractionResponseData{
 			CustomID:   customID{kindDurationModal, token, 0}.String(),
-			Title:      "Run duration (hours)",
+			Title:      u.t("Run duration (hours)"),
 			Components: rows,
 		},
 	}
 }
 
-func durationPlaceholder(s frontend.Schedule) string {
-	def := "no auto-stop"
+func (u ui) durationPlaceholder(s frontend.Schedule) string {
+	def := u.t("no auto-stop")
 	if s.Default > 0 {
 		def = runlimit.FormatHours(s.Default)
 	}
-	p := "Hours (min 0.25). Empty = default " + def
+	p := u.t("Hours (min 0.25 = 15 minutes). Empty = default %s", def)
 	if s.Max > 0 {
-		p += ", max " + runlimit.FormatHours(s.Max)
+		p += u.t(", max %s", runlimit.FormatHours(s.Max))
 	}
 	return truncateRunes(p, 100)
 }
 
 // retryView explains rejected duration inputs and offers to reopen the modal.
-func retryView(token string, lines []string) view {
+func (u ui) retryView(token string, lines []string) view {
 	return view{
-		Content: fitLines("⚠ Invalid run duration:", lines, contentMaxLen),
+		Content: u.fitLines(u.t("⚠ Invalid run duration:"), lines, contentMaxLen),
 		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-			button("Try again", discordgo.PrimaryButton, customID{kindDurationRetry, token, 0}, false),
+			button(u.t("Try again"), discordgo.PrimaryButton, customID{kindDurationRetry, token, 0}, false),
 		}}},
 	}
 }
@@ -266,14 +269,14 @@ type applied struct {
 }
 
 // resultText renders the outcome of an applied plan.
-func resultText(userID string, cl config.Cluster, results []applied) string {
-	return progressText(userID, cl, results, nil, 0)
+func (u ui) resultText(userID string, cl config.Cluster, results []applied) string {
+	return u.progressText(userID, cl, results, nil, 0)
 }
 
 // progressText is resultText with the rollout progress of the applied workloads; applied
 // workloads missing from snap keep the plain "→ start" line. Several namespaces get a bold
 // namespace line each.
-func progressText(userID string, cl config.Cluster, results []applied, snap rollout.Snapshot, timeout time.Duration) string {
+func (u ui) progressText(userID string, cl config.Cluster, results []applied, snap rollout.Snapshot, timeout time.Duration) string {
 	progress := make(map[string]rollout.Item, len(snap))
 	for _, it := range snap {
 		progress[it.Target.Namespace+"/"+it.Target.Name] = it
@@ -289,28 +292,28 @@ func progressText(userID string, cl config.Cluster, results []applied, snap roll
 			it, tracked := progress[r.namespace+"/"+a.Name]
 			switch {
 			case !a.Found:
-				lines = append(lines, fmt.Sprintf("⚠ %s → %s (not found)", a.Name, a.Action))
+				lines = append(lines, u.t("⚠ %s → %s (not found)", a.Name, u.t(string(a.Action))))
 			case tracked:
-				lines = append(lines, rollout.Line(it, timeout))
+				lines = append(lines, u.markup.RolloutLine(it, timeout))
 			case a.Action == frontend.ActionStart:
-				lines = append(lines, fmt.Sprintf("🟢 %s → start", a.Name))
+				lines = append(lines, u.t("🟢 %s → start", a.Name))
 			default:
-				lines = append(lines, fmt.Sprintf("🔴 %s → stop", a.Name))
+				lines = append(lines, u.t("🔴 %s → stop", a.Name))
 			}
 		}
-		lines = append(lines, markup.AppliedStopLines(r.res.Applied)...)
-		lines = append(lines, frontend.RejectionLines(r.res.Rejected)...)
+		lines = append(lines, u.markup.AppliedStopLines(r.res.Applied)...)
+		lines = append(lines, u.markup.RejectionLines(r.res.Rejected)...)
 	}
-	head := fmt.Sprintf("🚀 <@%s> changed workloads (%s / %s / %s)", userID, strings.ToUpper(cl.Env), cl.Name, strings.Join(names, ", "))
-	return fitLines(head, lines, contentMaxLen)
+	head := u.t("🚀 <@%s> changed workloads (%s / %s / %s)", userID, strings.ToUpper(cl.Env), cl.Name, strings.Join(names, ", "))
+	return u.fitLines(head, lines, contentMaxLen)
 }
 
 // fitLines joins head and lines, replacing the overflowing tail with a count to stay within limit bytes.
-func fitLines(head string, lines []string, limit int) string {
+func (u ui) fitLines(head string, lines []string, limit int) string {
 	var b strings.Builder
 	b.WriteString(head)
 	for i, line := range lines {
-		more := fmt.Sprintf("\n… and %d more", len(lines)-i)
+		more := "\n" + u.t("… and %d more", len(lines)-i)
 		if b.Len()+1+len(line)+len(more) > limit {
 			b.WriteString(more)
 			return b.String()

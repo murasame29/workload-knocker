@@ -78,10 +78,6 @@ func TestJapanese_CoversEveryMessage(t *testing.T) {
 			if err != nil || info.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 				return err
 			}
-			// The Discord frontend is English only for now.
-			if strings.Contains(p, string(filepath.Separator)+"discord"+string(filepath.Separator)) {
-				return nil
-			}
 			f, err := parser.ParseFile(token.NewFileSet(), p, nil, 0)
 			if err != nil {
 				return err

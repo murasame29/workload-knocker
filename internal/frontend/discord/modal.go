@@ -96,15 +96,15 @@ func (b *Bot) selectionModal(sub authz.Subject, userID string, cl config.Cluster
 		slog.Error("failed to create discord flow", slog.String("error.message", err.Error()))
 		return nil, false
 	}
-	return selectionModalResponse(token, cl, parts, b.svc.ChatStopAllowed()), true
+	return b.selectionModalResponse(token, cl, parts, b.svc.ChatStopAllowed()), true
 }
 
 // selectionModalResponse renders one Label with a Checkbox Group per namespace. Group custom_ids
 // are part indexes and option values entry indexes, as names can exceed Discord's limits.
-func selectionModalResponse(token string, cl config.Cluster, parts []*nsPart, chatStop bool) *discordgo.InteractionResponse {
-	description := "Checked workloads run; unchecked ones stop."
+func (u ui) selectionModalResponse(token string, cl config.Cluster, parts []*nsPart, chatStop bool) *discordgo.InteractionResponse {
+	description := u.t("Checked workloads run; unchecked ones stop.")
 	if !chatStop {
-		description = "Checked workloads run. Stopping is left to the nightly job."
+		description = u.t("Checked workloads run. Stopping is left to the nightly job.")
 	}
 	labels := make([]discordgo.MessageComponent, 0, len(parts))
 	for idx, p := range parts {
@@ -126,7 +126,7 @@ func selectionModalResponse(token string, cl config.Cluster, parts []*nsPart, ch
 		Type: discordgo.InteractionResponseModal,
 		Data: &discordgo.InteractionResponseData{
 			CustomID:   customID{kindSelectModal, token, 0}.String(),
-			Title:      truncateRunes("Workloads in "+strings.ToUpper(cl.Env), modalTitleMaxLen),
+			Title:      truncateRunes(u.t("Workloads in %s", strings.ToUpper(cl.Env)), modalTitleMaxLen),
 			Components: labels,
 		},
 	}

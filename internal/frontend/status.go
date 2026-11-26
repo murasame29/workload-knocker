@@ -116,3 +116,40 @@ func (r ExtendResult) Lines(format func(time.Time) string) []string {
 
 // StopLines renders the outcome of a stop, one line per workload.
 func (r ApplyResult) StopLines() []string { return Markup{}.StopLines(r) }
+
+// ForeignStop is a planned stop of workloads that someone other than the operator started.
+type ForeignStop struct {
+	Label string
+	// Starters are the recorded starters of the stopped members, deduplicated in member order.
+	Starters []string
+}
+
+// ForeignStops lists the stops in changes whose running members were started by someone else.
+// entries are the entries the plan was built from; self reports whether a recorded starter is the
+// operator. An unknown starter ("") is never someone else.
+func ForeignStops(changes []Change, entries []Entry, self func(starter string) bool) []ForeignStop {
+	starters := map[string]string{}
+	for _, e := range entries {
+		for _, w := range e.Members {
+			if w.Replicas > 0 {
+				starters[w.Name] = w.StartedBy
+			}
+		}
+	}
+	var out []ForeignStop
+	for _, c := range changes {
+		if c.Action != ActionStop {
+			continue
+		}
+		fs := ForeignStop{Label: c.Label}
+		for _, name := range c.Names {
+			if s := starters[name]; s != "" && !self(s) && !slices.Contains(fs.Starters, s) {
+				fs.Starters = append(fs.Starters, s)
+			}
+		}
+		if len(fs.Starters) > 0 {
+			out = append(out, fs)
+		}
+	}
+	return out
+}

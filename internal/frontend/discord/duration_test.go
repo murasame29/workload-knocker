@@ -206,11 +206,11 @@ func TestDurationModal_CapsInputsAtFive(t *testing.T) {
 	for i := range 7 {
 		starts = append(starts, frontend.Schedule{Name: "svc-" + itoa(int64(i))})
 	}
-	resp := durationModal("tok", starts, nil)
+	resp := enUI.durationModal("tok", starts, nil)
 	if len(resp.Data.Components) != maxDurationInputs {
 		t.Errorf("inputs = %d, want %d", len(resp.Data.Components), maxDurationInputs)
 	}
-	v := previewView("tok", testCluster(), []section{{namespace: "labs", changes: nil, rejected: nil, starts: starts}})
+	v := enUI.previewView("tok", testCluster(), []section{{namespace: "labs", changes: nil, rejected: nil, starts: starts}})
 	if !strings.Contains(v.Content, "first 5 starts") {
 		t.Errorf("preview lacks the cap note:\n%s", v.Content)
 	}

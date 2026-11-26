@@ -212,10 +212,10 @@ func TestWorkloadView_StopDisabledNote(t *testing.T) {
 	t.Parallel()
 
 	entries := frontend.GroupEntries([]*model.Workload{wl("a", 1)})
-	if c := workloadView("t", testCluster(), "labs", entries, nil, 0, false).Content; !strings.Contains(c, "Stopping from chat is disabled") {
+	if c := enUI.workloadView("t", testCluster(), "labs", entries, nil, 0, false).Content; !strings.Contains(c, "Stopping from chat is disabled") {
 		t.Errorf("missing note: %q", c)
 	}
-	if c := workloadView("t", testCluster(), "labs", entries, nil, 0, true).Content; strings.Contains(c, "disabled") {
+	if c := enUI.workloadView("t", testCluster(), "labs", entries, nil, 0, true).Content; strings.Contains(c, "disabled") {
 		t.Errorf("unexpected note: %q", c)
 	}
 }

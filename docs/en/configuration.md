@@ -30,7 +30,7 @@
 | `EXTERNAL_SCALER_PORT` | `9090` | gRPC port of the KEDA external scaler, served only while a cluster uses `actuator: keda-external`. Chart: `externalScaler.port` |
 | `EXTERNAL_SCALER_TLS_CERT` / `EXTERNAL_SCALER_TLS_KEY` | empty | Certificate and key paths that enable TLS on that port (both or neither; re-read on every handshake). Chart: `externalScaler.tls.secretName` |
 | `EXTERNAL_SCALER_ADDRESS_MATCH` | `workload-knocker` | A trigger is served when its `scalerAddress` contains this text. The chart sets it to the Service name |
-| `UI_LANGUAGE` | `en` | Language of the Slack UI: `en` or `ja`; any other value fails at startup. Covers the Slack modals and replies, including the plan, result and status lines. Discord, the notify channel and error details from the reservation service stay English. Chart: `settings.uiLanguage` |
+| `UI_LANGUAGE` | `en` | Language of the Slack and Discord UI: `en` or `ja`; any other value fails at startup. Covers the modals, messages, buttons and replies, including the plan, result and status lines, and the Discord slash command descriptions. The notify channel, the reply of its Extend button and error details from the reservation service stay English. Chart: `settings.uiLanguage` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs are JSON with `timestamp` / `message` keys; see [Audit log](audit-log.md) |
 
 `WORKLOAD_ENV` is deprecated and ignored (a warning is logged).
@@ -397,7 +397,8 @@ row (Start / Stop, Schedule, Status), each with a short description. Each button
 and every flow starts with a namespace select:
 
 - **Start / Stop** reconciles the state, asks for a namespace, then lists its workloads (running ones checked) with
-  the run duration. **Plan** previews the changes and **Apply** applies them.
+  the run duration. **Plan** previews the changes and **Apply** applies them. The preview warns about each stop of a
+  workload someone else started, with its starter.
 - **Schedule** asks for a namespace, then shows the [reservation](#reservations) form of that namespace.
 - **Status** asks for a namespace, then shows the [status](#status) of that namespace.
 
@@ -420,7 +421,7 @@ The list is built from the controller's in-memory state only. It makes no cluste
 Running entries carry buttons (the label names the entry):
 
 - **Extend 1h** adds one hour to the stop time, like `POST /api/v1/extend`. It is shown only for entries with an auto-stop.
-- **Stop** stops the entry directly, without a confirm step. It goes through the normal stop path: policy check, operation mode check, `workload.stop` audit event (source `discord` or `slack`) and the notify channel. It is not shown in `scheduled-stop` mode.
+- **Stop** stops the entry directly, without a confirm step. It goes through the normal stop path: policy check, operation mode check, `workload.stop` audit event (source `discord` or `slack`) and the notify channel. It is not shown in `scheduled-stop` mode. When someone else started the entry, the button first asks for confirmation, naming the workload and its starter: Slack opens a confirmation dialog, Discord replaces the list with the question and **Cancel** / **Stop** buttons. The starter of a workload found already running is unknown, so it asks nothing. The start/stop preview of both platforms warns about such stops too.
 
 After a press the list (Discord message or Slack modal) is replaced in place with the outcome and the refreshed state. Both checks run again on press, so an outdated list cannot widen access.
 
@@ -475,7 +476,7 @@ A one-off reservation makes workloads **Ready at a requested time**. Create one 
 Discord or Slack, or [`POST /api/v1/reservations`](#apiv1reservations).
 
 - **Slack form**: **Schedule** in the menu (or `/<slashCommand> schedule`) asks for a namespace, then lists its
-  workloads as unchecked checkboxes with **Ready in (hours)** (how long from now until the workloads are Ready,
+  workloads as unchecked checkboxes with **Start in (hours)** (how long from now until the reserved time; starting begins a few minutes earlier,
   at least `0.25`) and **Run duration (hours)** (how long they run once Ready; empty uses the workload default).
   One reservation is created for the namespace.
 

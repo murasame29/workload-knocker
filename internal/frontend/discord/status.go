@@ -48,7 +48,8 @@ func (b *Bot) handleStatus(i *discordgo.Interaction, cl config.Cluster) {
 	})
 }
 
-// handleStatusAction runs the Extend or Stop button of a status entry and refreshes the list in place.
+// handleStatusAction runs the Extend or Stop button of a status entry and refreshes the list in
+// place. Stop asks first when someone else started the entry (see confirm.go).
 func (b *Bot) handleStatusAction(i *discordgo.Interaction, id customID, userID string) {
 	payload, ok := b.poster.buttons.get(id.Token)
 	if !ok {
@@ -63,22 +64,33 @@ func (b *Bot) handleStatusAction(i *discordgo.Interaction, id customID, userID s
 	}
 	cl, found := b.registry.ByEnv(ref.Env)
 	if !found {
-		b.update(i, text(msgClusterGone))
+		b.update(i, text(b.t(msgClusterGone)))
 		return
+	}
+	sub := subject(i)
+	switch id.Kind {
+	case kindStatusBack:
+		b.update(i, b.statusView(cl, sub, b.svc.Status(sub, cl.Env), nil))
+		return
+	case kindStatusStop:
+		// The in-memory status answers inside the 3s window; the stop itself waits for Stop.
+		if label, starters := b.foreignStarters(sub, userID, ref); len(starters) > 0 {
+			b.update(i, b.stopConfirmView(cl, id.Token, label, starters))
+			return
+		}
 	}
 	// Ack first: extending and stopping persist state through the cluster API.
 	if !b.deferUpdate(i) {
 		return
 	}
 
-	sub := subject(i)
 	var notes []string
-	if id.Kind == kindStatusStop {
+	if id.Kind == kindStatusStop || id.Kind == kindStatusStopConfirmed {
 		res := b.svc.Apply(frontend.ApplyRequest{Cluster: cl, Namespace: ref.Namespace, User: userID, Subject: sub, ToStop: ref.Names})
-		notes = res.StopLines()
+		notes = b.markup.StopLines(res)
 	} else {
 		res := b.svc.Extend(frontend.ExtendRequest{Cluster: cl, Namespace: ref.Namespace, Subject: sub, Names: ref.Names, Duration: notify.ExtendBy})
-		notes = res.Lines(stopTime)
+		notes = b.markup.ExtendLines(res, stopTime)
 	}
 	b.edit(i, b.statusView(cl, sub, b.svc.Status(sub, cl.Env), notes))
 }
@@ -87,9 +99,9 @@ func (b *Bot) handleStatusAction(i *discordgo.Interaction, id customID, userID s
 // then the pending reservations sub may cancel. notes are the outcome lines of the action that
 // led to this refresh.
 func (b *Bot) statusView(cl config.Cluster, sub authz.Subject, st frontend.Status, notes []string) view {
-	head := header(cl) + " status"
+	head := b.t("%s status", header(cl))
 	if st.Empty() {
-		return text(fitLines(head, append(slices.Clone(notes), "ℹ No workloads you may operate are registered in this cluster."), contentMaxLen))
+		return text(b.fitLines(head, append(slices.Clone(notes), b.t("ℹ No workloads you may operate are registered in this cluster.")), contentMaxLen))
 	}
 	v := b.workloadStatus(cl, st, notes)
 	lines, cancels := b.reservationLines(sub, st.Env, maxMessageButtons-countButtons(v.Components))
@@ -102,7 +114,7 @@ func (b *Bot) statusView(cl config.Cluster, sub authz.Subject, st frontend.Statu
 			buttons = append(buttons, r.Components...)
 		}
 	}
-	return view{Content: fitLines(v.Content, lines, contentMaxLen), Components: buttonRows(append(buttons, cancels...))}
+	return view{Content: b.fitLines(v.Content, lines, contentMaxLen), Components: buttonRows(append(buttons, cancels...))}
 }
 
 func countButtons(rows []discordgo.MessageComponent) int {
@@ -117,14 +129,14 @@ func countButtons(rows []discordgo.MessageComponent) int {
 
 // workloadStatus renders the workload part of the status list.
 func (b *Bot) workloadStatus(cl config.Cluster, st frontend.Status, notes []string) view {
-	head := header(cl) + " status"
+	head := b.t("%s status", header(cl))
 	var body []string
 	var buttons []discordgo.MessageComponent
 	skipped := 0
 	for _, ns := range st.Namespaces {
 		body = append(body, "**"+ns.Name+"**")
 		for _, se := range ns.Entries {
-			body = append(body, markup.StatusLine(se))
+			body = append(body, b.markup.StatusLine(se))
 			pair := b.entryButtons(st.Env, ns.Name, se)
 			switch {
 			case len(pair) == 0:
@@ -135,12 +147,12 @@ func (b *Bot) workloadStatus(cl config.Cluster, st frontend.Status, notes []stri
 			}
 		}
 	}
-	lines := append(slices.Clone(notes), "🟢 running  🟡 partial  🔴 stopped")
+	lines := append(slices.Clone(notes), b.t("🟢 running  🟡 partial  🔴 stopped"))
 	if skipped > 0 {
-		lines = append(lines, fmt.Sprintf("ℹ Discord allows %d buttons per message; %d entries have none. Use the start subcommand for those.", maxMessageButtons, skipped))
+		lines = append(lines, b.t("ℹ Discord allows %d buttons per message; %d entries have none. Use the start subcommand for those.", maxMessageButtons, skipped))
 	}
 	lines = append(lines, body...)
-	return view{Content: fitLines(head, lines, contentMaxLen), Components: buttonRows(buttons)}
+	return view{Content: b.fitLines(head, lines, contentMaxLen), Components: buttonRows(buttons)}
 }
 
 // displayStarter mentions Discord user IDs (the recorded starter of Discord starts); other values are shown as is.
@@ -167,8 +179,8 @@ func (b *Bot) entryButtons(env, namespace string, se frontend.StatusEntry) []dis
 		}
 		out = append(out, button(truncateRunes(label+": "+se.Entry.Key, buttonLabelMaxLen), style, customID{kind, token, 0}, false))
 	}
-	add(kindStatusExtend, "Extend 1h", discordgo.PrimaryButton, se.ExtendNames)
-	add(kindStatusStop, "Stop", discordgo.DangerButton, se.StopNames)
+	add(kindStatusExtend, b.t("Extend 1h"), discordgo.PrimaryButton, se.ExtendNames)
+	add(kindStatusStop, b.t("Stop"), discordgo.DangerButton, se.StopNames)
 	return out
 }
 
@@ -182,10 +194,10 @@ func buttonRows(buttons []discordgo.MessageComponent) []discordgo.MessageCompone
 }
 
 // subcommandChoices are the subcommands registered for every command.
-func subcommandChoices(env string) []*discordgo.ApplicationCommandOption {
+func (u ui) subcommandChoices(env string) []*discordgo.ApplicationCommandOption {
 	return []*discordgo.ApplicationCommandOption{
-		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: subcommandStart, Description: truncateRunes("Start or stop workloads in "+env, 100)},
-		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: subcommandStatus, Description: "Show running workloads, who started them and when they stop"},
-		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: subcommandSchedule, Description: "Reserve workloads to be ready at a time"},
+		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: subcommandStart, Description: truncateRunes(u.t("Start or stop workloads in %s", env), 100)},
+		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: subcommandStatus, Description: u.t("Show running workloads, who started them and when they stop")},
+		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: subcommandSchedule, Description: u.t("Reserve workloads to be ready at a time")},
 	}
 }

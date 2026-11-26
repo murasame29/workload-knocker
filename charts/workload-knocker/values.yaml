@@ -101,7 +101,7 @@ nightlyStop:
 
 settings:
   logLevel: info
-  # Language of the Slack UI (UI_LANGUAGE): en or ja. Discord stays English.
+  # Language of the Slack and Discord UI (UI_LANGUAGE): en or ja. The notify channel stays English.
   uiLanguage: en
   controllerNamespace: workload-control
   clusterReconcileTimeout: 2s

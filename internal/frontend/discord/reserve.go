@@ -3,6 +3,7 @@ package discordbot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -47,7 +48,7 @@ func (b *Bot) SetReservations(r reservations) { b.reservations = r }
 // at most 10 entries), the time and the run duration in hours.
 func (b *Bot) handleSchedule(i *discordgo.Interaction, cl config.Cluster, userID string) {
 	if b.reservations == nil {
-		b.replyEphemeral(i, "⚠ Reservations are not available.")
+		b.replyEphemeral(i, b.t("⚠ Reservations are not available."))
 		return
 	}
 	sub := subject(i)
@@ -57,17 +58,17 @@ func (b *Bot) handleSchedule(i *discordgo.Interaction, cl config.Cluster, userID
 		b.replyEphemeral(i, msgNotAuthorized)
 		return
 	case len(namespaces) == 0:
-		b.replyEphemeral(i, "⚠ No managed workloads are registered yet.")
+		b.replyEphemeral(i, b.t("⚠ No managed workloads are registered yet."))
 		return
 	case len(namespaces) > scheduleMaxNamespaces:
-		b.replyEphemeral(i, fmt.Sprintf("⚠ The schedule form fits %d namespaces; you may operate %d. Use POST /api/v1/reservations instead.", scheduleMaxNamespaces, len(namespaces)))
+		b.replyEphemeral(i, b.t("⚠ The schedule form fits %d namespaces; you may operate %d. Use POST /api/v1/reservations instead.", scheduleMaxNamespaces, len(namespaces)))
 		return
 	}
 	parts := make([]*nsPart, 0, len(namespaces))
 	for _, ns := range namespaces {
 		entries := b.svc.List(sub, cl.Env, ns, frontend.Limits{}).Entries
 		if len(entries) > checkboxMaxOptions {
-			b.replyEphemeral(i, fmt.Sprintf("⚠ %s has more than %d entries for the schedule form. Use POST /api/v1/reservations instead.", ns, checkboxMaxOptions))
+			b.replyEphemeral(i, b.t("⚠ %s has more than %d entries for the schedule form. Use POST /api/v1/reservations instead.", ns, checkboxMaxOptions))
 			return
 		}
 		parts = append(parts, &nsPart{namespace: ns, entries: entries, selected: map[string]bool{}})
@@ -75,14 +76,14 @@ func (b *Bot) handleSchedule(i *discordgo.Interaction, cl config.Cluster, userID
 	token, err := b.flows.create(&flow{userID: userID, env: cl.Env, parts: parts, cur: -1})
 	if err != nil {
 		slog.Error("failed to create discord flow", slog.String("error.message", err.Error()))
-		b.replyEphemeral(i, "⚠ Internal error. Please try again.")
+		b.replyEphemeral(i, b.t("⚠ Internal error. Please try again."))
 		return
 	}
-	b.respond(i, scheduleModal(token, cl, parts))
+	b.respond(i, b.scheduleModal(token, cl, parts))
 }
 
 // scheduleModal renders the reservation form.
-func scheduleModal(token string, cl config.Cluster, parts []*nsPart) *discordgo.InteractionResponse {
+func (u ui) scheduleModal(token string, cl config.Cluster, parts []*nsPart) *discordgo.InteractionResponse {
 	labels := make([]discordgo.MessageComponent, 0, len(parts)+2)
 	for idx, p := range parts {
 		options := make([]checkboxOption, 0, len(p.entries))
@@ -91,19 +92,19 @@ func scheduleModal(token string, cl config.Cluster, parts []*nsPart) *discordgo.
 		}
 		labels = append(labels, labelComponent{
 			Label:       truncateRunes(p.namespace, labelMaxLen),
-			Description: "Workloads to start",
+			Description: u.t("Workloads to start"),
 			Component:   checkboxGroup{CustomID: strconv.Itoa(idx), Options: options},
 		})
 	}
 	labels = append(labels,
 		labelComponent{
-			Label:       "Ready at",
-			Description: truncateRunes("21:00 (today, or tomorrow once passed) or 2026-11-14 21:00, in "+zoneName(cl), labelDescriptionLen),
+			Label:       u.t("Ready at"),
+			Description: truncateRunes(u.t("21:00 (today, or tomorrow once passed) or 2026-11-14 21:00, in %s", zoneName(cl)), labelDescriptionLen),
 			Component:   textInput{CustomID: inputAt, Placeholder: "21:00", Required: true, MaxLength: 16},
 		},
 		labelComponent{
-			Label:       "Run duration (hours)",
-			Description: "Empty uses the workload default",
+			Label:       u.t("Run duration (hours)"),
+			Description: u.t("Empty uses the workload default"),
 			Component:   textInput{CustomID: inputHours, Placeholder: "3", MaxLength: 8},
 		},
 	)
@@ -111,7 +112,7 @@ func scheduleModal(token string, cl config.Cluster, parts []*nsPart) *discordgo.
 		Type: discordgo.InteractionResponseModal,
 		Data: &discordgo.InteractionResponseData{
 			CustomID:   customID{kindScheduleModal, token, 0}.String(),
-			Title:      truncateRunes("Reserve in "+strings.ToUpper(cl.Env), modalTitleMaxLen),
+			Title:      truncateRunes(u.t("Reserve in %s", strings.ToUpper(cl.Env)), modalTitleMaxLen),
 			Components: labels,
 		},
 	}
@@ -125,14 +126,14 @@ var (
 )
 
 // parseAt reads "HH:MM" (today, or tomorrow when already passed) or "YYYY-MM-DD HH:MM" in loc.
-func parseAt(s string, now time.Time, loc *time.Location) (time.Time, error) {
+func (u ui) parseAt(s string, now time.Time, loc *time.Location) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	now = now.In(loc)
 	if m := clockRe.FindStringSubmatch(s); m != nil {
 		h, _ := strconv.Atoi(m[1])
 		mi, _ := strconv.Atoi(m[2])
 		if h > 23 || mi > 59 {
-			return time.Time{}, fmt.Errorf("%q is not a time of day", s)
+			return time.Time{}, errors.New(u.t("%q is not a time of day", s))
 		}
 		at := time.Date(now.Year(), now.Month(), now.Day(), h, mi, 0, 0, loc)
 		if !at.After(now) {
@@ -148,11 +149,11 @@ func parseAt(s string, now time.Time, loc *time.Location) (time.Time, error) {
 		at := time.Date(n[0], time.Month(n[1]), n[2], n[3], n[4], 0, 0, loc)
 		// time.Date normalizes out-of-range values; reject them instead of moving the date.
 		if at.Year() != n[0] || int(at.Month()) != n[1] || at.Day() != n[2] || at.Hour() != n[3] || at.Minute() != n[4] {
-			return time.Time{}, fmt.Errorf("%q is not a date and time", s)
+			return time.Time{}, errors.New(u.t("%q is not a date and time", s))
 		}
 		return at, nil
 	}
-	return time.Time{}, fmt.Errorf("%q: use 21:00 or 2026-11-14 21:00", s)
+	return time.Time{}, errors.New(u.t("%q: use 21:00 or 2026-11-14 21:00", s))
 }
 
 // handleScheduleModal creates one reservation per namespace with checked workloads and answers
@@ -168,10 +169,10 @@ func (b *Bot) handleScheduleModal(m rawSubmit) {
 		reply := func(lines ...string) *discordgo.InteractionResponse {
 			return &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{Content: fitLines(header(cl)+" reservation", lines, contentMaxLen), Flags: discordgo.MessageFlagsEphemeral, AllowedMentions: noMentions()},
+				Data: &discordgo.InteractionResponseData{Content: b.fitLines(b.t("%s reservation", header(cl)), lines, contentMaxLen), Flags: discordgo.MessageFlagsEphemeral, AllowedMentions: noMentions()},
 			}
 		}
-		at, err := parseAt(m.texts[inputAt], b.svc.Now(), cl.Frontends.Discord.Location())
+		at, err := b.parseAt(m.texts[inputAt], b.svc.Now(), cl.Frontends.Discord.Location())
 		if err != nil {
 			return reply("⛔ " + err.Error())
 		}
@@ -189,13 +190,13 @@ func (b *Bot) handleScheduleModal(m rawSubmit) {
 			r, err := b.reservations.Create(ctx, reservation.CreateRequest{Env: cl.Env, Namespace: p.namespace, Workloads: names, At: at, Duration: hours, Subject: sub, Source: audit.SourceDiscord})
 			cancel()
 			if err != nil {
-				lines = append(lines, fmt.Sprintf("⛔ %s: %s", p.namespace, frontend.ReservationError(err)))
+				lines = append(lines, fmt.Sprintf("⛔ %s: %s", p.namespace, b.markup.ReservationError(err)))
 				continue
 			}
-			lines = append(lines, markup.ReservedLine(r, b.reservations.Warmup(cl.Env, r.Namespace, r.Workloads)))
+			lines = append(lines, b.markup.ReservedLine(r, b.reservations.Warmup(cl.Env, r.Namespace, r.Workloads)))
 		}
 		if len(lines) == 0 {
-			return reply("ℹ No workloads were selected.")
+			return reply(b.t("ℹ No workloads were selected."))
 		}
 		return reply(lines...)
 	})
@@ -232,10 +233,10 @@ func (b *Bot) reservationLines(sub authz.Subject, env string, free int) ([]strin
 	if len(list) == 0 {
 		return nil, nil
 	}
-	lines := []string{"**Reservations**"}
+	lines := []string{b.t("**Reservations**")}
 	var buttons []discordgo.MessageComponent
 	for _, r := range list {
-		lines = append(lines, markup.PendingLine(r))
+		lines = append(lines, b.markup.PendingLine(r))
 		if len(buttons) >= free {
 			continue
 		}
@@ -245,7 +246,7 @@ func (b *Bot) reservationLines(sub authz.Subject, env string, free int) ([]strin
 			slog.Error("failed to create reservation button", slog.String("error.message", err.Error()))
 			continue
 		}
-		label := truncateRunes("Cancel: "+r.Namespace+" "+r.At.Format("01-02 15:04"), buttonLabelMaxLen)
+		label := truncateRunes(b.t("Cancel: %s %s", r.Namespace, r.At.Format("01-02 15:04")), buttonLabelMaxLen)
 		buttons = append(buttons, button(label, discordgo.DangerButton, customID{kindReservationStop, token, 0}, false))
 	}
 	return lines, buttons
@@ -261,7 +262,7 @@ func (b *Bot) handleReservationCancel(i *discordgo.Interaction, id customID) {
 	}
 	cl, found := b.registry.ByEnv(ref.Env)
 	if !found {
-		b.update(i, text(msgClusterGone))
+		b.update(i, text(b.t(msgClusterGone)))
 		return
 	}
 	// Ack first: cancelling persists through the cluster API.
@@ -272,9 +273,9 @@ func (b *Bot) handleReservationCancel(i *discordgo.Interaction, id customID) {
 	ctx, cancel := context.WithTimeout(context.Background(), reservationCallTimeout)
 	r, err := b.reservations.Cancel(ctx, ref.Env, ref.ID, sub, audit.SourceDiscord)
 	cancel()
-	note := markup.CancelledLine(r)
+	note := b.markup.CancelledLine(r)
 	if err != nil {
-		note = "⛔ " + frontend.ReservationError(err)
+		note = "⛔ " + b.markup.ReservationError(err)
 	}
 	b.edit(i, b.statusView(cl, sub, b.svc.Status(sub, cl.Env), []string{note}))
 }

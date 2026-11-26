@@ -12,6 +12,7 @@ import (
 
 	"github.com/murasame29/workload-knocker/internal/config"
 	"github.com/murasame29/workload-knocker/internal/frontend"
+	"github.com/murasame29/workload-knocker/internal/frontend/i18n"
 	"github.com/murasame29/workload-knocker/internal/observability/audit"
 	"github.com/murasame29/workload-knocker/internal/observability/metrics"
 	"github.com/murasame29/workload-knocker/internal/policy/authz"
@@ -228,9 +229,10 @@ func TestStatus_StopButtonStopsAndAudits(t *testing.T) {
 	t.Parallel()
 
 	b, sess, store, rec := newStatusBot(t, []*model.Workload{runningWL("web", time.Now().Add(time.Hour))}, "", mode.Full)
-	b.dispatch(statusCommand("u1"))
+	b.dispatch(statusCommand(starterID))
 
-	b.dispatch(component("u1", statusButtons(sess.responses[0].Data)["Stop: web"].CustomID))
+	// The starter stops their own workload without a confirmation.
+	b.dispatch(component(starterID, statusButtons(sess.responses[0].Data)["Stop: web"].CustomID))
 
 	if len(store.stops) != 1 || store.stops[0] != "web" {
 		t.Fatalf("stops = %v, want web", store.stops)
@@ -357,5 +359,94 @@ func TestRegisterCommands_StartStatusAndScheduleSubcommands(t *testing.T) {
 		if o.Type != discordgo.ApplicationCommandOptionSubCommand || o.Description == "" || len(o.Description) > 100 {
 			t.Errorf("option %+v", o)
 		}
+	}
+}
+
+func TestStatus_StopOfSomeoneElsesWorkloadAsksFirst(t *testing.T) {
+	t.Parallel()
+
+	b, sess, store, rec := newStatusBot(t, []*model.Workload{runningWL("web", time.Now().Add(time.Hour))}, "", mode.Full)
+	b.dispatch(statusCommand("u1"))
+	stop := statusButtons(sess.responses[0].Data)["Stop: web"].CustomID
+
+	b.dispatch(component("u1", stop))
+	r := sess.responses[len(sess.responses)-1]
+	if len(store.stops) != 0 || r.Type != discordgo.InteractionResponseUpdateMessage {
+		t.Fatalf("stops = %v, response %v: want a question and no stop yet", store.stops, r.Type)
+	}
+	for _, want := range []string{"Stop: **web**  Started by: <@" + starterID + ">", "You did not start this workload.", "Do you want to stop it?"} {
+		if !strings.Contains(r.Data.Content, want) {
+			t.Errorf("question lacks %q:\n%s", want, r.Data.Content)
+		}
+	}
+	got := statusButtons(r.Data)
+	if got["Cancel"].Style != discordgo.SecondaryButton || got["Stop"].Style != discordgo.DangerButton || len(got) != 2 {
+		t.Fatalf("buttons = %+v, want Cancel and a red Stop", got)
+	}
+
+	// Cancel goes back to the list without stopping.
+	b.dispatch(component("u1", got["Cancel"].CustomID))
+	back := sess.responses[len(sess.responses)-1]
+	if len(store.stops) != 0 || !strings.Contains(back.Data.Content, "status") || statusButtons(back.Data)["Stop: web"].Label == "" {
+		t.Fatalf("cancel = %+v, stops %v", back.Data, store.stops)
+	}
+
+	// Stop in the question stops it.
+	b.dispatch(component("u1", got["Stop"].CustomID))
+	if len(store.stops) != 1 || store.stops[0] != "web" {
+		t.Fatalf("stops = %v, want web", store.stops)
+	}
+	if content, _ := lastEdit(t, sess); !strings.Contains(content, "🔴 web → stop") {
+		t.Errorf("refreshed list = %s", content)
+	}
+	if len(rec.recs) != 1 || rec.recs[0].Event != audit.WorkloadStop || rec.recs[0].Outcome != audit.Success {
+		t.Errorf("audit = %+v, want one successful workload.stop", rec.recs)
+	}
+}
+
+func TestForeignStopLines_WarnsInThePreview(t *testing.T) {
+	t.Parallel()
+	entries := []frontend.Entry{
+		{Key: "web", Members: []*model.Workload{{Name: "web", Replicas: 1, StartedBy: starterID}}},
+		{Key: "mine", Members: []*model.Workload{{Name: "mine", Replicas: 1, StartedBy: "u1"}}},
+		{Key: "found", Members: []*model.Workload{{Name: "found", Replicas: 1}}},
+	}
+	changes := []frontend.Change{
+		{Action: frontend.ActionStop, Label: "web", Names: []string{"web"}},
+		{Action: frontend.ActionStop, Label: "mine", Names: []string{"mine"}},
+		{Action: frontend.ActionStop, Label: "found", Names: []string{"found"}},
+	}
+	lines := enUI.foreignStopLines(changes, entries, "u1")
+	if len(lines) != 2 || lines[0] != "⚠ Stop: **web**  Started by: <@"+starterID+">" || !strings.Contains(lines[1], "Confirm stops them anyway") {
+		t.Errorf("lines = %q", lines)
+	}
+	if got := enUI.foreignStopLines(changes[1:], entries, "u1"); got != nil {
+		t.Errorf("own and unknown starters warned: %q", got)
+	}
+}
+
+func TestStatus_Japanese(t *testing.T) {
+	t.Parallel()
+
+	b, sess, _, _ := newStatusBot(t, []*model.Workload{runningWL("web", time.Now().Add(time.Hour))}, "", mode.Full)
+	b.ui = newUI(i18n.Ja)
+	b.dispatch(statusCommand("u1"))
+	list := sess.responses[0].Data
+	if !strings.Contains(list.Content, "の状態") || !strings.Contains(list.Content, "🟢 起動中") {
+		t.Errorf("status = %s", list.Content)
+	}
+	stop := statusButtons(list)["停止: web"]
+	if stop.Label == "" {
+		t.Fatalf("buttons = %v, want 停止: web", statusButtons(list))
+	}
+	b.dispatch(component("u1", stop.CustomID))
+	q := sess.responses[len(sess.responses)-1].Data
+	for _, want := range []string{"停止: **web**  起動者: <@" + starterID + ">", "あなたは、このworkloadを起動した本人ではないです。", "このworkloadを停止してもよろしいでしょうか？"} {
+		if !strings.Contains(q.Content, want) {
+			t.Errorf("question lacks %q:\n%s", want, q.Content)
+		}
+	}
+	if got := statusButtons(q); got["キャンセル"].Label == "" || got["停止"].Label == "" {
+		t.Errorf("buttons = %v, want キャンセル and 停止", got)
 	}
 }

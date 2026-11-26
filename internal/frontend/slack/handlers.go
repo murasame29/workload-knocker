@@ -160,7 +160,7 @@ func (u ui) durationInputBlock() *slack.InputBlock {
 	block := slack.NewInputBlock(
 		blockDuration,
 		slack.NewTextBlockObject("plain_text", u.t("Run duration (hours)"), false, false),
-		slack.NewTextBlockObject("plain_text", u.t("Applies to every workload started now; they stop automatically afterwards. Minimum 0.25."), false, false),
+		slack.NewTextBlockObject("plain_text", u.t("Applies to every workload started now; they stop automatically afterwards. Minimum 0.25 (15 minutes)."), false, false),
 		el,
 	)
 	block.Optional = true
@@ -523,7 +523,8 @@ func (b *Bot) handleModalSubmit(callback slack.InteractionCallback, req *socketm
 		return
 	}
 
-	previewLines := append(b.markup.PlanLines(plan.Changes), b.markup.ScheduleLines(starts)...)
+	previewLines := append(b.foreignStopLines(plan.Changes, frontend.Rendered(listing.Entries, meta.Rendered), viewerOf(callback.User)), b.markup.PlanLines(plan.Changes)...)
+	previewLines = append(previewLines, b.markup.ScheduleLines(starts)...)
 	rejectedLines := b.markup.RejectionLines(plan.Rejected)
 
 	envUpper := strings.ToUpper(cl.Env)
