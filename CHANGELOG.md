@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/murasame29/workload-knocker/compare/v0.2.3...v0.2.4) (2026-11-26)
+
+
+### Features
+
+* confirm stopping someone else's workload and localize the Discord UI ([#99](https://github.com/murasame29/workload-knocker/issues/99)) ([721bbd6](https://github.com/murasame29/workload-knocker/commit/721bbd60eb861101393b8e9a2b9805fe3bc03b03))
+
 ## [0.2.3](https://github.com/murasame29/workload-knocker/compare/v0.2.2...v0.2.3) (2026-11-25)
 
 
